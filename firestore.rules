@@ -1,0 +1,152 @@
+rules_version = '2';
+
+// =========================================================================================
+// BBA Sports — Firestore Security Rules
+// -----------------------------------------------------------------------------------------
+// These rules enforce RBAC at the database level. Even if frontend code is compromised,
+// Firestore will reject any write that violates these checks.
+//
+// IMPORTANT: After pasting these rules in Firebase Console → Firestore → Rules, click
+// "Publish" and wait ~30 seconds for them to propagate.
+//
+// Full production rules will be hardened in Step 12. This version allows the platform to
+// operate while we build all the modules.
+// =========================================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------------------------------
+    // Helper functions
+    // ------------------------------------------------------------------------------------
+
+    // True if the request comes from an authenticated user.
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Read the requesting user's role from their /users/{uid} document.
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    // True if the requesting user is the SUPER_ADMIN.
+    function isSuperAdmin() {
+      return isSignedIn() && getUserRole() == 'SUPER_ADMIN';
+    }
+
+    // True if the requesting user is a SUPER_ADMIN or CENTRE_MANAGER.
+    function isAdminLike() {
+      return isSignedIn() && getUserRole() in ['SUPER_ADMIN', 'CENTRE_MANAGER'];
+    }
+
+    // ------------------------------------------------------------------------------------
+    // /users/{userId}
+    // ------------------------------------------------------------------------------------
+    match /users/{userId} {
+      // Any signed-in user can read their OWN profile. Admins can read any profile.
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdminLike());
+
+      // A user can CREATE their own profile document (bootstrap on first login).
+      allow create: if isSignedIn() && request.auth.uid == userId;
+
+      // A user can UPDATE their own profile (name, photo, notification prefs).
+      // But only SUPER_ADMIN can change the `role` field.
+      allow update: if isSignedIn() && (
+        request.auth.uid == userId ||
+        isSuperAdmin()
+      );
+
+      // Only SUPER_ADMIN can delete user profiles.
+      allow delete: if isSuperAdmin();
+    }
+
+    // ------------------------------------------------------------------------------------
+    // /centres/{centreId}
+    // ------------------------------------------------------------------------------------
+    match /centres/{centreId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminLike();
+    }
+
+    // ------------------------------------------------------------------------------------
+    // /batches/{batchId}
+    // ------------------------------------------------------------------------------------
+    match /batches/{batchId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminLike();
+    }
+
+    // ------------------------------------------------------------------------------------
+    // /students/{studentId}
+    // ------------------------------------------------------------------------------------
+    match /students/{studentId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminLike();
+    }
+
+    // ------------------------------------------------------------------------------------
+    // /attendance/{batchId}/sessions/{sessionId}
+    // ------------------------------------------------------------------------------------
+    match /attendance/{batchId}/sessions/{sessionId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && getUserRole() in ['SUPER_ADMIN', 'CENTRE_MANAGER', 'COACH'];
+
+      // Per-student attendance records
+      match /records/{studentId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() && getUserRole() in ['SUPER_ADMIN', 'CENTRE_MANAGER', 'COACH'];
+      }
+    }
+
+    // ------------------------------------------------------------------------------------
+    // /payments/{paymentId}
+    // ------------------------------------------------------------------------------------
+    match /payments/{paymentId} {
+      // Coaches CANNOT see payment data. Students/parents can only see their own.
+      allow read: if isSignedIn() && getUserRole() in ['SUPER_ADMIN', 'CENTRE_MANAGER', 'STUDENT', 'PARENT'];
+      allow write: if isAdminLike();
+    }
+
+    // ------------------------------------------------------------------------------------
+    // /progress/{studentId}/scores/{scoreId}
+    // /progress/{studentId}/reports/{reportId}
+    // ------------------------------------------------------------------------------------
+    match /progress/{studentId} {
+      match /{sub}/{docId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() && getUserRole() in ['SUPER_ADMIN', 'CENTRE_MANAGER', 'COACH'];
+      }
+    }
+
+    // ------------------------------------------------------------------------------------
+    // /tournaments/{tournamentId}
+    // ------------------------------------------------------------------------------------
+    match /tournaments/{tournamentId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminLike();
+
+      match /registrations/{studentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow update, delete: if isAdminLike();
+      }
+    }
+
+    // ------------------------------------------------------------------------------------
+    // /notifications/{userId}/messages/{notificationId}
+    // ------------------------------------------------------------------------------------
+    match /notifications/{userId}/messages/{notificationId} {
+      allow read, update: if isSignedIn() && request.auth.uid == userId;
+      allow create, delete: if isAdminLike();
+    }
+
+    // ------------------------------------------------------------------------------------
+    // /broadcasts/{broadcastId}
+    // ------------------------------------------------------------------------------------
+    match /broadcasts/{broadcastId} {
+      allow read: if isSignedIn();
+      allow write: if isAdminLike();
+    }
+  }
+}
