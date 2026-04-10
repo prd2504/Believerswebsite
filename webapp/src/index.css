@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================================================
+   Global resets & brand defaults
+   ========================================================================================= */
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-brand-background text-brand-secondary antialiased;
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Accessible focus ring using the brand colour */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-brand-primary ring-offset-2 ring-offset-white;
+  }
+}
+
+@layer components {
+  /* Standard card container */
+  .card {
+    @apply rounded-xl bg-white shadow-card border border-gray-100 p-4;
+  }
+
+  /* Primary CTA button */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-brand-primary px-4 py-2.5
+           text-sm font-semibold text-white transition-colors hover:bg-brand-primary-dark
+           disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white
+           px-4 py-2.5 text-sm font-semibold text-brand-secondary transition-colors
+           hover:bg-brand-surface disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium
+           text-brand-secondary transition-colors hover:bg-brand-surface;
+  }
+
+  /* Form input */
+  .input {
+    @apply w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm text-brand-secondary
+           placeholder:text-gray-400 focus:border-brand-primary focus:outline-none
+           focus:ring-2 focus:ring-brand-primary/20;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-brand-secondary mb-1.5;
+  }
+
+  /* Shimmer skeleton */
+  .skeleton {
+    @apply rounded-md bg-gradient-to-r from-gray-100 via-gray-200 to-gray-100 bg-[length:200%_100%]
+           animate-shimmer;
+  }
+}
