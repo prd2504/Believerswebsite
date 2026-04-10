@@ -1,5 +1,176 @@
-import { PlaceholderPage } from '@/pages/shared/PlaceholderPage';
+/**
+ * Admin attendance page — mark attendance and view session history per batch.
+ */
+
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { ClipboardCheck } from 'lucide-react';
+import { toast } from 'sonner';
+import { useAuth } from '@/hooks/useAuth';
+import { getAllBatches } from '@/services/batchService';
+import { getAllCentres } from '@/services/centreService';
+import { getAllStudents } from '@/services/studentService';
+import { AttendanceMarker } from '@/components/attendance/AttendanceMarker';
+import { SessionHistory } from '@/components/attendance/SessionHistory';
+import { EmptyState } from '@/components/common/EmptyState';
+import { CardSkeleton } from '@/components/common/LoadingSkeleton';
+import type { BatchDocument, CentreDocument, StudentDocument } from '@bba/shared';
+
+type Tab = 'mark' | 'history';
 
 export default function AttendancePage() {
-  return <PlaceholderPage title="Attendance Management" step={6} description="Session-by-session attendance marking, monthly summaries, absence alerts." />;
+  const { profile } = useAuth();
+  const [batches, setBatches] = useState<BatchDocument[]>([]);
+  const [centres, setCentres] = useState<CentreDocument[]>([]);
+  const [students, setStudents] = useState<StudentDocument[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<Tab>('mark');
+  const [centreFilter, setCentreFilter] = useState('');
+  const [historyBatchId, setHistoryBatchId] = useState('');
+
+  const centreMap = useMemo(() => {
+    const m = new Map<string, string>();
+    centres.forEach((c) => m.set(c.id, c.name));
+    return m;
+  }, [centres]);
+
+  const studentMap = useMemo(() => {
+    const m = new Map<string, string>();
+    students.forEach((s) => m.set(s.id, s.name));
+    return m;
+  }, [students]);
+
+  const filteredBatches = centreFilter
+    ? batches.filter((b) => b.centreId === centreFilter)
+    : batches;
+
+  const activeBatches = filteredBatches.filter((b) => b.status === 'ACTIVE');
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const [bData, cData, sData] = await Promise.all([
+        getAllBatches(),
+        getAllCentres(),
+        getAllStudents(),
+      ]);
+      setBatches(bData);
+      setCentres(cData);
+      setStudents(sData);
+      if (bData.length > 0 && !historyBatchId) {
+        setHistoryBatchId(bData[0].id);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  }, [historyBatchId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const selectedBatchForHistory = batches.find((b) => b.id === historyBatchId);
+
+  if (loading) {
+    return (
+      <div>
+        <h1 className="mb-6 text-xl font-bold text-brand-secondary">Attendance</h1>
+        <CardSkeleton count={3} />
+      </div>
+    );
+  }
+
+  if (batches.length === 0) {
+    return (
+      <div>
+        <h1 className="mb-6 text-xl font-bold text-brand-secondary">Attendance</h1>
+        <EmptyState
+          icon={<ClipboardCheck size={48} />}
+          title="No batches found"
+          description="Create batches first to start tracking attendance."
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-brand-secondary">Attendance</h1>
+          <p className="text-sm text-gray-500">{activeBatches.length} active batch{activeBatches.length !== 1 ? 'es' : ''}</p>
+        </div>
+        <div className="flex gap-3">
+          <select
+            value={centreFilter}
+            onChange={(e) => setCentreFilter(e.target.value)}
+            className="input w-auto py-2 text-sm"
+          >
+            <option value="">All Centres</option>
+            {centres.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="mb-5 flex gap-1 rounded-lg bg-gray-100 p-1">
+        <button
+          onClick={() => setTab('mark')}
+          className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+            tab === 'mark' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Mark Attendance
+        </button>
+        <button
+          onClick={() => setTab('history')}
+          className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+            tab === 'history' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Session History
+        </button>
+      </div>
+
+      {/* Content */}
+      {tab === 'mark' && profile && (
+        <div className="card">
+          <AttendanceMarker
+            batches={activeBatches}
+            centreId={centreFilter || centres[0]?.id || ''}
+            userId={profile.id}
+            onDone={load}
+          />
+        </div>
+      )}
+
+      {tab === 'history' && (
+        <div className="card">
+          <div className="mb-4">
+            <label className="label">Select batch</label>
+            <select
+              value={historyBatchId}
+              onChange={(e) => setHistoryBatchId(e.target.value)}
+              className="input w-auto"
+            >
+              {filteredBatches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name} {centreMap.get(b.centreId) ? `(${centreMap.get(b.centreId)})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          {selectedBatchForHistory && (
+            <SessionHistory
+              batchId={historyBatchId}
+              batchName={selectedBatchForHistory.name}
+              studentMap={studentMap}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
