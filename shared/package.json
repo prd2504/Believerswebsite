@@ -13,7 +13,8 @@
     "./utils": "./src/utils/index.ts"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist && find src -name '*.js' -not -path '*/node_modules/*' -delete && find src -name '*.js.map' -not -path '*/node_modules/*' -delete && find src -name '*.d.ts' -not -path '*/node_modules/*' -delete",
+    "build": "npm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

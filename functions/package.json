@@ -5,7 +5,7 @@
   "description": "Firebase Cloud Functions backend for BBA Sports platform — payments, AI reports, WhatsApp, webhooks",
   "main": "lib/index.js",
   "engines": {
-    "node": ">=20"
+    "node": "22"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

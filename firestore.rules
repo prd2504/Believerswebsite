@@ -86,7 +86,7 @@ service cloud.firestore {
       allow read: if isSignedIn();
       // Admin-like can write. Managers can only write to their own centres.
       allow create: if isAdminLike();
-      allow update, delete: if isSuperAdmin() || (isCentreManager() && centreId in managedCentreIds());
+      allow update, delete: if managesCentre(centreId);
     }
 
     // ── /batches/{batchId} ────────────────────────────────────────────────────────────────
