@@ -3,8 +3,10 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '@/lib/firebase';
 import { getAllStudents } from '@/services/studentService';
 import { getAllBatches } from '@/services/batchService';
 import { getAllCentres } from '@/services/centreService';
@@ -29,7 +31,12 @@ export default function ProgressPage() {
   const [scores, setScores] = useState<ProgressScoreDocument[]>([]);
   const [reports, setReports] = useState<ProgressReportDocument[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [generatingReport, setGeneratingReport] = useState(false);
   const [centreFilter, setCentreFilter] = useState('');
+  const [reportMonth, setReportMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
 
   const centreMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -74,6 +81,24 @@ export default function ProgressPage() {
       .catch((err) => { console.error(err); toast.error('Failed to load progress data'); })
       .finally(() => setLoadingDetail(false));
   }, [selectedStudentId]);
+
+  const handleGenerateReport = async () => {
+    if (!selectedStudentId) return;
+    setGeneratingReport(true);
+    try {
+      const fn = httpsCallable(functions, 'generateProgressReportFn');
+      await fn({ studentId: selectedStudentId, yearMonth: reportMonth });
+      toast.success('AI report generated!');
+      // Reload reports
+      const r = await getReportsByStudent(selectedStudentId);
+      setReports(r);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err?.message ?? 'Report generation failed');
+    } finally {
+      setGeneratingReport(false);
+    }
+  };
 
   const handleMarkDelivered = async (report: ProgressReportDocument) => {
     try {
@@ -175,11 +200,17 @@ export default function ProgressPage() {
 
           {/* Reports */}
           <div>
-            <h2 className="mb-3 text-sm font-semibold text-brand-secondary">
-              AI Reports ({reports.length})
-            </h2>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-brand-secondary">AI Reports ({reports.length})</h2>
+              <div className="flex items-center gap-2">
+                <input type="month" value={reportMonth} onChange={(e) => setReportMonth(e.target.value)} className="input w-36 py-1.5 text-xs" />
+                <button onClick={handleGenerateReport} disabled={generatingReport || !selectedStudentId} className="btn-primary py-1.5 text-xs">
+                  <Sparkles size={13} /> {generatingReport ? 'Generating…' : 'Generate Report'}
+                </button>
+              </div>
+            </div>
             {reports.length === 0 ? (
-              <p className="text-xs text-gray-400">No AI reports generated yet. Reports are generated monthly by the system.</p>
+              <p className="text-xs text-gray-400">No AI reports yet. Select a month and click "Generate Report" to create one using Claude AI.</p>
             ) : (
               <div className="space-y-3">
                 {reports.map((report) => (
