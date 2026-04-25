@@ -3,26 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "description": "Shared TypeScript types and utilities used by @bba/webapp and @bba/functions",
-  "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    },
-    "./types": {
-      "import": "./dist/types/index.js",
-      "types": "./dist/types/index.d.ts"
-    },
-    "./constants": {
-      "import": "./dist/constants/index.js",
-      "types": "./dist/constants/index.d.ts"
-    },
-    "./utils": {
-      "import": "./dist/utils/index.js",
-      "types": "./dist/utils/index.d.ts"
-    }
+    ".": "./dist/index.js",
+    "./types": "./dist/types/index.js",
+    "./constants": "./dist/constants/index.js",
+    "./utils": "./dist/utils/index.js"
   },
   "scripts": {
     "clean": "rm -rf dist tsconfig.tsbuildinfo && find src -name '*.js' -not -path '*/node_modules/*' -delete && find src -name '*.js.map' -not -path '*/node_modules/*' -delete && find src -name '*.d.ts' -not -path '*/node_modules/*' -delete",
