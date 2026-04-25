@@ -1,6 +1,6 @@
 {
   "projects": {
-    "default": "bb-sports-prod"
+    "default": "bba-sports-prod"
   },
   "targets": {},
   "etags": {}
