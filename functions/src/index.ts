@@ -12,8 +12,5 @@ export { onUserCreatedTrigger } from './auth/onUserCreated.js';
 // --- Health check ------------------------------------------------------------------------
 export { health } from './http/health.js';
 
-// --- Progress / AI reports ---------------------------------------------------------------
-export { generateProgressReportFn } from './progress/generateReport.js';
-
 // --- Notifications / Broadcasts ----------------------------------------------------------
 export { onBroadcastCreated } from './notifications/broadcast.js';

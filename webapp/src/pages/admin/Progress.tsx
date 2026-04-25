@@ -1,12 +1,10 @@
 /**
- * Admin progress page — view scores and AI reports for all students.
+ * Admin progress page — view scores and reports for all students.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { BarChart3, Sparkles } from 'lucide-react';
+import { BarChart3 } from 'lucide-react';
 import { toast } from 'sonner';
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '@/lib/firebase';
 import { getAllStudents } from '@/services/studentService';
 import { getAllBatches } from '@/services/batchService';
 import { getAllCentres } from '@/services/centreService';
@@ -31,12 +29,7 @@ export default function ProgressPage() {
   const [scores, setScores] = useState<ProgressScoreDocument[]>([]);
   const [reports, setReports] = useState<ProgressReportDocument[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [generatingReport, setGeneratingReport] = useState(false);
   const [centreFilter, setCentreFilter] = useState('');
-  const [reportMonth, setReportMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  });
 
   const centreMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -69,7 +62,6 @@ export default function ProgressPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Load scores & reports when a student is selected
   useEffect(() => {
     if (!selectedStudentId) return;
     setLoadingDetail(true);
@@ -82,24 +74,6 @@ export default function ProgressPage() {
       .finally(() => setLoadingDetail(false));
   }, [selectedStudentId]);
 
-  const handleGenerateReport = async () => {
-    if (!selectedStudentId) return;
-    setGeneratingReport(true);
-    try {
-      const fn = httpsCallable(functions, 'generateProgressReportFn');
-      await fn({ studentId: selectedStudentId, yearMonth: reportMonth });
-      toast.success('AI report generated!');
-      // Reload reports
-      const r = await getReportsByStudent(selectedStudentId);
-      setReports(r);
-    } catch (err: any) {
-      console.error(err);
-      toast.error(err?.message ?? 'Report generation failed');
-    } finally {
-      setGeneratingReport(false);
-    }
-  };
-
   const handleMarkDelivered = async (report: ProgressReportDocument) => {
     try {
       await markReportDelivered(report.studentId, report.id);
@@ -110,6 +84,9 @@ export default function ProgressPage() {
       toast.error('Failed to mark report');
     }
   };
+
+  // suppress unused warning — batches kept for future batch-level filtering
+  void batches;
 
   if (loading) {
     return (
@@ -127,7 +104,6 @@ export default function ProgressPage() {
         <p className="text-sm text-gray-500">{students.length} student{students.length !== 1 ? 's' : ''}</p>
       </div>
 
-      {/* Filters & student selector */}
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
         <select
           value={centreFilter}
@@ -163,7 +139,6 @@ export default function ProgressPage() {
         <CardSkeleton count={3} />
       ) : (
         <div className="space-y-6">
-          {/* Scores */}
           <div>
             <h2 className="mb-3 text-sm font-semibold text-brand-secondary">
               Skill Scores ({scores.length})
@@ -198,19 +173,10 @@ export default function ProgressPage() {
             )}
           </div>
 
-          {/* Reports */}
           <div>
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-brand-secondary">AI Reports ({reports.length})</h2>
-              <div className="flex items-center gap-2">
-                <input type="month" value={reportMonth} onChange={(e) => setReportMonth(e.target.value)} className="input w-36 py-1.5 text-xs" />
-                <button onClick={handleGenerateReport} disabled={generatingReport || !selectedStudentId} className="btn-primary py-1.5 text-xs">
-                  <Sparkles size={13} /> {generatingReport ? 'Generating…' : 'Generate Report'}
-                </button>
-              </div>
-            </div>
+            <h2 className="mb-3 text-sm font-semibold text-brand-secondary">Reports ({reports.length})</h2>
             {reports.length === 0 ? (
-              <p className="text-xs text-gray-400">No AI reports yet. Select a month and click "Generate Report" to create one using Claude AI.</p>
+              <p className="text-xs text-gray-400">No reports yet.</p>
             ) : (
               <div className="space-y-3">
                 {reports.map((report) => (
