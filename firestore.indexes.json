@@ -40,20 +40,6 @@
         { "fieldPath": "studentId", "order": "ASCENDING" }
       ]
     },
-    {
-      "collectionGroup": "sessions",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
-        { "fieldPath": "sessionDate", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "sessions",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
-        { "fieldPath": "sessionDate", "order": "ASCENDING" }
-      ]
-    }
   ],
   "fieldOverrides": []
 }
