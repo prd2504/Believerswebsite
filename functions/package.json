@@ -19,7 +19,6 @@
     "firebase-functions": "^6.1.0"
   },
   "devDependencies": {
-    "@bba/shared": "*",
     "@types/node": "^20.12.12",
     "esbuild": "^0.28.0",
     "typescript": "^5.5.4"
