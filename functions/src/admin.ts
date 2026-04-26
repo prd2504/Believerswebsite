@@ -1,21 +1,23 @@
 /**
  * Single Firebase Admin SDK initialisation. Every other file in /functions should import
- * `db`, `auth`, and `storage` from here — never call `admin.initializeApp()` themselves.
+ * `db`, `auth`, and `storage` from here — never call `initializeApp()` themselves.
  *
- * This avoids the classic "app already exists" crash when multiple entry points are
- * imported in the same Cloud Functions instance.
+ * Uses the modular firebase-admin API (v10+) which is bundler-friendly. The legacy
+ * `import * as admin from 'firebase-admin'` namespace pattern breaks under esbuild's
+ * __toESM wrapper because access like `admin.firestore.FieldValue` mixes namespace and
+ * function-call semantics that the wrapper doesn't preserve.
  */
 
-import * as admin from 'firebase-admin';
+import { initializeApp, getApps } from 'firebase-admin/app';
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
+import { getStorage } from 'firebase-admin/storage';
 
-if (admin.apps.length === 0) {
-  admin.initializeApp();
+if (getApps().length === 0) {
+  initializeApp();
 }
 
-export const db = admin.firestore();
-export const auth = admin.auth();
-export const storage = admin.storage();
-export const FieldValue = admin.firestore.FieldValue;
-export const Timestamp = admin.firestore.Timestamp;
-
-export type { admin };
+export const db = getFirestore();
+export const auth = getAuth();
+export const storage = getStorage();
+export { FieldValue, Timestamp };
