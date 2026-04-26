@@ -35,7 +35,7 @@ export const onBroadcastCreated = onDocumentCreated(
     const usersSnap = await usersQuery.get();
 
     let fanoutCount = 0;
-    const batch = db.batch();
+    let batch = db.batch();
 
     for (const userDoc of usersSnap.docs) {
       const userData = userDoc.data();
@@ -72,9 +72,10 @@ export const onBroadcastCreated = onDocumentCreated(
 
       fanoutCount++;
 
-      // Firestore batches max 500 writes — commit and start a new batch
+      // Firestore batches max 500 writes — commit and start fresh
       if (fanoutCount % 400 === 0) {
         await batch.commit();
+        batch = db.batch();
       }
     }
 
