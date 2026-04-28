@@ -100,10 +100,20 @@ export default function StudentsPage() {
     if (!profile) return;
     setBusy(true);
     try {
-      await createStudent(values, profile.id);
-      toast.success('Student created. Use "Enrol" to put them in a batch.');
+      const newId = await createStudent(values, profile.id);
+      toast.success('Student created — now pick a batch to enrol them.');
       setMode('list');
-      await load();
+      // Reload data, then immediately open enrolment dialog for the new student
+      const [sData, cData, bData] = await Promise.all([
+        getAllStudents(),
+        getAllCentres(),
+        getAllBatches(),
+      ]);
+      setStudents(sData);
+      setCentres(cData);
+      setBatches(bData);
+      const created = sData.find((s) => s.id === newId);
+      if (created) setEnrolTarget(created);
     } catch (err) {
       console.error(err);
       toast.error('Failed to create student');
