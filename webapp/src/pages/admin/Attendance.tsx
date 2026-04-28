@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ClipboardCheck } from 'lucide-react';
+import { ClipboardCheck, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { getAllBatches } from '@/services/batchService';
@@ -11,6 +11,11 @@ import { getAllCentres } from '@/services/centreService';
 import { getAllStudents } from '@/services/studentService';
 import { AttendanceMarker } from '@/components/attendance/AttendanceMarker';
 import { SessionHistory } from '@/components/attendance/SessionHistory';
+import {
+  getSessionsByBatch,
+  getAttendanceRecords,
+} from '@/services/attendanceService';
+import { exportAttendanceCsv } from '@/lib/csv';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
 import type { BatchDocument, CentreDocument, StudentDocument } from '@bba/shared';
@@ -148,19 +153,52 @@ export default function AttendancePage() {
 
       {tab === 'history' && (
         <div className="card">
-          <div className="mb-4">
-            <label className="label">Select batch</label>
-            <select
-              value={historyBatchId}
-              onChange={(e) => setHistoryBatchId(e.target.value)}
-              className="input w-auto"
-            >
-              {filteredBatches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name} {centreMap.get(b.centreId) ? `(${centreMap.get(b.centreId)})` : ''}
-                </option>
-              ))}
-            </select>
+          <div className="mb-4 flex items-end justify-between gap-3">
+            <div className="flex-1">
+              <label className="label">Select batch</label>
+              <select
+                value={historyBatchId}
+                onChange={(e) => setHistoryBatchId(e.target.value)}
+                className="input w-auto"
+              >
+                {filteredBatches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} {centreMap.get(b.centreId) ? `(${centreMap.get(b.centreId)})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {selectedBatchForHistory && (
+              <button
+                onClick={async () => {
+                  try {
+                    const sessions = await getSessionsByBatch(historyBatchId);
+                    const allRecords = (
+                      await Promise.all(
+                        sessions.map((s) => getAttendanceRecords(historyBatchId, s.id)),
+                      )
+                    ).flat();
+                    if (allRecords.length === 0) {
+                      toast.info('No attendance records for this batch yet.');
+                      return;
+                    }
+                    exportAttendanceCsv(
+                      allRecords,
+                      studentMap,
+                      selectedBatchForHistory.name,
+                      centreMap.get(selectedBatchForHistory.centreId) ?? '',
+                    );
+                    toast.success(`Exported ${allRecords.length} attendance records`);
+                  } catch (err) {
+                    console.error(err);
+                    toast.error('Failed to export attendance');
+                  }
+                }}
+                className="btn-secondary text-sm"
+              >
+                <Download size={14} /> Export CSV
+              </button>
+            )}
           </div>
           {selectedBatchForHistory && (
             <SessionHistory

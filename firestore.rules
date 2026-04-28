@@ -107,6 +107,27 @@ service cloud.firestore {
       allow create: if isAdminLike();
       allow update: if isAdminLike();
       allow delete: if isAdminLike();
+
+      // Denormalised monthly attendance summary written by Cloud Function
+      match /attendanceMonthly/{yearMonth} {
+        allow read: if isAdminOrCoach() || (
+          isStudentOrParent() && studentId in getUserDoc().data.linkedStudentIds
+        );
+        allow write: if isAdminLike();  // CF uses admin SDK which bypasses rules
+      }
+    }
+
+    // ── /enrollments/{enrollmentId} ──────────────────────────────────────────────────────
+    // One row per (student, batch). Admins and the centre's manager create + update.
+    // Students/parents read their own. Coaches read enrollments for their batches
+    // (needed to derive today's roster).
+    match /enrollments/{enrollmentId} {
+      allow read: if isAdminOrCoach() || (
+        isStudentOrParent() && resource.data.studentId in getUserDoc().data.linkedStudentIds
+      );
+      allow create: if isAdminLike();
+      allow update: if isAdminLike();
+      allow delete: if isSuperAdmin();
     }
 
     // ── /attendance/{batchId}/sessions/{sessionId}/records/{studentId} ───────────────────

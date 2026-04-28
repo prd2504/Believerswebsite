@@ -1,5 +1,9 @@
 /**
  * Batch CRUD service — all Firestore operations for /batches/{batchId}.
+ *
+ * A batch represents a (Centre + TimeSlot) container. The set of days the batch is
+ * offered + the available frequency plans are configured here. Per-student day choices
+ * live in /enrollments — see enrollmentService.ts.
  */
 
 import {
@@ -21,7 +25,8 @@ import { db } from '@/lib/firebase';
 import {
   COLLECTIONS,
   type BatchDocument,
-  type BatchTimeSlot,
+  type DayOfWeek,
+  type FrequencyPlan,
   type SportType,
   type BatchLevel,
   type BatchStatus,
@@ -29,16 +34,16 @@ import {
 } from '@bba/shared';
 import type { BatchFormValues } from '@/lib/schemas/batchSchema';
 
-function fromFirestore(id: string, data: DocumentData): BatchDocument {
-  const toIso = (ts: unknown): string => {
-    if (!ts) return new Date().toISOString();
-    if (typeof ts === 'string') return ts;
-    if (ts && typeof ts === 'object' && 'toDate' in ts) {
-      return (ts as Timestamp).toDate().toISOString();
-    }
-    return new Date().toISOString();
-  };
+function toIso(ts: unknown): string {
+  if (!ts) return new Date().toISOString();
+  if (typeof ts === 'string') return ts;
+  if (ts && typeof ts === 'object' && 'toDate' in ts) {
+    return (ts as Timestamp).toDate().toISOString();
+  }
+  return new Date().toISOString();
+}
 
+function fromFirestore(id: string, data: DocumentData): BatchDocument {
   return {
     id,
     centreId: data.centreId ?? '',
@@ -46,10 +51,14 @@ function fromFirestore(id: string, data: DocumentData): BatchDocument {
     description: data.description ?? '',
     sport: data.sport ?? 'BADMINTON',
     level: data.level ?? 'BEGINNER',
-    schedule: Array.isArray(data.schedule) ? data.schedule : [],
-    maxCapacity: data.maxCapacity ?? 20,
+    startTime: data.startTime ?? '00:00',
+    endTime: data.endTime ?? '00:00',
+    offeredDays: Array.isArray(data.offeredDays) ? (data.offeredDays as DayOfWeek[]) : [],
+    frequencyPlans: Array.isArray(data.frequencyPlans)
+      ? (data.frequencyPlans as FrequencyPlan[])
+      : [],
+    maxCapacity: data.maxCapacity ?? 30,
     currentEnrolment: data.currentEnrolment ?? 0,
-    monthlyFeePaise: data.monthlyFeePaise ?? 0,
     coachIds: Array.isArray(data.coachIds) ? data.coachIds : [],
     studentIds: Array.isArray(data.studentIds) ? data.studentIds : [],
     status: data.status ?? 'ACTIVE',
@@ -67,9 +76,14 @@ function toFirestoreData(values: BatchFormValues, userId: string) {
     description: (values.description ?? '').trim(),
     sport: values.sport as SportType,
     level: values.level as BatchLevel,
-    schedule: values.schedule as BatchTimeSlot[],
+    startTime: values.startTime,
+    endTime: values.endTime,
+    offeredDays: values.offeredDays as DayOfWeek[],
+    frequencyPlans: values.frequencyPlans.map((p) => ({
+      daysPerWeek: p.daysPerWeek,
+      monthlyFeePaise: rupeesToPaise(p.monthlyFeeRupees),
+    })),
     maxCapacity: values.maxCapacity,
-    monthlyFeePaise: rupeesToPaise(values.monthlyFeeRupees),
     coachIds: values.coachIds,
     status: values.status as BatchStatus,
     updatedAt: serverTimestamp(),

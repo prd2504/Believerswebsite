@@ -34,9 +34,7 @@ export default function CoachDashboard() {
   useEffect(() => { load(); }, [load]);
 
   const todayDow = new Date().getDay();
-  const todayBatches = batches.filter((b) =>
-    b.schedule.some((s) => s.dayOfWeek === todayDow),
-  );
+  const todayBatches = batches.filter((b) => b.offeredDays.includes(todayDow as never));
   const totalStudents = batches.reduce((sum, b) => sum + b.currentEnrolment, 0);
 
   if (loading) {
@@ -79,21 +77,18 @@ export default function CoachDashboard() {
         <p className="mb-6 text-xs text-gray-400">No sessions scheduled for today.</p>
       ) : (
         <div className="mb-6 space-y-2">
-          {todayBatches.map((batch) => {
-            const todaySlots = batch.schedule.filter((s) => s.dayOfWeek === todayDow);
-            return todaySlots.map((slot, idx) => (
-              <div key={`${batch.id}-${idx}`} className="card flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-brand-secondary">{batch.name}</p>
-                  <p className="text-xs text-gray-400">{batch.currentEnrolment} students</p>
-                </div>
-                <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                  <Calendar size={12} />
-                  {slot.startTime} – {slot.endTime}
-                </div>
+          {todayBatches.map((batch) => (
+            <div key={batch.id} className="card flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-brand-secondary">{batch.name}</p>
+                <p className="text-xs text-gray-400">{batch.currentEnrolment} enrolled</p>
               </div>
-            ));
-          })}
+              <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                <Calendar size={12} />
+                {batch.startTime} – {batch.endTime}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

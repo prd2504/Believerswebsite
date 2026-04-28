@@ -1,6 +1,14 @@
 /**
  * Attendance service — Firestore operations for the nested
- * /attendance/{batchId}/sessions/{sessionId} and .../records/{studentId} paths.
+ * /attendance/{batchId}/sessions/{sessionId} and .../records/{recordId} paths.
+ *
+ * Records carry an attendeeType:
+ *   - REGULAR : enrolled student whose selectedDays includes today
+ *   - MAKEUP  : enrolled student making up a missed regular session
+ *   - EXTRA   : existing student attending a bonus session
+ *   - TRIAL   : walk-in / trial — may not be a Student doc yet
+ *
+ * Only REGULAR + MAKEUP feed the student's attendance % (computed by Cloud Function).
  */
 
 import {
@@ -18,10 +26,11 @@ import {
   type Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import type {
-  SessionDocument,
-  AttendanceRecord,
-  AttendanceStatus,
+import {
+  type SessionDocument,
+  type AttendanceRecord,
+  type AttendanceStatus,
+  type AttendeeType,
 } from '@bba/shared';
 
 // ── Path helpers ──
@@ -38,8 +47,8 @@ function recordsCol(batchId: string, sessionId: string) {
   return collection(db, 'attendance', batchId, 'sessions', sessionId, 'records');
 }
 
-function recordRef(batchId: string, sessionId: string, studentId: string) {
-  return doc(db, 'attendance', batchId, 'sessions', sessionId, 'records', studentId);
+function recordRef(batchId: string, sessionId: string, recordId: string) {
+  return doc(db, 'attendance', batchId, 'sessions', sessionId, 'records', recordId);
 }
 
 // ── Converters ──
@@ -75,7 +84,11 @@ function sessionFromFirestore(id: string, data: DocumentData): SessionDocument {
 function recordFromFirestore(id: string, data: DocumentData): AttendanceRecord {
   return {
     id,
-    studentId: data.studentId ?? id,
+    studentId: data.studentId ?? null,
+    attendeeType: (data.attendeeType ?? 'REGULAR') as AttendeeType,
+    walkInName: data.walkInName ?? null,
+    walkInPhone: data.walkInPhone ?? null,
+    walkInNotes: data.walkInNotes ?? null,
     batchId: data.batchId ?? '',
     sessionId: data.sessionId ?? '',
     sessionDate: data.sessionDate ?? '',
@@ -96,9 +109,9 @@ export async function getOrCreateSession(
   batchId: string,
   centreId: string,
   sessionDate: string,
-  coachId: string,
+  userId: string,
 ): Promise<SessionDocument> {
-  const sessionId = sessionDate; // Use date as the session id (one session/day/batch)
+  const sessionId = sessionDate; // one session per day per batch
   const ref = sessionRef(batchId, sessionId);
   const snap = await getDoc(ref);
 
@@ -106,14 +119,13 @@ export async function getOrCreateSession(
     return sessionFromFirestore(snap.id, snap.data());
   }
 
-  // Create new session
   const now = new Date().toISOString();
   const editLockAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   const newData = {
     batchId,
     centreId,
     sessionDate,
-    coachIds: [coachId],
+    coachIds: [userId],
     startedAt: now,
     endedAt: null,
     editLockAt,
@@ -121,8 +133,8 @@ export async function getOrCreateSession(
     cancellationReason: null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    createdBy: coachId,
-    updatedBy: coachId,
+    createdBy: userId,
+    updatedBy: userId,
   };
 
   await setDoc(ref, newData);
@@ -131,7 +143,7 @@ export async function getOrCreateSession(
     batchId,
     centreId,
     sessionDate,
-    coachIds: [coachId],
+    coachIds: [userId],
     startedAt: now,
     endedAt: null,
     editLockAt,
@@ -139,8 +151,8 @@ export async function getOrCreateSession(
     cancellationReason: null,
     createdAt: now,
     updatedAt: now,
-    createdBy: coachId,
-    updatedBy: coachId,
+    createdBy: userId,
+    updatedBy: userId,
   };
 }
 
@@ -169,18 +181,46 @@ export async function getSessionsByDateRange(
 
 // ── Attendance records ──
 
-/** Save attendance marks for all students in one session. */
+export interface AttendanceMarkInput {
+  /** Existing student id. NULL only when attendeeType=TRIAL and student isn't in system. */
+  studentId: string | null;
+  attendeeType: AttendeeType;
+  status: AttendanceStatus;
+  note?: string;
+  /** Required when studentId is null (pure trial walk-in). */
+  walkIn?: { name: string; phone: string; notes?: string };
+}
+
+/**
+ * Save attendance marks for a session in a single batch write. Use this to persist the
+ * coach's session — pass every attendee (regular roster + ad-hoc additions).
+ */
 export async function saveAttendanceMarks(
   batchId: string,
   sessionId: string,
   sessionDate: string,
-  marks: { studentId: string; status: AttendanceStatus; note?: string }[],
+  marks: AttendanceMarkInput[],
   userId: string,
 ): Promise<void> {
   for (const mark of marks) {
-    const ref = recordRef(batchId, sessionId, mark.studentId);
+    // Record id strategy:
+    //   - student-linked records: id = studentId (one per student per session)
+    //   - pure trial walk-ins:    id = "trial_<phoneOrTimestamp>"  (auto-generated)
+    let recordId: string;
+    if (mark.studentId) {
+      recordId = mark.studentId;
+    } else {
+      const phoneSlug = (mark.walkIn?.phone ?? '').replace(/\D/g, '') || `${Date.now()}`;
+      recordId = `trial_${phoneSlug}`;
+    }
+
+    const ref = recordRef(batchId, sessionId, recordId);
     await setDoc(ref, {
       studentId: mark.studentId,
+      attendeeType: mark.attendeeType,
+      walkInName: mark.walkIn?.name ?? null,
+      walkInPhone: mark.walkIn?.phone ?? null,
+      walkInNotes: mark.walkIn?.notes ?? null,
       batchId,
       sessionId,
       sessionDate,
@@ -194,7 +234,6 @@ export async function saveAttendanceMarks(
     });
   }
 
-  // Update session endedAt
   await updateDoc(sessionRef(batchId, sessionId), {
     endedAt: new Date().toISOString(),
     updatedAt: serverTimestamp(),

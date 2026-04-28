@@ -111,13 +111,14 @@ export default function BatchesPage() {
       description: b.description,
       sport: b.sport,
       level: b.level,
-      schedule: b.schedule.map((s) => ({
-        dayOfWeek: s.dayOfWeek,
-        startTime: s.startTime,
-        endTime: s.endTime,
+      startTime: b.startTime,
+      endTime: b.endTime,
+      offeredDays: b.offeredDays,
+      frequencyPlans: b.frequencyPlans.map((p) => ({
+        daysPerWeek: p.daysPerWeek,
+        monthlyFeeRupees: paiseToRupees(p.monthlyFeePaise),
       })),
       maxCapacity: b.maxCapacity,
-      monthlyFeeRupees: paiseToRupees(b.monthlyFeePaise),
       coachIds: b.coachIds,
       status: b.status,
     };

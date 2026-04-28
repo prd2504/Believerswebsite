@@ -10,7 +10,7 @@ import {
   defaultStudentFormValues,
 } from '@/lib/schemas/studentSchema';
 import { BloodGroup, StudentStatus, BatchLevel } from '@bba/shared';
-import type { CentreDocument, BatchDocument } from '@bba/shared';
+import type { CentreDocument } from '@bba/shared';
 
 const GENDER_OPTIONS = [
   { value: 'M', label: 'Male' },
@@ -21,39 +21,22 @@ const GENDER_OPTIONS = [
 
 interface StudentFormProps {
   centres: CentreDocument[];
-  batches: BatchDocument[];
   initialValues?: Partial<StudentFormValues>;
   onSubmit: (values: StudentFormValues) => Promise<void>;
   onCancel: () => void;
   busy?: boolean;
 }
 
-export function StudentForm({ centres, batches, initialValues, onSubmit, onCancel, busy }: StudentFormProps) {
+export function StudentForm({ centres, initialValues, onSubmit, onCancel, busy }: StudentFormProps) {
   const defaults = { ...defaultStudentFormValues(centres[0]?.id), ...initialValues };
   const {
     register,
     handleSubmit,
-    watch,
-    setValue,
     formState: { errors },
   } = useForm<StudentFormValues>({
     resolver: zodResolver(studentFormSchema),
     defaultValues: defaults,
   });
-
-  const selectedCentreId = watch('primaryCentreId');
-  const selectedBatchIds = watch('batchIds') ?? [];
-
-  // Filter batches to show only those from the selected centre
-  const centreBatches = batches.filter((b) => b.centreId === selectedCentreId);
-
-  function toggleBatch(batchId: string) {
-    if (selectedBatchIds.includes(batchId)) {
-      setValue('batchIds', selectedBatchIds.filter((id) => id !== batchId));
-    } else {
-      setValue('batchIds', [...selectedBatchIds, batchId]);
-    }
-  }
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
@@ -197,34 +180,10 @@ export function StudentForm({ centres, batches, initialValues, onSubmit, onCance
           </div>
         </div>
 
-        {/* Batch selector */}
-        <div className="mt-4">
-          <label className="label">Batches</label>
-          {centreBatches.length === 0 ? (
-            <p className="text-xs text-gray-400">
-              {selectedCentreId ? 'No batches at this centre yet.' : 'Select a centre first.'}
-            </p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {centreBatches.map((batch) => (
-                <button
-                  key={batch.id}
-                  type="button"
-                  onClick={() => toggleBatch(batch.id)}
-                  disabled={busy}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                    selectedBatchIds.includes(batch.id)
-                      ? 'border-brand-primary bg-brand-primary-light text-brand-primary'
-                      : 'border-gray-200 text-gray-500 hover:border-gray-300'
-                  }`}
-                >
-                  {batch.name}
-                </button>
-              ))}
-            </div>
-          )}
-          {errors.batchIds && <p className="mt-1 text-xs text-red-600">{errors.batchIds.message}</p>}
-        </div>
+        <p className="mt-3 text-xs text-gray-400">
+          Tip: enrol the student in a batch from the Students list using the
+          &ldquo;Enrol&rdquo; action — that&rsquo;s where you pick the days/week and pricing plan.
+        </p>
       </fieldset>
 
       {/* Actions */}

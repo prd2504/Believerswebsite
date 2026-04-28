@@ -8,6 +8,7 @@ export * from './roles.js';
 export * from './user.js';
 export * from './centre.js';
 export * from './batch.js';
+export * from './enrollment.js';
 export * from './student.js';
 export * from './attendance.js';
 export * from './payment.js';

@@ -1,5 +1,10 @@
 /**
- * Student CRUD service — all Firestore operations for /students/{studentId}.
+ * Student CRUD service — Firestore operations for /students/{studentId}.
+ *
+ * Note: this service no longer manages /batches.studentIds or .currentEnrolment.
+ * Those are denormalised mirrors maintained by enrollmentService.enrollStudent /
+ * endEnrollment. Creating or editing a student profile here does NOT enrol them
+ * into anything — use the dedicated enrolment flow.
  */
 
 import {
@@ -14,9 +19,6 @@ import {
   query,
   orderBy,
   where,
-  arrayUnion,
-  arrayRemove,
-  increment,
   type DocumentData,
   type Timestamp,
 } from 'firebase/firestore';
@@ -87,7 +89,6 @@ function toFirestoreData(values: StudentFormValues, userId: string) {
       phone: values.emergencyContact.phone.trim(),
     },
     primaryCentreId: values.primaryCentreId,
-    batchIds: values.batchIds,
     level: values.level as BatchLevel,
     status: values.status as StudentStatus,
     joinedDate: values.joinedDate,
@@ -97,14 +98,12 @@ function toFirestoreData(values: StudentFormValues, userId: string) {
   };
 }
 
-/** Fetch all students ordered by name. */
 export async function getAllStudents(): Promise<StudentDocument[]> {
   const q = query(collection(db, COLLECTIONS.students), orderBy('name', 'asc'));
   const snap = await getDocs(q);
   return snap.docs.map((d) => fromFirestore(d.id, d.data()));
 }
 
-/** Fetch students at a specific centre. */
 export async function getStudentsByCentre(centreId: string): Promise<StudentDocument[]> {
   const q = query(
     collection(db, COLLECTIONS.students),
@@ -115,7 +114,6 @@ export async function getStudentsByCentre(centreId: string): Promise<StudentDocu
   return snap.docs.map((d) => fromFirestore(d.id, d.data()));
 }
 
-/** Fetch students enrolled in a specific batch. */
 export async function getStudentsByBatch(batchId: string): Promise<StudentDocument[]> {
   const q = query(
     collection(db, COLLECTIONS.students),
@@ -125,72 +123,38 @@ export async function getStudentsByBatch(batchId: string): Promise<StudentDocume
   return snap.docs.map((d) => fromFirestore(d.id, d.data()));
 }
 
-/** Fetch a single student by id. */
 export async function getStudentById(studentId: string): Promise<StudentDocument | null> {
   const snap = await getDoc(doc(db, COLLECTIONS.students, studentId));
   if (!snap.exists()) return null;
   return fromFirestore(snap.id, snap.data());
 }
 
-/** Create a new student. Returns the new document id. */
+/** Create a new student profile. Returns the new document id. Does NOT enrol. */
 export async function createStudent(values: StudentFormValues, userId: string): Promise<string> {
   const ref = await addDoc(collection(db, COLLECTIONS.students), {
     ...toFirestoreData(values, userId),
     photoPath: null,
+    batchIds: [],
     createdAt: serverTimestamp(),
     createdBy: userId,
   });
-
-  // Update currentEnrolment on each enrolled batch
-  for (const batchId of values.batchIds) {
-    const batchRef = doc(db, COLLECTIONS.batches, batchId);
-    await updateDoc(batchRef, {
-      studentIds: arrayUnion(ref.id),
-      currentEnrolment: increment(1),
-    });
-  }
-
   return ref.id;
 }
 
-/** Update an existing student. Handles batch enrolment changes. */
+/** Update an existing student's profile fields. Does NOT touch batch enrolment. */
 export async function updateStudent(
   studentId: string,
   values: StudentFormValues,
-  previousBatchIds: string[],
   userId: string,
 ): Promise<void> {
-  const ref = doc(db, COLLECTIONS.students, studentId);
-  await updateDoc(ref, toFirestoreData(values, userId));
-
-  // Compute added / removed batches
-  const added = values.batchIds.filter((id) => !previousBatchIds.includes(id));
-  const removed = previousBatchIds.filter((id) => !values.batchIds.includes(id));
-
-  for (const batchId of added) {
-    const batchRef = doc(db, COLLECTIONS.batches, batchId);
-    await updateDoc(batchRef, {
-      studentIds: arrayUnion(studentId),
-      currentEnrolment: increment(1),
-    });
-  }
-  for (const batchId of removed) {
-    const batchRef = doc(db, COLLECTIONS.batches, batchId);
-    await updateDoc(batchRef, {
-      studentIds: arrayRemove(studentId),
-      currentEnrolment: increment(-1),
-    });
-  }
+  await updateDoc(doc(db, COLLECTIONS.students, studentId), toFirestoreData(values, userId));
 }
 
-/** Delete a student and clean up batch enrolments. */
-export async function deleteStudent(studentId: string, batchIds: string[]): Promise<void> {
-  for (const batchId of batchIds) {
-    const batchRef = doc(db, COLLECTIONS.batches, batchId);
-    await updateDoc(batchRef, {
-      studentIds: arrayRemove(studentId),
-      currentEnrolment: increment(-1),
-    });
-  }
+/**
+ * Delete a student profile. Caller is responsible for ending all enrolments first
+ * (use enrollmentService.endEnrollment) — this function does NOT cascade to /enrollments
+ * or to batch denormalised counters.
+ */
+export async function deleteStudent(studentId: string): Promise<void> {
   await deleteDoc(doc(db, COLLECTIONS.students, studentId));
 }

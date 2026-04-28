@@ -1,13 +1,12 @@
 /**
- * Card display for a single batch in the list view.
+ * Card display for a single batch in the list view. Shows the time window, the
+ * days the batch runs, and the cheapest/highest pricing tier as a fee range.
  */
 
-import { Users, Clock, Pencil, Trash2 } from 'lucide-react';
-import type { BatchDocument } from '@bba/shared';
-import { paiseToRupees, formatINR } from '@bba/shared';
+import { Users, Clock, Pencil, Trash2, Calendar } from 'lucide-react';
+import type { BatchDocument, DayOfWeek } from '@bba/shared';
+import { formatINR, DAY_OF_WEEK_SHORT } from '@bba/shared';
 import { cn } from '@/lib/cn';
-
-const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const STATUS_STYLES: Record<string, string> = {
   ACTIVE: 'bg-green-50 text-green-700',
@@ -28,23 +27,42 @@ interface BatchCardProps {
   onDelete: (batch: BatchDocument) => void;
 }
 
-export function BatchCard({ batch, centreName, onEdit, onDelete }: BatchCardProps) {
-  const occupancyPct = batch.maxCapacity > 0
-    ? Math.round((batch.currentEnrolment / batch.maxCapacity) * 100)
-    : 0;
+function dayList(days: DayOfWeek[]): string {
+  if (days.length === 0) return 'No days set';
+  return days.map((d) => DAY_OF_WEEK_SHORT[d]).join(' · ');
+}
 
-  const scheduleText = batch.schedule
-    .map((s) => `${DAY_SHORT[s.dayOfWeek]} ${s.startTime}–${s.endTime}`)
-    .join(', ');
+function formatPlanRange(batch: BatchDocument): string {
+  if (batch.frequencyPlans.length === 0) return '—';
+  const fees = batch.frequencyPlans.map((p) => p.monthlyFeePaise);
+  const min = Math.min(...fees);
+  const max = Math.max(...fees);
+  if (min === max) return `${formatINR(min, { withDecimals: false })}/mo`;
+  return `${formatINR(min, { withDecimals: false })} – ${formatINR(max, { withDecimals: false })}/mo`;
+}
+
+export function BatchCard({ batch, centreName, onEdit, onDelete }: BatchCardProps) {
+  const occupancyPct =
+    batch.maxCapacity > 0 ? Math.round((batch.currentEnrolment / batch.maxCapacity) * 100) : 0;
 
   return (
     <div className="card group relative transition-shadow hover:shadow-card-hover">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', STATUS_STYLES[batch.status] ?? STATUS_STYLES.INACTIVE)}>
+          <span
+            className={cn(
+              'rounded-full px-2.5 py-0.5 text-xs font-medium',
+              STATUS_STYLES[batch.status] ?? STATUS_STYLES.INACTIVE,
+            )}
+          >
             {batch.status}
           </span>
-          <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', LEVEL_STYLES[batch.level] ?? LEVEL_STYLES.BEGINNER)}>
+          <span
+            className={cn(
+              'rounded-full px-2.5 py-0.5 text-xs font-medium',
+              LEVEL_STYLES[batch.level] ?? LEVEL_STYLES.BEGINNER,
+            )}
+          >
             {batch.level}
           </span>
         </div>
@@ -52,7 +70,11 @@ export function BatchCard({ batch, centreName, onEdit, onDelete }: BatchCardProp
           <button onClick={() => onEdit(batch)} className="btn-ghost p-1.5" aria-label="Edit batch">
             <Pencil size={14} />
           </button>
-          <button onClick={() => onDelete(batch)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50" aria-label="Delete batch">
+          <button
+            onClick={() => onDelete(batch)}
+            className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"
+            aria-label="Delete batch"
+          >
             <Trash2 size={14} />
           </button>
         </div>
@@ -61,22 +83,44 @@ export function BatchCard({ batch, centreName, onEdit, onDelete }: BatchCardProp
       <h3 className="text-base font-semibold text-brand-secondary">{batch.name}</h3>
       {centreName && <p className="text-xs text-gray-400">{centreName}</p>}
 
-      {/* Schedule */}
+      {/* Time window */}
       <p className="mt-2 flex items-start gap-1.5 text-sm text-gray-500">
         <Clock size={14} className="mt-0.5 shrink-0" />
-        <span>{scheduleText || 'No schedule set'}</span>
+        <span>
+          {batch.startTime}–{batch.endTime}
+        </span>
       </p>
+
+      {/* Offered days */}
+      <p className="mt-1 flex items-start gap-1.5 text-xs text-gray-500">
+        <Calendar size={13} className="mt-0.5 shrink-0" />
+        <span>{dayList(batch.offeredDays)}</span>
+      </p>
+
+      {/* Plans */}
+      {batch.frequencyPlans.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {batch.frequencyPlans.map((p) => (
+            <span
+              key={p.daysPerWeek}
+              className="rounded-full bg-gray-50 px-2 py-0.5 text-xs text-gray-600"
+            >
+              {p.daysPerWeek}d/wk · {formatINR(p.monthlyFeePaise, { withDecimals: false })}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Stats */}
       <div className="mt-4 flex items-center justify-between border-t border-gray-50 pt-3">
         <div className="flex items-center gap-1 text-xs text-gray-500">
           <Users size={13} />
-          <span>{batch.currentEnrolment}/{batch.maxCapacity}</span>
+          <span>
+            {batch.currentEnrolment}/{batch.maxCapacity}
+          </span>
           <span className="text-gray-300">({occupancyPct}%)</span>
         </div>
-        <span className="text-sm font-semibold text-brand-secondary">
-          {formatINR(batch.monthlyFeePaise, { withDecimals: false })}/mo
-        </span>
+        <span className="text-sm font-semibold text-brand-secondary">{formatPlanRange(batch)}</span>
       </div>
 
       {/* Occupancy bar */}

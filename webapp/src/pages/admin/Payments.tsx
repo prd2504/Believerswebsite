@@ -3,7 +3,8 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, IndianRupee } from 'lucide-react';
+import { Plus, IndianRupee, Download } from 'lucide-react';
+import { exportPaymentsCsv } from '@/lib/csv';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import {
@@ -60,6 +61,21 @@ export default function PaymentsPage() {
     batches.forEach((b) => m.set(b.id, b.name));
     return m;
   }, [batches]);
+
+  const centreMap = useMemo(() => {
+    const m = new Map<string, string>();
+    centres.forEach((c) => m.set(c.id, c.name));
+    return m;
+  }, [centres]);
+
+  function handleExport() {
+    if (filtered.length === 0) {
+      toast.info('Nothing to export.');
+      return;
+    }
+    exportPaymentsCsv(filtered, studentMap, batchMap, centreMap);
+    toast.success(`Exported ${filtered.length} payment records`);
+  }
 
   // Filtered list
   const filtered = useMemo(() => {
@@ -239,9 +255,14 @@ export default function PaymentsPage() {
           <h1 className="text-xl font-bold text-brand-secondary">Payments</h1>
           <p className="text-sm text-gray-500">{filtered.length} record{filtered.length !== 1 ? 's' : ''}</p>
         </div>
-        <button onClick={() => setMode('create')} className="btn-primary">
-          <Plus size={16} /> Record Payment
-        </button>
+        <div className="flex gap-2">
+          <button onClick={handleExport} className="btn-secondary" title="Export visible rows to CSV">
+            <Download size={16} /> Export CSV
+          </button>
+          <button onClick={() => setMode('create')} className="btn-primary">
+            <Plus size={16} /> Record Payment
+          </button>
+        </div>
       </div>
 
       {/* Summary cards */}

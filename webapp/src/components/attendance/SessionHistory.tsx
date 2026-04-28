@@ -109,16 +109,24 @@ export function SessionHistory({ batchId, batchName, studentMap }: SessionHistor
                   <p className="text-xs text-gray-400">No records for this session.</p>
                 ) : (
                   <div className="space-y-1.5">
-                    {expandedRecords.map((rec) => (
-                      <div key={rec.id} className="flex items-center gap-2 text-xs">
-                        <span className={cn('h-2 w-2 rounded-full', STATUS_DOT[rec.status] ?? 'bg-gray-300')} />
-                        <span className="flex-1 text-gray-700">
-                          {studentMap.get(rec.studentId) ?? rec.studentId}
-                        </span>
-                        <span className="font-medium text-gray-500">{rec.status}</span>
-                        {rec.note && <span className="text-gray-400">— {rec.note}</span>}
-                      </div>
-                    ))}
+                    {expandedRecords.map((rec) => {
+                      const displayName = rec.studentId
+                        ? (studentMap.get(rec.studentId) ?? rec.studentId)
+                        : (rec.walkInName ?? 'Walk-in');
+                      return (
+                        <div key={rec.id} className="flex items-center gap-2 text-xs">
+                          <span className={cn('h-2 w-2 rounded-full', STATUS_DOT[rec.status] ?? 'bg-gray-300')} />
+                          <span className="flex-1 text-gray-700">{displayName}</span>
+                          {rec.attendeeType && rec.attendeeType !== 'REGULAR' && (
+                            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                              {rec.attendeeType}
+                            </span>
+                          )}
+                          <span className="font-medium text-gray-500">{rec.status}</span>
+                          {rec.note && <span className="text-gray-400">— {rec.note}</span>}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

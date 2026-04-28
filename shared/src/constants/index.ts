@@ -80,6 +80,7 @@ export const COLLECTIONS = {
   users: 'users',
   centres: 'centres',
   batches: 'batches',
+  enrollments: 'enrollments',
   students: 'students',
   attendance: 'attendance',
   sessions: 'sessions',

@@ -50,7 +50,7 @@ export default function StudentAttendance() {
         const sessions = await getSessionsByBatch(batch.id);
         for (const session of sessions.slice(0, 30)) {
           const recs = await getAttendanceRecords(batch.id, session.id);
-          const myRec = recs.find((r) => studentIds.includes(r.studentId));
+          const myRec = recs.find((r) => r.studentId != null && studentIds.includes(r.studentId));
           if (myRec) {
             allRecords.push({
               date: session.sessionDate,

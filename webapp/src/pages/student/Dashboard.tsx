@@ -52,11 +52,12 @@ export default function StudentDashboard() {
   useEffect(() => { load(); }, [load]);
 
   const todayDow = new Date().getDay();
-  const todaySessions = batches.flatMap((b) =>
-    b.schedule
-      .filter((s) => s.dayOfWeek === todayDow)
-      .map((s) => ({ batchName: b.name, startTime: s.startTime, endTime: s.endTime })),
-  );
+  // Note: this shows batches the student is enrolled in that *run* today. The student's
+  // own selectedDays filter happens at the EnrollmentDocument level — see Schedule.tsx
+  // for the per-day expansion. This dashboard is a coarse "today's possible sessions" view.
+  const todaySessions = batches
+    .filter((b) => b.offeredDays.includes(todayDow as never))
+    .map((b) => ({ batchName: b.name, startTime: b.startTime, endTime: b.endTime }));
 
   const pendingPayments = payments.filter((p) => p.status === 'PENDING' || p.status === 'OVERDUE');
   const totalDue = pendingPayments.reduce((sum, p) => sum + p.totalAmountPaise, 0);

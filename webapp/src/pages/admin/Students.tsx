@@ -1,9 +1,10 @@
 /**
- * Student management page — list students with search/filter, create/edit/delete.
+ * Student management page — list students with search/filter, create/edit/delete,
+ * plus a per-row "Enrol" action that opens the EnrollmentDialog.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, Users, Search } from 'lucide-react';
+import { Plus, Users, Search, UserPlus, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import {
@@ -16,8 +17,10 @@ import { getAllCentres } from '@/services/centreService';
 import { getAllBatches } from '@/services/batchService';
 import { StudentCard } from '@/components/students/StudentCard';
 import { StudentForm } from '@/components/students/StudentForm';
+import { EnrollmentDialog } from '@/components/students/EnrollmentDialog';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
+import { exportStudentsCsv } from '@/lib/csv';
 import type { StudentDocument, CentreDocument, BatchDocument } from '@bba/shared';
 import type { StudentFormValues } from '@/lib/schemas/studentSchema';
 
@@ -31,6 +34,7 @@ export default function StudentsPage() {
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<Mode>('list');
   const [editTarget, setEditTarget] = useState<StudentDocument | null>(null);
+  const [enrolTarget, setEnrolTarget] = useState<StudentDocument | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Filters
@@ -39,7 +43,6 @@ export default function StudentsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [levelFilter, setLevelFilter] = useState('');
 
-  // Lookup maps
   const centreMap = useMemo(() => {
     const m = new Map<string, string>();
     centres.forEach((c) => m.set(c.id, c.name));
@@ -52,7 +55,6 @@ export default function StudentsPage() {
     return m;
   }, [batches]);
 
-  // Filtered list
   const filtered = useMemo(() => {
     let result = students;
     if (search) {
@@ -99,7 +101,7 @@ export default function StudentsPage() {
     setBusy(true);
     try {
       await createStudent(values, profile.id);
-      toast.success('Student created');
+      toast.success('Student created. Use "Enrol" to put them in a batch.');
       setMode('list');
       await load();
     } catch (err) {
@@ -114,7 +116,7 @@ export default function StudentsPage() {
     if (!profile || !editTarget) return;
     setBusy(true);
     try {
-      await updateStudent(editTarget.id, values, editTarget.batchIds, profile.id);
+      await updateStudent(editTarget.id, values, profile.id);
       toast.success('Student updated');
       setMode('list');
       setEditTarget(null);
@@ -128,9 +130,13 @@ export default function StudentsPage() {
   };
 
   const handleDelete = async (student: StudentDocument) => {
+    if (student.batchIds.length > 0) {
+      toast.error('End all enrolments before deleting this student.');
+      return;
+    }
     if (!confirm(`Delete "${student.name}"? This cannot be undone.`)) return;
     try {
-      await deleteStudent(student.id, student.batchIds);
+      await deleteStudent(student.id);
       toast.success('Student deleted');
       await load();
     } catch (err) {
@@ -159,12 +165,20 @@ export default function StudentsPage() {
       bloodGroup: s.bloodGroup,
       emergencyContact: s.emergencyContact,
       primaryCentreId: s.primaryCentreId,
-      batchIds: s.batchIds,
       level: s.level,
       status: s.status,
       joinedDate: s.joinedDate,
       medicalNotes: s.medicalNotes ?? '',
     };
+  }
+
+  function handleExport() {
+    if (filtered.length === 0) {
+      toast.info('Nothing to export.');
+      return;
+    }
+    exportStudentsCsv(filtered, centreMap);
+    toast.success(`Exported ${filtered.length} students`);
   }
 
   // ── Create / Edit view ──
@@ -176,7 +190,6 @@ export default function StudentsPage() {
         <div className="card">
           <StudentForm
             centres={centres}
-            batches={batches}
             onSubmit={handleCreate}
             onCancel={() => setMode('list')}
             busy={busy}
@@ -193,7 +206,6 @@ export default function StudentsPage() {
         <div className="card">
           <StudentForm
             centres={centres}
-            batches={batches}
             initialValues={studentToFormValues(editTarget)}
             onSubmit={handleUpdate}
             onCancel={() => { setMode('list'); setEditTarget(null); }}
@@ -206,7 +218,7 @@ export default function StudentsPage() {
 
   // ── List view ──
 
-  const hasFilters = search || centreFilter || statusFilter || levelFilter;
+  const hasFilters = !!(search || centreFilter || statusFilter || levelFilter);
 
   return (
     <div>
@@ -219,9 +231,14 @@ export default function StudentsPage() {
             {hasFilters ? ' matching filters' : ' total'}
           </p>
         </div>
-        <button onClick={() => setMode('create')} className="btn-primary">
-          <Plus size={16} /> Add Student
-        </button>
+        <div className="flex gap-2">
+          <button onClick={handleExport} className="btn-secondary" title="Export visible rows to CSV">
+            <Download size={16} /> Export CSV
+          </button>
+          <button onClick={() => setMode('create')} className="btn-primary">
+            <Plus size={16} /> Add Student
+          </button>
+        </div>
       </div>
 
       {/* Search & filters */}
@@ -288,16 +305,38 @@ export default function StudentsPage() {
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((s) => (
-            <StudentCard
-              key={s.id}
-              student={s}
-              centreName={centreMap.get(s.primaryCentreId)}
-              batchNames={s.batchIds.map((id) => batchMap.get(id)).filter(Boolean) as string[]}
-              onEdit={handleEdit}
-              onDelete={handleDelete}
-            />
+            <div key={s.id} className="space-y-1">
+              <StudentCard
+                student={s}
+                centreName={centreMap.get(s.primaryCentreId)}
+                batchNames={s.batchIds.map((id) => batchMap.get(id)).filter(Boolean) as string[]}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+              />
+              <button
+                onClick={() => setEnrolTarget(s)}
+                className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-gray-200 py-1.5 text-xs text-gray-500 hover:border-brand-primary hover:text-brand-primary"
+              >
+                <UserPlus size={12} /> Enrol in batch
+              </button>
+            </div>
           ))}
         </div>
+      )}
+
+      {enrolTarget && profile && (
+        <EnrollmentDialog
+          student={enrolTarget}
+          batches={batches.filter(
+            (b) => b.centreId === enrolTarget.primaryCentreId && b.status === 'ACTIVE',
+          )}
+          userId={profile.id}
+          onClose={() => setEnrolTarget(null)}
+          onEnrolled={async () => {
+            setEnrolTarget(null);
+            await load();
+          }}
+        />
       )}
     </div>
   );
