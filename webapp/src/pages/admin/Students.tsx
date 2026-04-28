@@ -153,22 +153,10 @@ export default function StudentsPage() {
   function studentToFormValues(s: StudentDocument): Partial<StudentFormValues> {
     return {
       name: s.name,
-      dateOfBirth: s.dateOfBirth,
-      gender: s.gender,
-      guardianName: s.guardianName,
-      guardianUserId: s.guardianUserId,
       phone: s.phone ?? '',
       email: s.email ?? '',
-      address: s.address,
-      city: s.city,
-      pincode: s.pincode,
-      bloodGroup: s.bloodGroup,
-      emergencyContact: s.emergencyContact,
-      primaryCentreId: s.primaryCentreId,
       level: s.level,
-      status: s.status,
-      joinedDate: s.joinedDate,
-      medicalNotes: s.medicalNotes ?? '',
+      primaryCentreId: s.primaryCentreId,
     };
   }
 

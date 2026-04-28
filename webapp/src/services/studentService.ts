@@ -70,29 +70,31 @@ function fromFirestore(id: string, data: DocumentData): StudentDocument {
   };
 }
 
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function toFirestoreData(values: StudentFormValues, userId: string) {
   return {
     name: values.name.trim(),
-    dateOfBirth: values.dateOfBirth,
-    gender: values.gender,
-    guardianName: values.guardianName.trim(),
-    guardianUserId: values.guardianUserId || null,
-    phone: values.phone?.trim() || null,
+    phone: values.phone.trim() || null,
     email: values.email?.trim() || null,
-    address: values.address.trim(),
-    city: values.city.trim(),
-    pincode: values.pincode.trim(),
-    bloodGroup: values.bloodGroup as BloodGroup,
-    emergencyContact: {
-      name: values.emergencyContact.name.trim(),
-      relationship: values.emergencyContact.relationship.trim(),
-      phone: values.emergencyContact.phone.trim(),
-    },
-    primaryCentreId: values.primaryCentreId,
     level: values.level as BatchLevel,
-    status: values.status as StudentStatus,
-    joinedDate: values.joinedDate,
-    medicalNotes: values.medicalNotes?.trim() || null,
+    primaryCentreId: values.primaryCentreId,
+    // defaults for fields not collected in the form
+    dateOfBirth: '',
+    gender: 'UNDISCLOSED' as const,
+    guardianName: '',
+    guardianUserId: null,
+    address: '',
+    city: '',
+    pincode: '',
+    bloodGroup: 'UNKNOWN' as BloodGroup,
+    emergencyContact: { name: '', relationship: '', phone: '' },
+    status: 'ACTIVE' as StudentStatus,
+    joinedDate: todayStr(),
+    medicalNotes: null,
     updatedAt: serverTimestamp(),
     updatedBy: userId,
   };
