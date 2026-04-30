@@ -42,12 +42,22 @@ service cloud.firestore {
       return isSignedIn() && getRole() in ['SUPER_ADMIN', 'CENTRE_MANAGER'];
     }
 
+    function isActiveCoach() {
+      // Missing accountStatus field (existing docs) defaults to ACTIVE
+      return isSignedIn() && getRole() == 'COACH' && (
+        !('accountStatus' in getUserDoc().data) ||
+        getUserDoc().data.accountStatus == 'ACTIVE'
+      );
+    }
+
     function isCoach() {
-      return isSignedIn() && getRole() == 'COACH';
+      return isActiveCoach();
     }
 
     function isAdminOrCoach() {
-      return isSignedIn() && getRole() in ['SUPER_ADMIN', 'CENTRE_MANAGER', 'COACH'];
+      return isSignedIn() && (
+        getRole() in ['SUPER_ADMIN', 'CENTRE_MANAGER'] || isActiveCoach()
+      );
     }
 
     function isStudentOrParent() {

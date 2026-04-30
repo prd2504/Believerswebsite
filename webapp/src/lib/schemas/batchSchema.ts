@@ -18,6 +18,12 @@ const frequencyPlanSchema = z.object({
   monthlyFeeRupees: z.number().min(0, 'Fee cannot be negative'),
 });
 
+const timeSlotSchema = z.object({
+  startTime: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:mm format'),
+  endTime: z.string().regex(/^\d{2}:\d{2}$/, 'Use HH:mm format'),
+  label: z.string().max(60).default(''),
+});
+
 export const batchFormSchema = z.object({
   centreId: z.string().min(1, 'Select a centre'),
   name: z.string().min(2, 'Batch name must be at least 2 characters').max(100),
@@ -40,6 +46,7 @@ export const batchFormSchema = z.object({
   maxCapacity: z.number().int().min(1, 'Minimum capacity is 1').max(500),
   coachIds: z.array(z.string()),
   status: z.enum(['ACTIVE', 'PAUSED', 'INACTIVE']),
+  timeSlots: z.array(timeSlotSchema).default([]),
 }).refine(
   (data) => data.frequencyPlans.every((p) => p.daysPerWeek <= data.offeredDays.length),
   { message: 'A plan cannot require more days than the batch offers', path: ['frequencyPlans'] },
@@ -66,5 +73,6 @@ export function defaultBatchFormValues(centreId?: string): BatchFormValues {
     maxCapacity: 30,
     coachIds: [],
     status: 'ACTIVE',
+    timeSlots: [],
   };
 }

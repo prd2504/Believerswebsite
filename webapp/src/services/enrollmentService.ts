@@ -54,6 +54,7 @@ function fromFirestore(id: string, data: DocumentData): EnrollmentDocument {
     startDate: data.startDate ?? '',
     endDate: data.endDate ?? null,
     status: (data.status ?? 'ACTIVE') as EnrollmentStatus,
+    timeSlotStartTime: data.timeSlotStartTime ?? null,
     notes: data.notes ?? null,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
@@ -70,6 +71,8 @@ export interface EnrollInput {
   monthlyFeePaise: number;
   selectedDays: DayOfWeek[];
   startDate: string; // YYYY-MM-DD
+  /** "HH:mm" start time of the sub-slot the student attends. Null for single-slot batches. */
+  timeSlotStartTime?: string | null;
   notes?: string;
 }
 
@@ -107,6 +110,7 @@ export async function enrollStudent(input: EnrollInput, userId: string): Promise
     startDate: input.startDate,
     endDate: null,
     status: 'ACTIVE' satisfies EnrollmentStatus,
+    timeSlotStartTime: input.timeSlotStartTime ?? null,
     notes: input.notes?.trim() || null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),

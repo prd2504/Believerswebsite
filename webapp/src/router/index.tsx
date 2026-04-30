@@ -26,11 +26,13 @@ import { RootRedirect } from './RootRedirect';
 // ---- Lazy page imports ---------------------------------------------------------------
 const LoginPage = lazy(() => import('@/pages/auth/Login'));
 const RegisterPage = lazy(() => import('@/pages/auth/Register'));
+const PendingApprovalPage = lazy(() => import('@/pages/auth/PendingApproval'));
 
 const AdminDashboard = lazy(() => import('@/pages/admin/Dashboard'));
 const CentresPage = lazy(() => import('@/pages/admin/Centres'));
 const BatchesPage = lazy(() => import('@/pages/admin/Batches'));
 const AdminStudents = lazy(() => import('@/pages/admin/Students'));
+const AdminCoaches = lazy(() => import('@/pages/admin/Coaches'));
 const AdminAttendance = lazy(() => import('@/pages/admin/Attendance'));
 const AdminPayments = lazy(() => import('@/pages/admin/Payments'));
 const AdminProgress = lazy(() => import('@/pages/admin/Progress'));
@@ -67,6 +69,10 @@ const routes: RouteObject[] = [
     path: '/register',
     element: <Lazy><RegisterPage /></Lazy>,
   },
+  {
+    path: '/pending-approval',
+    element: <Lazy><PendingApprovalPage /></Lazy>,
+  },
 
   // Root redirect — sends authenticated users to their role home, guests to /login
   {
@@ -88,6 +94,7 @@ const routes: RouteObject[] = [
               { path: '/admin/centres', element: <Lazy><CentresPage /></Lazy> },
               { path: '/admin/batches', element: <Lazy><BatchesPage /></Lazy> },
               { path: '/admin/students', element: <Lazy><AdminStudents /></Lazy> },
+              { path: '/admin/coaches', element: <Lazy><AdminCoaches /></Lazy> },
               { path: '/admin/attendance', element: <Lazy><AdminAttendance /></Lazy> },
               { path: '/admin/payments', element: <Lazy><AdminPayments /></Lazy> },
               { path: '/admin/progress', element: <Lazy><AdminProgress /></Lazy> },

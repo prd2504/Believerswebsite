@@ -8,17 +8,24 @@
  */
 
 import {
+  collection,
   doc,
   getDoc,
+  getDocs,
   setDoc,
   updateDoc,
   serverTimestamp,
+  query,
+  where,
+  arrayUnion,
+  arrayRemove,
   type DocumentData,
   type Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import {
   UserRole,
+  AccountStatus,
   COLLECTIONS,
   DEFAULT_NOTIFICATION_PREFERENCES,
   type UserDocument,
@@ -60,6 +67,7 @@ function fromFirestore(id: string, data: DocumentData): UserDocument {
     email: data.email ?? null,
     photoPath: data.photoPath ?? null,
     centreIds: Array.isArray(data.centreIds) ? data.centreIds : [],
+    assignedBatchIds: Array.isArray(data.assignedBatchIds) ? data.assignedBatchIds : [],
     linkedStudentIds: Array.isArray(data.linkedStudentIds) ? data.linkedStudentIds : [],
     notificationPreferences: {
       ...DEFAULT_NOTIFICATION_PREFERENCES,
@@ -67,6 +75,7 @@ function fromFirestore(id: string, data: DocumentData): UserDocument {
     },
     onboardingComplete: Boolean(data.onboardingComplete ?? false),
     disabled: Boolean(data.disabled ?? false),
+    accountStatus: (data.accountStatus ?? AccountStatus.ACTIVE) as AccountStatus,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     createdBy: data.createdBy ?? null,
@@ -107,10 +116,12 @@ export async function ensureUserProfile(input: BootstrapProfileInput): Promise<U
     email: input.email,
     photoPath: null,
     centreIds: [],
+    assignedBatchIds: [],
     linkedStudentIds: [],
     notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES,
     onboardingComplete: false,
     disabled: false,
+    accountStatus: AccountStatus.ACTIVE,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     createdBy: null,
@@ -138,5 +149,132 @@ export async function updateUserProfile(
     ...patch,
     updatedAt: serverTimestamp(),
     updatedBy: uid,
+  });
+}
+
+// ── Coach management (admin only) ───────────────────────────────────────────
+
+/** All users with role=COACH, ordered by name. */
+export async function getAllCoaches(): Promise<UserDocument[]> {
+  const q = query(collection(db, COLLECTIONS.users), where('role', '==', UserRole.COACH));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => fromFirestore(d.id, d.data())).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Approve a pending coach: set accountStatus=ACTIVE, assign centre and batch access.
+ * Does NOT overwrite existing centreIds or assignedBatchIds — it unions them.
+ */
+export async function approveCoach(
+  uid: string,
+  centreIds: string[],
+  batchIds: string[],
+  adminId: string,
+): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.users, uid), {
+    accountStatus: AccountStatus.ACTIVE,
+    centreIds: arrayUnion(...centreIds),
+    assignedBatchIds: arrayUnion(...batchIds),
+    updatedAt: serverTimestamp(),
+    updatedBy: adminId,
+  });
+}
+
+/** Update a coach's assigned centres and batches (replaces existing arrays). */
+export async function updateCoachAssignments(
+  uid: string,
+  centreIds: string[],
+  batchIds: string[],
+  adminId: string,
+): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.users, uid), {
+    centreIds,
+    assignedBatchIds: batchIds,
+    updatedAt: serverTimestamp(),
+    updatedBy: adminId,
+  });
+}
+
+/** Suspend a coach — they can still log in but will see a suspended screen. */
+export async function suspendCoach(uid: string, adminId: string): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.users, uid), {
+    accountStatus: AccountStatus.SUSPENDED,
+    updatedAt: serverTimestamp(),
+    updatedBy: adminId,
+  });
+}
+
+/** Reactivate a suspended coach. */
+export async function reactivateCoach(uid: string, adminId: string): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.users, uid), {
+    accountStatus: AccountStatus.ACTIVE,
+    updatedAt: serverTimestamp(),
+    updatedBy: adminId,
+  });
+}
+
+/**
+ * Admin-creates a coach profile in Firestore (pre-approved, no pending state).
+ * The admin still needs to send the coach their login credentials separately —
+ * Firebase Auth user creation requires the Admin SDK or the user to self-register.
+ * This creates the /users doc that the coach's Firebase Auth sign-in will find.
+ */
+export async function createCoachProfile(
+  uid: string,
+  name: string,
+  email: string | null,
+  phone: string | null,
+  centreIds: string[],
+  batchIds: string[],
+  adminId: string,
+): Promise<void> {
+  await setDoc(doc(db, COLLECTIONS.users, uid), {
+    role: UserRole.COACH,
+    name,
+    email,
+    phone,
+    photoPath: null,
+    centreIds,
+    assignedBatchIds: batchIds,
+    linkedStudentIds: [],
+    notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES,
+    onboardingComplete: false,
+    disabled: false,
+    accountStatus: AccountStatus.ACTIVE,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    createdBy: adminId,
+    updatedBy: adminId,
+  });
+}
+
+/**
+ * Write a PENDING coach profile immediately after Firebase Auth registration.
+ * Called by the coach self-registration page to set role=COACH before
+ * ensureUserProfile can bootstrap a default STUDENT doc.
+ */
+export async function bootstrapCoachProfile(
+  uid: string,
+  name: string,
+  email: string | null,
+  phone: string | null,
+): Promise<void> {
+  await setDoc(doc(db, COLLECTIONS.users, uid), {
+    role: UserRole.COACH,
+    name,
+    email,
+    phone,
+    photoPath: null,
+    centreIds: [],
+    assignedBatchIds: [],
+    linkedStudentIds: [],
+    notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES,
+    onboardingComplete: false,
+    disabled: false,
+    accountStatus: AccountStatus.PENDING_APPROVAL,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    createdBy: null,
+    updatedBy: null,
   });
 }

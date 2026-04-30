@@ -29,6 +29,20 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   broadcasts: true,
 };
 
+/**
+ * Lifecycle state for an account. Only relevant for COACH accounts today — other roles
+ * are always ACTIVE. Existing docs without this field default to ACTIVE at read time.
+ */
+export const AccountStatus = {
+  /** Account is fully operational. */
+  ACTIVE: 'ACTIVE',
+  /** Coach self-registered and is waiting for admin approval + centre assignment. */
+  PENDING_APPROVAL: 'PENDING_APPROVAL',
+  /** Admin has suspended the account (e.g. coach left). */
+  SUSPENDED: 'SUSPENDED',
+} as const;
+export type AccountStatus = (typeof AccountStatus)[keyof typeof AccountStatus];
+
 export interface UserDocument extends BaseDocument {
   /** Firebase Auth uid — also the document id. */
   id: string;
@@ -52,6 +66,12 @@ export interface UserDocument extends BaseDocument {
   centreIds: string[];
 
   /**
+   * Batch ids explicitly assigned to a COACH. Drives the coach's attendance and roster
+   * views. Managed by the admin Coaches page — not by the coach themselves.
+   */
+  assignedBatchIds: string[];
+
+  /**
    * For STUDENT and PARENT users: the list of student profile ids they represent. A STUDENT
    * user typically has exactly one (themselves). A PARENT user can have many children.
    */
@@ -65,6 +85,13 @@ export interface UserDocument extends BaseDocument {
 
   /** Soft-delete / deactivation flag. Disabled users cannot log in. */
   disabled: boolean;
+
+  /**
+   * Account lifecycle state. Defaults to ACTIVE for all existing and new non-coach users.
+   * COACH accounts created via self-registration start as PENDING_APPROVAL until an admin
+   * approves them.
+   */
+  accountStatus: AccountStatus;
 }
 
 /** Shape of the profile fields a user can edit themselves (subset of UserDocument). */

@@ -121,6 +121,7 @@ export default function BatchesPage() {
       maxCapacity: b.maxCapacity,
       coachIds: b.coachIds,
       status: b.status,
+      timeSlots: b.timeSlots ?? [],
     };
   }
 

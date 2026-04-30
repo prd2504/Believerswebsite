@@ -19,6 +19,7 @@ export const paths = {
     centres: '/admin/centres',
     batches: '/admin/batches',
     students: '/admin/students',
+    coaches: '/admin/coaches',
     attendance: '/admin/attendance',
     payments: '/admin/payments',
     progress: '/admin/progress',
@@ -26,6 +27,7 @@ export const paths = {
     notifications: '/admin/notifications',
     settings: '/admin/settings',
   },
+  pendingApproval: '/pending-approval',
 
   // Coach (mobile-first bottom nav)
   coach: {

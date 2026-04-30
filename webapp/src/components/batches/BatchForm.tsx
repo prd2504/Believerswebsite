@@ -58,6 +58,11 @@ export function BatchForm({ centres, initialValues, onSubmit, onCancel, busy }: 
     name: 'frequencyPlans',
   });
 
+  const { fields: slotFields, append: appendSlot, remove: removeSlot } = useFieldArray({
+    control,
+    name: 'timeSlots',
+  });
+
   const offeredDays = watch('offeredDays');
 
   const toggleDay = (day: 0 | 1 | 2 | 3 | 4 | 5 | 6) => {
@@ -238,6 +243,66 @@ export function BatchForm({ centres, initialValues, onSubmit, onCancel, busy }: 
         <p className="mt-2 text-xs text-gray-400">
           Example: 2 days/week ₹2000, 3 days/week ₹2800, 5 days/week ₹4000.
         </p>
+      </div>
+
+      {/* Time slots — optional sub-groups within the batch window */}
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <div>
+            <label className="label mb-0">Hour slots (optional)</label>
+            <p className="text-xs text-gray-400">
+              Split one big window (e.g. 6–9 AM) into separate 1-hour groups.
+              Leave empty if the batch is a single undivided session.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => appendSlot({ startTime: '', endTime: '', label: '' })}
+            className="btn-ghost text-xs text-brand-primary"
+            disabled={busy}
+          >
+            <Plus size={14} /> Add slot
+          </button>
+        </div>
+        {slotFields.length > 0 && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-12 gap-2 px-1 text-xs text-gray-400">
+              <span className="col-span-3">Start</span>
+              <span className="col-span-3">End</span>
+              <span className="col-span-5">Label (optional)</span>
+            </div>
+            {slotFields.map((field, idx) => (
+              <div key={field.id} className="grid grid-cols-12 items-center gap-2">
+                <input
+                  {...register(`timeSlots.${idx}.startTime` as const)}
+                  type="time"
+                  className="input col-span-3 py-1.5 text-sm"
+                  disabled={busy}
+                />
+                <input
+                  {...register(`timeSlots.${idx}.endTime` as const)}
+                  type="time"
+                  className="input col-span-3 py-1.5 text-sm"
+                  disabled={busy}
+                />
+                <input
+                  {...register(`timeSlots.${idx}.label` as const)}
+                  className="input col-span-5 py-1.5 text-sm"
+                  placeholder="e.g. Junior group"
+                  disabled={busy}
+                />
+                <button
+                  type="button"
+                  onClick={() => removeSlot(idx)}
+                  className="btn-ghost col-span-1 p-1 text-red-400 hover:text-red-600"
+                  disabled={busy}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Actions */}

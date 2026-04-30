@@ -128,4 +128,25 @@ export interface BatchDocument extends BaseDocument {
   studentIds: string[];
 
   status: BatchStatus;
+
+  /**
+   * Optional sub-slots within the batch's overall startTime–endTime window.
+   * Use when one continuous block (e.g. 6–9 AM) hosts multiple 1-hour groups.
+   * Each enrolled student picks one slot; attendance view groups by slot.
+   * Empty array = single undivided slot. Existing docs without this field read as [].
+   */
+  timeSlots: TimeSlot[];
+}
+
+/**
+ * A sub-slot within a batch's overall time window — e.g. "6:00–7:00 AM" inside
+ * a "Morning 6–9 AM" batch. Students enrol into one specific slot.
+ */
+export interface TimeSlot {
+  /** "HH:mm" 24-hour IST. */
+  startTime: string;
+  /** "HH:mm" 24-hour IST. */
+  endTime: string;
+  /** Display label shown in the roster/attendance view. E.g. "Junior Group". */
+  label: string;
 }

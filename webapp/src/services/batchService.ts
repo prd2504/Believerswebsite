@@ -62,6 +62,7 @@ function fromFirestore(id: string, data: DocumentData): BatchDocument {
     coachIds: Array.isArray(data.coachIds) ? data.coachIds : [],
     studentIds: Array.isArray(data.studentIds) ? data.studentIds : [],
     status: data.status ?? 'ACTIVE',
+    timeSlots: Array.isArray(data.timeSlots) ? data.timeSlots : [],
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     createdBy: data.createdBy ?? null,
@@ -86,6 +87,11 @@ function toFirestoreData(values: BatchFormValues, userId: string) {
     maxCapacity: values.maxCapacity,
     coachIds: values.coachIds,
     status: values.status as BatchStatus,
+    timeSlots: (values.timeSlots ?? []).map((s) => ({
+      startTime: s.startTime,
+      endTime: s.endTime,
+      label: s.label ?? '',
+    })),
     updatedAt: serverTimestamp(),
     updatedBy: userId,
   };

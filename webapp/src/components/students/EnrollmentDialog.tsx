@@ -41,6 +41,7 @@ export function EnrollmentDialog({
   const [batchId, setBatchId] = useState<string>(batches[0]?.id ?? '');
   const [planIdx, setPlanIdx] = useState<number>(0);
   const [selectedDays, setSelectedDays] = useState<DayOfWeek[]>([]);
+  const [timeSlotStartTime, setTimeSlotStartTime] = useState<string | null>(null);
   const [startDate, setStartDate] = useState<string>(todayStr());
   const [notes, setNotes] = useState<string>('');
   const [busy, setBusy] = useState(false);
@@ -48,9 +49,10 @@ export function EnrollmentDialog({
   const batch = useMemo(() => batches.find((b) => b.id === batchId), [batches, batchId]);
   const plan: FrequencyPlan | undefined = batch?.frequencyPlans[planIdx];
 
-  // Reset day selection when batch or plan changes
+  // Reset day/slot selection when batch or plan changes
   useEffect(() => {
     setSelectedDays([]);
+    setTimeSlotStartTime(null);
   }, [batchId, planIdx]);
 
   // Reset plan when batch changes
@@ -76,6 +78,10 @@ export function EnrollmentDialog({
       toast.error(`Pick exactly ${plan.daysPerWeek} days for this plan.`);
       return;
     }
+    if (batch.timeSlots.length > 0 && !timeSlotStartTime) {
+      toast.error('Pick a time slot for this batch.');
+      return;
+    }
     setBusy(true);
     try {
       await enrollStudent(
@@ -86,6 +92,7 @@ export function EnrollmentDialog({
           daysPerWeek: plan.daysPerWeek,
           monthlyFeePaise: plan.monthlyFeePaise,
           selectedDays,
+          timeSlotStartTime: batch.timeSlots.length > 0 ? timeSlotStartTime : null,
           startDate,
           notes,
         },
@@ -198,6 +205,35 @@ export function EnrollmentDialog({
                 </div>
               )}
 
+              {/* Time slot picker — only shown when batch has sub-slots */}
+              {batch && batch.timeSlots.length > 0 && (
+                <div>
+                  <label className="label">Which hour slot?</label>
+                  <div className="flex flex-wrap gap-2">
+                    {batch.timeSlots.map((slot) => {
+                      const active = timeSlotStartTime === slot.startTime;
+                      return (
+                        <button
+                          type="button"
+                          key={slot.startTime}
+                          onClick={() => setTimeSlotStartTime(slot.startTime)}
+                          disabled={busy}
+                          className={cn(
+                            'rounded-lg border px-3 py-2 text-center text-sm transition',
+                            active
+                              ? 'border-brand-primary bg-brand-primary text-white'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300',
+                          )}
+                        >
+                          <p className="font-medium">{slot.startTime}–{slot.endTime}</p>
+                          {slot.label && <p className="text-xs opacity-80">{slot.label}</p>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Start date + notes */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
@@ -244,7 +280,13 @@ export function EnrollmentDialog({
           <button
             onClick={handleSubmit}
             className="btn-primary"
-            disabled={busy || !batch || !plan || selectedDays.length !== plan.daysPerWeek}
+            disabled={
+              busy ||
+              !batch ||
+              !plan ||
+              selectedDays.length !== plan.daysPerWeek ||
+              (batch.timeSlots.length > 0 && !timeSlotStartTime)
+            }
           >
             {busy ? 'Enrolling…' : 'Enrol'}
           </button>

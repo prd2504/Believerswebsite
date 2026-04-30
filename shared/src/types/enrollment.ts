@@ -56,6 +56,14 @@ export interface EnrollmentDocument extends BaseDocument {
 
   status: EnrollmentStatus;
 
+  /**
+   * Which time slot within the batch this student attends. "HH:mm" matching a
+   * TimeSlot.startTime on the parent BatchDocument. Null when the batch has no
+   * sub-slots (single undivided session). Existing enrollments without this field
+   * read as null and are displayed under the batch's main startTime.
+   */
+  timeSlotStartTime: string | null;
+
   /** Optional free-text note (e.g. "Switched from 3 to 4 days on 2026-04-15"). */
   notes: string | null;
 }
