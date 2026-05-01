@@ -20,6 +20,7 @@ export const paths = {
     batches: '/admin/batches',
     students: '/admin/students',
     coaches: '/admin/coaches',
+    roster: '/admin/roster',
     attendance: '/admin/attendance',
     payments: '/admin/payments',
     progress: '/admin/progress',

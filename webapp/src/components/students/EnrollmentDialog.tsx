@@ -1,7 +1,7 @@
 /**
- * Enrol-a-student dialog. Centre Manager / Super Admin opens this from the Students
- * list. Picks a batch → picks a frequency plan → picks the exact days (count must
- * equal the plan's daysPerWeek). Calls enrollmentService.enrollStudent on submit.
+ * Enrol-a-student dialog. Detects if the student is already enrolled in the selected
+ * batch and switches to "update" mode — letting the admin assign/change the time slot,
+ * days, or plan without triggering the "already enrolled" error.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -15,12 +15,18 @@ import {
   DAY_OF_WEEK_SHORT,
   formatINR,
 } from '@bba/shared';
-import { enrollStudent } from '@/services/enrollmentService';
+import {
+  enrollStudent,
+  getEnrollment,
+  updateEnrollmentPlan,
+  updateEnrollmentTimeSlot,
+} from '@/services/enrollmentService';
+import { makeEnrollmentId, type EnrollmentDocument } from '@bba/shared';
 import { cn } from '@/lib/cn';
 
 interface EnrollmentDialogProps {
   student: StudentDocument;
-  batches: BatchDocument[]; // already filtered to the student's centre, ACTIVE only
+  batches: BatchDocument[];
   userId: string;
   onClose: () => void;
   onEnrolled: () => void;
@@ -45,25 +51,50 @@ export function EnrollmentDialog({
   const [startDate, setStartDate] = useState<string>(todayStr());
   const [notes, setNotes] = useState<string>('');
   const [busy, setBusy] = useState(false);
+  const [existingEnrollment, setExistingEnrollment] = useState<EnrollmentDocument | null>(null);
+  const [checkingEnrollment, setCheckingEnrollment] = useState(false);
 
   const batch = useMemo(() => batches.find((b) => b.id === batchId), [batches, batchId]);
   const plan: FrequencyPlan | undefined = batch?.frequencyPlans[planIdx];
+  const isUpdateMode = existingEnrollment !== null;
 
-  // Reset day/slot selection when batch or plan changes
+  // When batch changes, check if student already has an active enrollment
   useEffect(() => {
-    setSelectedDays([]);
-    setTimeSlotStartTime(null);
-  }, [batchId, planIdx]);
+    if (!batchId || !student.id) return;
+    setCheckingEnrollment(true);
+    getEnrollment(student.id, batchId)
+      .then((existing) => {
+        const active = existing?.status === 'ACTIVE' ? existing : null;
+        setExistingEnrollment(active);
+        if (active) {
+          // Pre-fill from existing enrollment
+          setSelectedDays([...active.selectedDays]);
+          setTimeSlotStartTime(active.timeSlotStartTime ?? null);
+          // Find the matching plan index
+          const pIdx = batch?.frequencyPlans.findIndex(
+            (p) => p.daysPerWeek === active.daysPerWeek,
+          ) ?? 0;
+          setPlanIdx(pIdx >= 0 ? pIdx : 0);
+        } else {
+          setSelectedDays([]);
+          setTimeSlotStartTime(null);
+          setPlanIdx(0);
+        }
+      })
+      .catch(console.error)
+      .finally(() => setCheckingEnrollment(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchId, student.id]);
 
-  // Reset plan when batch changes
+  // When plan changes (user switches plan), reset day selection only for new enrollments
   useEffect(() => {
-    setPlanIdx(0);
-  }, [batchId]);
+    if (!isUpdateMode) setSelectedDays([]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planIdx]);
 
   function toggleDay(d: DayOfWeek) {
     setSelectedDays((prev) => {
       if (prev.includes(d)) return prev.filter((x) => x !== d);
-      // Cap selection to the plan's daysPerWeek
       if (plan && prev.length >= plan.daysPerWeek) {
         toast.info(`This plan is ${plan.daysPerWeek} days/week — deselect a day first.`);
         return prev;
@@ -74,47 +105,95 @@ export function EnrollmentDialog({
 
   async function handleSubmit() {
     if (!batch || !plan) return;
-    if (selectedDays.length !== plan.daysPerWeek) {
-      toast.error(`Pick exactly ${plan.daysPerWeek} days for this plan.`);
-      return;
-    }
     if (batch.timeSlots.length > 0 && !timeSlotStartTime) {
       toast.error('Pick a time slot for this batch.');
       return;
     }
+
     setBusy(true);
     try {
-      await enrollStudent(
-        {
-          studentId: student.id,
-          batchId: batch.id,
-          centreId: batch.centreId,
-          daysPerWeek: plan.daysPerWeek,
-          monthlyFeePaise: plan.monthlyFeePaise,
-          selectedDays,
-          timeSlotStartTime: batch.timeSlots.length > 0 ? timeSlotStartTime : null,
-          startDate,
-          notes,
-        },
-        userId,
-      );
-      toast.success(`${student.name} enrolled in ${batch.name}`);
+      if (isUpdateMode && existingEnrollment) {
+        // If only the slot changed (days/plan same), use the lightweight updater
+        const slotChanged = existingEnrollment.timeSlotStartTime !== timeSlotStartTime;
+        const daysChanged =
+          existingEnrollment.daysPerWeek !== plan.daysPerWeek ||
+          JSON.stringify([...existingEnrollment.selectedDays].sort()) !==
+            JSON.stringify([...selectedDays].sort());
+
+        if (selectedDays.length !== plan.daysPerWeek) {
+          toast.error(`Pick exactly ${plan.daysPerWeek} days for this plan.`);
+          setBusy(false);
+          return;
+        }
+
+        if (daysChanged) {
+          await updateEnrollmentPlan(
+            makeEnrollmentId(student.id, batch.id),
+            plan.daysPerWeek,
+            plan.monthlyFeePaise,
+            selectedDays,
+            userId,
+            notes || undefined,
+          );
+        }
+        if (slotChanged || !daysChanged) {
+          await updateEnrollmentTimeSlot(
+            makeEnrollmentId(student.id, batch.id),
+            timeSlotStartTime,
+            userId,
+          );
+        }
+        toast.success(`Updated enrollment for ${student.name}`);
+      } else {
+        if (selectedDays.length !== plan.daysPerWeek) {
+          toast.error(`Pick exactly ${plan.daysPerWeek} days for this plan.`);
+          setBusy(false);
+          return;
+        }
+        await enrollStudent(
+          {
+            studentId: student.id,
+            batchId: batch.id,
+            centreId: batch.centreId,
+            daysPerWeek: plan.daysPerWeek,
+            monthlyFeePaise: plan.monthlyFeePaise,
+            selectedDays,
+            timeSlotStartTime: batch.timeSlots.length > 0 ? timeSlotStartTime : null,
+            startDate,
+            notes,
+          },
+          userId,
+        );
+        toast.success(`${student.name} enrolled in ${batch.name}`);
+      }
       onEnrolled();
     } catch (err) {
       console.error(err);
-      toast.error(err instanceof Error ? err.message : 'Failed to enrol');
+      toast.error(err instanceof Error ? err.message : 'Failed to save enrollment');
     } finally {
       setBusy(false);
     }
   }
+
+  const canSubmit =
+    !!batch &&
+    !!plan &&
+    selectedDays.length === plan.daysPerWeek &&
+    !(batch.timeSlots.length > 0 && !timeSlotStartTime);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-gray-100 p-4">
           <div>
-            <h2 className="text-base font-semibold text-brand-secondary">Enrol {student.name}</h2>
-            <p className="text-xs text-gray-400">Pick a batch, a plan, and the days the student will attend.</p>
+            <h2 className="text-base font-semibold text-brand-secondary">
+              {isUpdateMode ? `Update: ${student.name}` : `Enrol ${student.name}`}
+            </h2>
+            <p className="text-xs text-gray-400">
+              {isUpdateMode
+                ? 'Student is already enrolled — update their slot, days, or plan.'
+                : 'Pick a batch, a plan, and the days the student will attend.'}
+            </p>
           </div>
           <button onClick={onClose} className="btn-ghost p-1.5" disabled={busy} aria-label="Close">
             <X size={18} />
@@ -144,6 +223,16 @@ export function EnrollmentDialog({
                   ))}
                 </select>
               </div>
+
+              {checkingEnrollment && (
+                <p className="text-xs text-gray-400">Checking enrollment…</p>
+              )}
+
+              {isUpdateMode && (
+                <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  Already enrolled · updating existing record
+                </div>
+              )}
 
               {/* Plan picker */}
               {batch && batch.frequencyPlans.length > 0 && (
@@ -205,7 +294,7 @@ export function EnrollmentDialog({
                 </div>
               )}
 
-              {/* Time slot picker — only shown when batch has sub-slots */}
+              {/* Time slot picker */}
               {batch && batch.timeSlots.length > 0 && (
                 <div>
                   <label className="label">Which hour slot?</label>
@@ -234,39 +323,30 @@ export function EnrollmentDialog({
                 </div>
               )}
 
-              {/* Start date + notes */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="label">Start date</label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="input"
-                    disabled={busy}
-                  />
-                </div>
-                <div>
-                  <label className="label">Notes (optional)</label>
-                  <input
-                    type="text"
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    className="input"
-                    placeholder="e.g. switching from Sat batch"
-                    disabled={busy}
-                  />
-                </div>
-              </div>
-
-              {/* Summary */}
-              {batch && plan && selectedDays.length === plan.daysPerWeek && (
-                <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
-                  <span className="font-semibold text-brand-secondary">{student.name}</span>
-                  {' → '}
-                  {batch.name} · {plan.daysPerWeek} days/week (
-                  {selectedDays.map((d) => DAY_OF_WEEK_SHORT[d]).join(', ')}) ·{' '}
-                  {formatINR(plan.monthlyFeePaise, { withDecimals: false })}/mo
+              {/* Start date + notes — only for new enrollments */}
+              {!isUpdateMode && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="label">Start date</label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="input"
+                      disabled={busy}
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Notes (optional)</label>
+                    <input
+                      type="text"
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      className="input"
+                      placeholder="e.g. switching from Sat batch"
+                      disabled={busy}
+                    />
+                  </div>
                 </div>
               )}
             </>
@@ -280,15 +360,13 @@ export function EnrollmentDialog({
           <button
             onClick={handleSubmit}
             className="btn-primary"
-            disabled={
-              busy ||
-              !batch ||
-              !plan ||
-              selectedDays.length !== plan.daysPerWeek ||
-              (batch.timeSlots.length > 0 && !timeSlotStartTime)
-            }
+            disabled={busy || !canSubmit || checkingEnrollment}
           >
-            {busy ? 'Enrolling…' : 'Enrol'}
+            {busy
+              ? 'Saving…'
+              : isUpdateMode
+                ? 'Update Enrollment'
+                : 'Enrol'}
           </button>
         </div>
       </div>

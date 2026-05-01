@@ -173,6 +173,19 @@ export async function endEnrollment(
   await batch.commit();
 }
 
+/** Update just the time slot on an existing enrollment (for migrating pre-slot students). */
+export async function updateEnrollmentTimeSlot(
+  enrollmentId: string,
+  timeSlotStartTime: string | null,
+  userId: string,
+): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.enrollments, enrollmentId), {
+    timeSlotStartTime,
+    updatedAt: serverTimestamp(),
+    updatedBy: userId,
+  });
+}
+
 /**
  * Update plan / selectedDays for an existing active enrolment (e.g. student switches
  * from 2 days/week to 3 days/week, or changes which days they attend).

@@ -33,6 +33,7 @@ const CentresPage = lazy(() => import('@/pages/admin/Centres'));
 const BatchesPage = lazy(() => import('@/pages/admin/Batches'));
 const AdminStudents = lazy(() => import('@/pages/admin/Students'));
 const AdminCoaches = lazy(() => import('@/pages/admin/Coaches'));
+const AdminRoster = lazy(() => import('@/pages/admin/Roster'));
 const AdminAttendance = lazy(() => import('@/pages/admin/Attendance'));
 const AdminPayments = lazy(() => import('@/pages/admin/Payments'));
 const AdminProgress = lazy(() => import('@/pages/admin/Progress'));
@@ -95,6 +96,7 @@ const routes: RouteObject[] = [
               { path: '/admin/batches', element: <Lazy><BatchesPage /></Lazy> },
               { path: '/admin/students', element: <Lazy><AdminStudents /></Lazy> },
               { path: '/admin/coaches', element: <Lazy><AdminCoaches /></Lazy> },
+              { path: '/admin/roster', element: <Lazy><AdminRoster /></Lazy> },
               { path: '/admin/attendance', element: <Lazy><AdminAttendance /></Lazy> },
               { path: '/admin/payments', element: <Lazy><AdminPayments /></Lazy> },
               { path: '/admin/progress', element: <Lazy><AdminProgress /></Lazy> },
