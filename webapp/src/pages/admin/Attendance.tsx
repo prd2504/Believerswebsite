@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ClipboardCheck, Download } from 'lucide-react';
+import { ClipboardCheck, Download, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { getAllBatches } from '@/services/batchService';
@@ -30,6 +30,7 @@ export default function AttendancePage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('mark');
   const [centreFilter, setCentreFilter] = useState('');
+  const [search, setSearch] = useState('');
   const [historyBatchId, setHistoryBatchId] = useState('');
 
   const centreMap = useMemo(() => {
@@ -44,9 +45,15 @@ export default function AttendancePage() {
     return m;
   }, [students]);
 
-  const filteredBatches = centreFilter
-    ? batches.filter((b) => b.centreId === centreFilter)
-    : batches;
+  const filteredBatches = useMemo(() => {
+    let result = batches;
+    if (centreFilter) result = result.filter((b) => b.centreId === centreFilter);
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter((b) => b.name.toLowerCase().includes(q));
+    }
+    return result;
+  }, [batches, centreFilter, search]);
 
   const activeBatches = filteredBatches.filter((b) => b.status === 'ACTIVE');
 
@@ -106,6 +113,16 @@ export default function AttendancePage() {
           <p className="text-sm text-gray-500">{activeBatches.length} active batch{activeBatches.length !== 1 ? 'es' : ''}</p>
         </div>
         <div className="flex gap-3">
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search batches…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="input w-44 py-2 pl-9 text-sm"
+            />
+          </div>
           <select
             value={centreFilter}
             onChange={(e) => setCentreFilter(e.target.value)}

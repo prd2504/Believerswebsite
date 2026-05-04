@@ -16,6 +16,7 @@ import {
   TrendingUp,
   Trophy,
   BellRing,
+  BarChart2,
   Settings,
   X,
 } from 'lucide-react';
@@ -46,6 +47,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: paths.admin.progress, label: 'Progress', icon: <TrendingUp size={18} /> },
   { to: paths.admin.tournaments, label: 'Tournaments', icon: <Trophy size={18} /> },
   { to: paths.admin.notifications, label: 'Notifications', icon: <BellRing size={18} /> },
+  { to: paths.admin.analytics, label: 'Analytics', icon: <BarChart2 size={18} /> },
   { to: paths.admin.settings, label: 'Settings', icon: <Settings size={18} /> },
 ];
 

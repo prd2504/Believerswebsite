@@ -26,6 +26,7 @@ export const paths = {
     progress: '/admin/progress',
     tournaments: '/admin/tournaments',
     notifications: '/admin/notifications',
+    analytics: '/admin/analytics',
     settings: '/admin/settings',
   },
   pendingApproval: '/pending-approval',

@@ -39,6 +39,7 @@ const AdminPayments = lazy(() => import('@/pages/admin/Payments'));
 const AdminProgress = lazy(() => import('@/pages/admin/Progress'));
 const AdminTournaments = lazy(() => import('@/pages/admin/Tournaments'));
 const AdminNotifications = lazy(() => import('@/pages/admin/Notifications'));
+const AdminAnalytics = lazy(() => import('@/pages/admin/Analytics'));
 const AdminSettings = lazy(() => import('@/pages/admin/Settings'));
 
 const CoachDashboard = lazy(() => import('@/pages/coach/Dashboard'));
@@ -102,6 +103,7 @@ const routes: RouteObject[] = [
               { path: '/admin/progress', element: <Lazy><AdminProgress /></Lazy> },
               { path: '/admin/tournaments', element: <Lazy><AdminTournaments /></Lazy> },
               { path: '/admin/notifications', element: <Lazy><AdminNotifications /></Lazy> },
+              { path: '/admin/analytics', element: <Lazy><AdminAnalytics /></Lazy> },
               { path: '/admin/settings', element: <Lazy><AdminSettings /></Lazy> },
             ],
           },

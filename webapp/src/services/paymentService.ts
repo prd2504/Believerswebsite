@@ -20,7 +20,8 @@ import {
   type Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { COLLECTIONS, rupeesToPaise, type PaymentDocument, type PaymentStatus, type PaymentMethod } from '@bba/shared';
+import { COLLECTIONS, PAYMENT, rupeesToPaise, type PaymentDocument, type PaymentStatus, type PaymentMethod } from '@bba/shared';
+import type { EnrollmentDocument } from '@bba/shared';
 import type { PaymentFormValues } from '@/lib/schemas/paymentSchema';
 
 function toIso(ts: unknown): string {
@@ -188,4 +189,79 @@ export async function waivePayment(
 
 export async function deletePayment(paymentId: string): Promise<void> {
   await deleteDoc(doc(db, COLLECTIONS.payments, paymentId));
+}
+
+/**
+ * Bulk-generate PENDING payment records for all active enrollments for a given month.
+ * Skips students who already have a payment record for that month+batch.
+ * Returns { created, skipped } counts.
+ */
+export async function generateMonthlyFees(
+  month: string, // "YYYY-MM"
+  userId: string,
+  centreId?: string, // optional — scope to one centre
+): Promise<{ created: number; skipped: number }> {
+  // Load active enrollments (optionally scoped to centre)
+  const enrollmentsQuery = centreId
+    ? query(collection(db, COLLECTIONS.enrollments), where('centreId', '==', centreId), where('status', '==', 'ACTIVE'))
+    : query(collection(db, COLLECTIONS.enrollments), where('status', '==', 'ACTIVE'));
+  const enrollSnap = await getDocs(enrollmentsQuery);
+  const enrollments = enrollSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<EnrollmentDocument, 'id'>) }));
+
+  // Load existing payments for this month (scoped or all)
+  const existingQuery = centreId
+    ? query(collection(db, COLLECTIONS.payments), where('month', '==', month), where('centreId', '==', centreId))
+    : query(collection(db, COLLECTIONS.payments), where('month', '==', month));
+  const existingSnap = await getDocs(existingQuery);
+  const existingKeys = new Set(existingSnap.docs.map((d) => `${d.data().studentId}:${d.data().batchId}`));
+
+  let created = 0;
+  let skipped = 0;
+
+  // Compute due date = last day of the month
+  const [yr, mo] = month.split('-').map(Number);
+  const lastDay = new Date(yr, mo, 0).getDate();
+  const dueDate = `${month}-${String(lastDay).padStart(2, '0')}`;
+
+  const gstRate = PAYMENT.defaultGstRatePercent;
+
+  for (const enrollment of enrollments) {
+    const key = `${enrollment.studentId}:${enrollment.batchId}`;
+    if (existingKeys.has(key)) {
+      skipped++;
+      continue;
+    }
+
+    const basePaise = enrollment.monthlyFeePaise;
+    const gstPaise = Math.round(basePaise * gstRate / 100);
+    const totalPaise = basePaise + gstPaise;
+
+    await addDoc(collection(db, COLLECTIONS.payments), {
+      studentId: enrollment.studentId,
+      batchId: enrollment.batchId,
+      centreId: enrollment.centreId,
+      month,
+      baseAmountPaise: basePaise,
+      gstAmountPaise: gstPaise,
+      totalAmountPaise: totalPaise,
+      gstRatePercentSnapshot: gstRate,
+      status: 'PENDING' as PaymentStatus,
+      method: 'NONE' as PaymentMethod,
+      dueDate,
+      paidAt: null,
+      razorpayOrderId: null,
+      razorpayPaymentId: null,
+      razorpaySignature: null,
+      notes: null,
+      receiptNumber: null,
+      receiptPdfPath: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      createdBy: userId,
+      updatedBy: userId,
+    });
+    created++;
+  }
+
+  return { created, skipped };
 }

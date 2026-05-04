@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, IndianRupee, Download } from 'lucide-react';
+import { Plus, IndianRupee, Download, Search, RefreshCw } from 'lucide-react';
 import { exportPaymentsCsv } from '@/lib/csv';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
@@ -14,6 +14,7 @@ import {
   deletePayment,
   markPaymentPaid,
   waivePayment,
+  generateMonthlyFees,
 } from '@/services/paymentService';
 import { getAllCentres } from '@/services/centreService';
 import { getAllBatches } from '@/services/batchService';
@@ -43,11 +44,18 @@ export default function PaymentsPage() {
   const [mode, setMode] = useState<Mode>('list');
   const [editTarget, setEditTarget] = useState<PaymentDocument | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showGenDialog, setShowGenDialog] = useState(false);
+  const [genMonth, setGenMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [genCentreId, setGenCentreId] = useState('');
 
   // Filters
   const [centreFilter, setCentreFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [monthFilter, setMonthFilter] = useState('');
+  const [search, setSearch] = useState('');
 
   // Lookup maps
   const studentMap = useMemo(() => {
@@ -80,11 +88,19 @@ export default function PaymentsPage() {
   // Filtered list
   const filtered = useMemo(() => {
     let result = payments;
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter((p) => {
+        const sName = studentMap.get(p.studentId) ?? '';
+        const bName = batchMap.get(p.batchId) ?? '';
+        return sName.toLowerCase().includes(q) || bName.toLowerCase().includes(q) || (p.notes ?? '').toLowerCase().includes(q);
+      });
+    }
     if (centreFilter) result = result.filter((p) => p.centreId === centreFilter);
     if (statusFilter) result = result.filter((p) => p.status === statusFilter);
     if (monthFilter) result = result.filter((p) => p.month === monthFilter);
     return result;
-  }, [payments, centreFilter, statusFilter, monthFilter]);
+  }, [payments, search, studentMap, batchMap, centreFilter, statusFilter, monthFilter]);
 
   // Summary stats
   const totalBilled = filtered.reduce((sum, p) => sum + p.totalAmountPaise, 0);
@@ -191,6 +207,22 @@ export default function PaymentsPage() {
     setMode('edit');
   };
 
+  const handleGenerateFees = async () => {
+    if (!profile || !genMonth) return;
+    setBusy(true);
+    try {
+      const { created, skipped } = await generateMonthlyFees(genMonth, profile.id, genCentreId || undefined);
+      toast.success(`Generated ${created} fee record${created !== 1 ? 's' : ''}${skipped > 0 ? ` · ${skipped} already existed` : ''}`);
+      setShowGenDialog(false);
+      await load();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to generate fees');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   function paymentToFormValues(p: PaymentDocument): Partial<PaymentFormValues> {
     return {
       studentId: p.studentId,
@@ -259,6 +291,9 @@ export default function PaymentsPage() {
           <button onClick={handleExport} className="btn-secondary" title="Export visible rows to CSV">
             <Download size={16} /> Export CSV
           </button>
+          <button onClick={() => setShowGenDialog(true)} className="btn-secondary" title="Bulk-create monthly fee records">
+            <RefreshCw size={16} /> Generate Monthly Fees
+          </button>
           <button onClick={() => setMode('create')} className="btn-primary">
             <Plus size={16} /> Record Payment
           </button>
@@ -292,6 +327,16 @@ export default function PaymentsPage() {
 
       {/* Filters */}
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search by student, batch, or notes…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="input pl-9"
+          />
+        </div>
         <select value={centreFilter} onChange={(e) => setCentreFilter(e.target.value)} className="input w-auto py-2 text-sm">
           <option value="">All Centres</option>
           {centres.map((c) => (
@@ -343,6 +388,52 @@ export default function PaymentsPage() {
               onWaive={handleWaive}
             />
           ))}
+        </div>
+      )}
+
+      {/* Generate Monthly Fees dialog */}
+      {showGenDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-sm rounded-lg bg-white shadow-xl">
+            <div className="border-b border-gray-100 p-4">
+              <h2 className="text-base font-semibold text-brand-secondary">Generate Monthly Fees</h2>
+              <p className="mt-0.5 text-xs text-gray-400">
+                Creates a PENDING fee record for every active enrollment. Existing records for the same student+batch+month are skipped.
+              </p>
+            </div>
+            <div className="space-y-4 p-4">
+              <div>
+                <label className="label">Month</label>
+                <input
+                  type="month"
+                  value={genMonth}
+                  onChange={(e) => setGenMonth(e.target.value)}
+                  className="input"
+                  disabled={busy}
+                />
+              </div>
+              <div>
+                <label className="label">Centre (optional — leave blank for all)</label>
+                <select
+                  value={genCentreId}
+                  onChange={(e) => setGenCentreId(e.target.value)}
+                  className="input"
+                  disabled={busy}
+                >
+                  <option value="">All Centres</option>
+                  {centres.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-100 p-4">
+              <button onClick={() => setShowGenDialog(false)} className="btn-secondary" disabled={busy}>Cancel</button>
+              <button onClick={handleGenerateFees} className="btn-primary" disabled={busy || !genMonth}>
+                {busy ? 'Generating…' : 'Generate'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
