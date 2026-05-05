@@ -30,7 +30,7 @@ import {
   type AttendanceMarkInput,
 } from '@/services/attendanceService';
 import { getEnrollmentsForBatchOnDay } from '@/services/enrollmentService';
-import { getStudentById, getStudentsByCentre } from '@/services/studentService';
+import { getAllStudents, getStudentById, getStudentsByCentre } from '@/services/studentService';
 
 const STATUS_OPTIONS: {
   value: AttendanceStatus;
@@ -482,7 +482,9 @@ function StudentPicker({ centreId, excludeIds, onPick, onClose }: StudentPickerP
   useEffect(() => {
     (async () => {
       try {
-        const all = await getStudentsByCentre(centreId);
+        const all = centreId
+          ? await getStudentsByCentre(centreId)
+          : await getAllStudents();
         setStudents(all.filter((s) => s.status === 'ACTIVE' && !excludeIds.includes(s.id)));
       } catch (err) {
         console.error(err);
@@ -491,7 +493,8 @@ function StudentPicker({ centreId, excludeIds, onPick, onClose }: StudentPickerP
         setLoading(false);
       }
     })();
-  }, [centreId, excludeIds]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [centreId]);
 
   const matches = useMemo(() => {
     if (!search.trim()) return students.slice(0, 20);
