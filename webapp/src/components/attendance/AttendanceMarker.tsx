@@ -482,9 +482,7 @@ function StudentPicker({ centreId, excludeIds, onPick, onClose }: StudentPickerP
   useEffect(() => {
     (async () => {
       try {
-        const all = centreId
-          ? await getStudentsByCentre(centreId)
-          : await getAllStudents();
+        const all = await getAllStudents();
         setStudents(all.filter((s) => s.status === 'ACTIVE' && !excludeIds.includes(s.id)));
       } catch (err) {
         console.error(err);
