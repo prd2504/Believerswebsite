@@ -40,10 +40,7 @@ const AdminProgress = lazy(() => import('@/pages/admin/Progress'));
 const AdminTournaments = lazy(() => import('@/pages/admin/Tournaments'));
 const AdminNotifications = lazy(() => import('@/pages/admin/Notifications'));
 const AdminAnalytics = lazy(() => import('@/pages/admin/Analytics'));
-const AdminTournamentDay = lazy(() => import('@/pages/admin/TournamentDay'));
 const AdminSettings = lazy(() => import('@/pages/admin/Settings'));
-
-const LiveScoresPage = lazy(() => import('@/pages/public/Live'));
 
 const CoachDashboard = lazy(() => import('@/pages/coach/Dashboard'));
 const CoachBatches = lazy(() => import('@/pages/coach/Batches'));
@@ -65,11 +62,7 @@ function Lazy({ children }: { children: React.ReactNode }) {
 
 // ---- Route tree ---------------------------------------------------------------------
 const routes: RouteObject[] = [
-  // Fully public routes (no auth)
-  {
-    path: '/live',
-    element: <Lazy><LiveScoresPage /></Lazy>,
-  },
+  // Public routes
   {
     path: '/login',
     element: <Lazy><LoginPage /></Lazy>,
@@ -111,7 +104,6 @@ const routes: RouteObject[] = [
               { path: '/admin/tournaments', element: <Lazy><AdminTournaments /></Lazy> },
               { path: '/admin/notifications', element: <Lazy><AdminNotifications /></Lazy> },
               { path: '/admin/analytics', element: <Lazy><AdminAnalytics /></Lazy> },
-              { path: '/admin/tournament-day', element: <Lazy><AdminTournamentDay /></Lazy> },
               { path: '/admin/settings', element: <Lazy><AdminSettings /></Lazy> },
             ],
           },

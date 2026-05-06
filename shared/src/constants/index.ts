@@ -94,5 +94,4 @@ export const COLLECTIONS = {
   notifications: 'notifications',
   notificationMessages: 'messages',
   broadcasts: 'broadcasts',
-  tournamentMatches: 'tournamentMatches',
 } as const;

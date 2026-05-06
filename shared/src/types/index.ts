@@ -15,4 +15,3 @@ export * from './payment.js';
 export * from './progress.js';
 export * from './tournament.js';
 export * from './notification.js';
-export * from './match.js';

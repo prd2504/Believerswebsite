@@ -7,11 +7,10 @@
 import { UserRole } from '@bba/shared';
 
 export const paths = {
-  // Public (no auth required)
+  // Public
   login: '/login',
   register: '/register',
   otp: '/otp',
-  live: '/live',
 
   // Admin / Manager (sidebar shell)
   admin: {
@@ -28,7 +27,6 @@ export const paths = {
     tournaments: '/admin/tournaments',
     notifications: '/admin/notifications',
     analytics: '/admin/analytics',
-    tournamentDay: '/admin/tournament-day',
     settings: '/admin/settings',
   },
   pendingApproval: '/pending-approval',

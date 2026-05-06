@@ -79,29 +79,6 @@
         { "fieldPath": "month", "order": "ASCENDING" },
         { "fieldPath": "studentId", "order": "ASCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "tournamentMatches",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "scheduledAt", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "tournamentMatches",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "sport", "order": "ASCENDING" },
-        { "fieldPath": "scheduledAt", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "tournamentMatches",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "scheduledAt", "order": "ASCENDING" }
-      ]
     }
   ],
   "fieldOverrides": []
