@@ -9,6 +9,7 @@ import {
   getDocs,
   addDoc,
   updateDoc,
+  deleteDoc,
   query,
   orderBy,
   where,
@@ -17,8 +18,9 @@ import {
   type Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { COLLECTIONS, PAYMENT, formatINR } from '@bba/shared';
+import { COLLECTIONS, PAYMENT, rupeesToPaise } from '@bba/shared';
 import type { PaymentDocument, PaymentStatus, PaymentMethod } from '@bba/shared';
+import type { PaymentFormValues } from '@/lib/schemas/paymentSchema';
 
 function toIso(ts: unknown): string {
   if (!ts) return new Date().toISOString();
@@ -82,48 +84,130 @@ export async function getPaymentsByStudent(studentId: string): Promise<PaymentDo
   return snap.docs.map((d) => fromFirestore(d.id, d.data()));
 }
 
-export interface CreatePaymentInput {
-  studentId: string;
-  batchId: string;
-  centreId: string;
-  month: string;
-  baseAmountPaise: number;
-  gstRatePercent?: number;
-  dueDate?: string | null;
-  notes?: string | null;
-  createdBy: string;
-}
+function toFirestoreData(values: PaymentFormValues, userId: string) {
+  const basePaise = rupeesToPaise(values.baseAmountRupees);
+  const gstPaise = Math.round((basePaise * values.gstRatePercent) / 100);
+  const totalPaise = basePaise + gstPaise;
 
-export async function createPayment(input: CreatePaymentInput): Promise<string> {
-  const rate = input.gstRatePercent ?? PAYMENT.defaultGstRatePercent;
-  const gst = Math.round((input.baseAmountPaise * rate) / 100);
-  const total = input.baseAmountPaise + gst;
-
-  const ref = await addDoc(collection(db, COLLECTIONS.payments), {
-    studentId: input.studentId,
-    batchId: input.batchId,
-    centreId: input.centreId,
-    month: input.month,
-    baseAmountPaise: input.baseAmountPaise,
-    gstAmountPaise: gst,
-    totalAmountPaise: total,
-    gstRatePercentSnapshot: rate,
-    status: 'PENDING',
-    method: 'NONE',
-    dueDate: input.dueDate ?? null,
-    paidAt: null,
+  return {
+    studentId: values.studentId,
+    batchId: values.batchId,
+    centreId: values.centreId,
+    month: values.month,
+    baseAmountPaise: basePaise,
+    gstAmountPaise: gstPaise,
+    totalAmountPaise: totalPaise,
+    gstRatePercentSnapshot: values.gstRatePercent,
+    status: values.status as PaymentStatus,
+    method: values.method as PaymentMethod,
+    dueDate: values.dueDate || null,
+    paidAt: values.status === 'PAID' ? new Date().toISOString() : null,
     razorpayOrderId: null,
     razorpayPaymentId: null,
     razorpaySignature: null,
-    notes: input.notes ?? null,
+    notes: values.notes?.trim() || null,
     receiptNumber: null,
     receiptPdfPath: null,
-    createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    createdBy: input.createdBy,
-    updatedBy: input.createdBy,
+    updatedBy: userId,
+  };
+}
+
+export async function createPayment(values: PaymentFormValues, userId: string): Promise<string> {
+  const ref = await addDoc(collection(db, COLLECTIONS.payments), {
+    ...toFirestoreData(values, userId),
+    createdAt: serverTimestamp(),
+    createdBy: userId,
   });
   return ref.id;
+}
+
+export async function updatePayment(
+  paymentId: string,
+  values: PaymentFormValues,
+  userId: string,
+): Promise<void> {
+  const ref = doc(db, COLLECTIONS.payments, paymentId);
+  await updateDoc(ref, toFirestoreData(values, userId));
+}
+
+export async function deletePayment(paymentId: string): Promise<void> {
+  await deleteDoc(doc(db, COLLECTIONS.payments, paymentId));
+}
+
+export async function waivePayment(
+  paymentId: string,
+  userId: string,
+  reason: string,
+): Promise<void> {
+  const ref = doc(db, COLLECTIONS.payments, paymentId);
+  await updateDoc(ref, {
+    status: 'WAIVED',
+    notes: reason,
+    updatedAt: serverTimestamp(),
+    updatedBy: userId,
+  });
+}
+
+export async function generateMonthlyFees(
+  month: string,
+  userId: string,
+  centreId?: string,
+): Promise<{ created: number; skipped: number }> {
+  const { getAllBatches } = await import('./batchService');
+  const allBatches = await getAllBatches();
+  const activeBatches = allBatches.filter(
+    (b) => b.status === 'ACTIVE' && (!centreId || b.centreId === centreId),
+  );
+
+  const existingPayments = await getPaymentsByMonth(month);
+  const existingSet = new Set(existingPayments.map((p) => `${p.studentId}|${p.batchId}`));
+
+  let created = 0;
+  let skipped = 0;
+
+  for (const batch of activeBatches) {
+    for (const studentId of batch.studentIds) {
+      const key = `${studentId}|${batch.id}`;
+      if (existingSet.has(key)) {
+        skipped++;
+        continue;
+      }
+      const basePaise = batch.frequencyPlans?.[0]?.monthlyFeePaise ?? 0;
+      if (basePaise === 0) { skipped++; continue; }
+      const gst = Math.round((basePaise * PAYMENT.defaultGstRatePercent) / 100);
+      const [y, m] = month.split('-').map(Number);
+      const lastDay = new Date(y, m, 0).getDate();
+      const dueDate = `${month}-${String(lastDay).padStart(2, '0')}`;
+
+      await addDoc(collection(db, COLLECTIONS.payments), {
+        studentId,
+        batchId: batch.id,
+        centreId: batch.centreId,
+        month,
+        baseAmountPaise: basePaise,
+        gstAmountPaise: gst,
+        totalAmountPaise: basePaise + gst,
+        gstRatePercentSnapshot: PAYMENT.defaultGstRatePercent,
+        status: 'PENDING',
+        method: 'NONE',
+        dueDate,
+        paidAt: null,
+        razorpayOrderId: null,
+        razorpayPaymentId: null,
+        razorpaySignature: null,
+        notes: null,
+        receiptNumber: null,
+        receiptPdfPath: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdBy: userId,
+        updatedBy: userId,
+      });
+      created++;
+    }
+  }
+  return { created, skipped };
 }
 
 export async function markPaymentPaid(

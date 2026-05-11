@@ -3,7 +3,19 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Plus, IndianRupee, Download, Search, RefreshCw } from 'lucide-react';
+import {
+  Plus,
+  IndianRupee,
+  Download,
+  Search,
+  RefreshCw,
+  LayoutGrid,
+  LayoutList,
+  Columns3,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
+import { cn } from '@/lib/cn';
 import { exportPaymentsCsv } from '@/lib/csv';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
@@ -33,6 +45,161 @@ import type {
 import type { PaymentFormValues } from '@/lib/schemas/paymentSchema';
 
 type Mode = 'list' | 'create' | 'edit';
+type ViewMode = 'card' | 'table' | 'detail';
+type SortField = 'month' | 'status' | 'total' | 'dueDate' | 'student';
+type SortDir = 'asc' | 'desc';
+
+const VIEW_OPTIONS: { id: ViewMode; label: string; icon: typeof LayoutGrid }[] = [
+  { id: 'card', label: 'Cards', icon: LayoutGrid },
+  { id: 'table', label: 'Table', icon: Columns3 },
+  { id: 'detail', label: 'Details', icon: LayoutList },
+];
+
+function fmtMonth(m: string) {
+  if (!m) return '—';
+  const [y, mo] = m.split('-');
+  const d = new Date(Number(y), Number(mo) - 1);
+  return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+}
+
+function fmtDate(d: string | null) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+const STATUS_PILL: Record<string, string> = {
+  PENDING: 'bg-yellow-50 text-yellow-700',
+  PAID: 'bg-green-50 text-green-700',
+  OVERDUE: 'bg-red-50 text-red-700',
+  WAIVED: 'bg-blue-50 text-blue-700',
+  REFUNDED: 'bg-gray-100 text-gray-500',
+};
+
+// ─── Sort header for table view ───────────────────────────────────────────────
+
+function SortButton({
+  field,
+  label,
+  current,
+  dir,
+  onSort,
+}: {
+  field: SortField;
+  label: string;
+  current: SortField;
+  dir: SortDir;
+  onSort: (f: SortField) => void;
+}) {
+  const active = current === field;
+  return (
+    <button
+      onClick={() => onSort(field)}
+      className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-gray-500 hover:text-gray-700"
+    >
+      {label}
+      {active && (dir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+    </button>
+  );
+}
+
+// ─── Expandable detail row ────────────────────────────────────────────────────
+
+function DetailRow({
+  payment: p,
+  studentName,
+  batchName,
+  centreName,
+  onMarkPaid,
+  onWaive,
+  onEdit,
+}: {
+  payment: PaymentDocument;
+  studentName: string;
+  batchName: string;
+  centreName: string;
+  onMarkPaid: () => void;
+  onWaive: () => void;
+  onEdit: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const isPending = p.status === 'PENDING' || p.status === 'OVERDUE';
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-brand-secondary truncate">{studentName}</p>
+            <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', STATUS_PILL[p.status])}>
+              {p.status}
+            </span>
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5">{fmtMonth(p.month)} · {batchName}</p>
+        </div>
+        <div className="text-right shrink-0">
+          <p className="text-sm font-semibold text-brand-secondary">{formatINR(p.totalAmountPaise, { withDecimals: false })}</p>
+          <p className="text-xs text-gray-400">{fmtDate(p.dueDate)}</p>
+        </div>
+        {open ? <ChevronUp size={16} className="shrink-0 text-gray-400" /> : <ChevronDown size={16} className="shrink-0 text-gray-400" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-gray-50 bg-gray-50/50 px-4 py-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div>
+              <span className="text-gray-400">Base Amount</span>
+              <p className="font-medium text-gray-700">{formatINR(p.baseAmountPaise, { withDecimals: false })}</p>
+            </div>
+            <div>
+              <span className="text-gray-400">GST ({p.gstRatePercentSnapshot}%)</span>
+              <p className="font-medium text-gray-700">{formatINR(p.gstAmountPaise, { withDecimals: false })}</p>
+            </div>
+            <div>
+              <span className="text-gray-400">Method</span>
+              <p className="font-medium text-gray-700">{p.method === 'NONE' ? '—' : p.method.replace('_', ' ')}</p>
+            </div>
+            <div>
+              <span className="text-gray-400">Paid Date</span>
+              <p className="font-medium text-gray-700">{fmtDate(p.paidAt)}</p>
+            </div>
+            <div>
+              <span className="text-gray-400">Receipt</span>
+              <p className="font-medium text-gray-700">{p.receiptNumber ?? '—'}</p>
+            </div>
+            <div>
+              <span className="text-gray-400">Centre</span>
+              <p className="font-medium text-gray-700 truncate">{centreName}</p>
+            </div>
+            {p.notes && (
+              <div className="col-span-2">
+                <span className="text-gray-400">Notes</span>
+                <p className="font-medium text-gray-700">{p.notes}</p>
+              </div>
+            )}
+          </div>
+          {isPending && (
+            <div className="mt-3 flex gap-2">
+              <button onClick={onMarkPaid} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700">
+                Mark Paid
+              </button>
+              <button onClick={onWaive} className="rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-100">
+                Waive
+              </button>
+              <button onClick={onEdit} className="rounded-lg border px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50">
+                Edit
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function PaymentsPage() {
   const { profile } = useAuth();
@@ -56,6 +223,18 @@ export default function PaymentsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [monthFilter, setMonthFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [viewMode, setViewMode] = useState<ViewMode>('card');
+  const [sortField, setSortField] = useState<SortField>('month');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  function handleSort(field: SortField) {
+    if (sortField === field) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDir('desc');
+    }
+  }
 
   // Lookup maps
   const studentMap = useMemo(() => {
@@ -99,8 +278,20 @@ export default function PaymentsPage() {
     if (centreFilter) result = result.filter((p) => p.centreId === centreFilter);
     if (statusFilter) result = result.filter((p) => p.status === statusFilter);
     if (monthFilter) result = result.filter((p) => p.month === monthFilter);
+
+    const dir = sortDir === 'asc' ? 1 : -1;
+    result = [...result].sort((a, b) => {
+      switch (sortField) {
+        case 'month': return a.month.localeCompare(b.month) * dir;
+        case 'status': return a.status.localeCompare(b.status) * dir;
+        case 'total': return (a.totalAmountPaise - b.totalAmountPaise) * dir;
+        case 'dueDate': return ((a.dueDate ?? '').localeCompare(b.dueDate ?? '')) * dir;
+        case 'student': return ((studentMap.get(a.studentId) ?? '').localeCompare(studentMap.get(b.studentId) ?? '')) * dir;
+        default: return 0;
+      }
+    });
     return result;
-  }, [payments, search, studentMap, batchMap, centreFilter, statusFilter, monthFilter]);
+  }, [payments, search, studentMap, batchMap, centreFilter, statusFilter, monthFilter, sortField, sortDir]);
 
   // Summary stats
   const totalBilled = filtered.reduce((sum, p) => sum + p.totalAmountPaise, 0);
@@ -180,7 +371,7 @@ export default function PaymentsPage() {
     const method = prompt('Payment method? (CASH, BANK_TRANSFER, CHEQUE)', 'CASH');
     if (!method) return;
     try {
-      await markPaymentPaid(payment.id, method as any, profile.id);
+      await markPaymentPaid(payment.id, method as any, null, profile.id);
       toast.success('Marked as paid');
       await load();
     } catch (err) {
@@ -287,12 +478,34 @@ export default function PaymentsPage() {
           <h1 className="text-xl font-bold text-brand-secondary">Payments</h1>
           <p className="text-sm text-gray-500">{filtered.length} record{filtered.length !== 1 ? 's' : ''}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* View toggle */}
+          <div className="flex rounded-lg border border-gray-200 bg-white">
+            {VIEW_OPTIONS.map((v) => {
+              const Icon = v.icon;
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => setViewMode(v.id)}
+                  title={v.label}
+                  className={cn(
+                    'flex items-center gap-1 px-3 py-1.5 text-xs font-medium transition',
+                    viewMode === v.id ? 'bg-brand-primary text-white' : 'text-gray-500 hover:bg-gray-50',
+                    v.id === 'card' && 'rounded-l-lg',
+                    v.id === 'detail' && 'rounded-r-lg',
+                  )}
+                >
+                  <Icon size={14} />
+                  <span className="hidden sm:inline">{v.label}</span>
+                </button>
+              );
+            })}
+          </div>
           <button onClick={handleExport} className="btn-secondary" title="Export visible rows to CSV">
-            <Download size={16} /> Export CSV
+            <Download size={16} /> <span className="hidden sm:inline">Export CSV</span>
           </button>
           <button onClick={() => setShowGenDialog(true)} className="btn-secondary" title="Bulk-create monthly fee records">
-            <RefreshCw size={16} /> Generate Monthly Fees
+            <RefreshCw size={16} /> <span className="hidden sm:inline">Generate Fees</span>
           </button>
           <button onClick={() => setMode('create')} className="btn-primary">
             <Plus size={16} /> Record Payment
@@ -375,20 +588,122 @@ export default function PaymentsPage() {
           }
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((p) => (
-            <PaymentCard
-              key={p.id}
-              payment={p}
-              studentName={studentMap.get(p.studentId)}
-              batchName={batchMap.get(p.batchId)}
-              onEdit={handleEdit}
-              onDelete={handleDelete}
-              onMarkPaid={handleMarkPaid}
-              onWaive={handleWaive}
-            />
-          ))}
-        </div>
+        <>
+          {/* ── Card view ── */}
+          {viewMode === 'card' && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {filtered.map((p) => (
+                <PaymentCard
+                  key={p.id}
+                  payment={p}
+                  studentName={studentMap.get(p.studentId)}
+                  batchName={batchMap.get(p.batchId)}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                  onMarkPaid={handleMarkPaid}
+                  onWaive={handleWaive}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* ── Table view ── */}
+          {viewMode === 'table' && (
+            <div className="overflow-x-auto rounded-xl border border-gray-100 bg-white shadow-sm">
+              <table className="w-full text-sm">
+                <thead className="border-b bg-gray-50 text-left">
+                  <tr>
+                    <th className="px-4 py-3">
+                      <SortButton field="student" label="Student" current={sortField} dir={sortDir} onSort={handleSort} />
+                    </th>
+                    <th className="px-4 py-3 hidden md:table-cell">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Batch</span>
+                    </th>
+                    <th className="px-4 py-3">
+                      <SortButton field="month" label="Month" current={sortField} dir={sortDir} onSort={handleSort} />
+                    </th>
+                    <th className="px-4 py-3 text-right">
+                      <SortButton field="total" label="Total" current={sortField} dir={sortDir} onSort={handleSort} />
+                    </th>
+                    <th className="px-4 py-3 hidden lg:table-cell">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Base + GST</span>
+                    </th>
+                    <th className="px-4 py-3">
+                      <SortButton field="dueDate" label="Due" current={sortField} dir={sortDir} onSort={handleSort} />
+                    </th>
+                    <th className="px-4 py-3">
+                      <SortButton field="status" label="Status" current={sortField} dir={sortDir} onSort={handleSort} />
+                    </th>
+                    <th className="px-4 py-3 hidden lg:table-cell">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Method</span>
+                    </th>
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {filtered.map((p) => (
+                    <tr key={p.id} className="hover:bg-gray-50 transition">
+                      <td className="px-4 py-2.5 font-medium text-brand-secondary max-w-[160px] truncate">
+                        {studentMap.get(p.studentId) ?? p.studentId}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-500 max-w-[120px] truncate hidden md:table-cell">
+                        {batchMap.get(p.batchId) ?? p.batchId}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{fmtMonth(p.month)}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold text-brand-secondary whitespace-nowrap">
+                        {formatINR(p.totalAmountPaise, { withDecimals: false })}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-400 whitespace-nowrap hidden lg:table-cell">
+                        {formatINR(p.baseAmountPaise, { withDecimals: false })} + {formatINR(p.gstAmountPaise, { withDecimals: false })}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{fmtDate(p.dueDate)}</td>
+                      <td className="px-4 py-2.5">
+                        <span className={cn('inline-block rounded-full px-2 py-0.5 text-xs font-medium', STATUS_PILL[p.status])}>
+                          {p.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-400 hidden lg:table-cell">
+                        {p.method === 'NONE' ? '—' : p.method.replace('_', ' ')}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {(p.status === 'PENDING' || p.status === 'OVERDUE') && (
+                          <button
+                            onClick={() => handleMarkPaid(p)}
+                            className="rounded-lg bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-100 whitespace-nowrap"
+                          >
+                            Mark Paid
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* ── Detail view (expandable rows) ── */}
+          {viewMode === 'detail' && (
+            <div className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden divide-y divide-gray-50">
+              {filtered.map((p) => (
+                <DetailRow
+                  key={p.id}
+                  payment={p}
+                  studentName={studentMap.get(p.studentId) ?? p.studentId}
+                  batchName={batchMap.get(p.batchId) ?? p.batchId}
+                  centreName={centreMap.get(p.centreId) ?? p.centreId}
+                  onMarkPaid={() => handleMarkPaid(p)}
+                  onWaive={() => handleWaive(p)}
+                  onEdit={() => handleEdit(p)}
+                />
+              ))}
+            </div>
+          )}
+
+          <p className="mt-2 text-right text-xs text-gray-400">
+            Showing {filtered.length} of {payments.length}
+          </p>
+        </>
       )}
 
       {/* Generate Monthly Fees dialog */}
