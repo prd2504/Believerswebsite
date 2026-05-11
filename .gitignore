@@ -5,17 +5,13 @@ node_modules/
 # Build outputs
 dist/
 build/
+lib/
 **/dist/
 **/build/
+**/lib/
+!webapp/src/lib/
 .vite/
 *.tsbuildinfo
-# Compiled JS output from tsc
-functions/lib/
-shared/lib/
-# Stale tsc artifacts that may land in shared/src/ when built with wrong config
-shared/src/**/*.js
-shared/src/**/*.js.map
-shared/src/**/*.d.ts
 
 # Environment files (NEVER commit these)
 .env

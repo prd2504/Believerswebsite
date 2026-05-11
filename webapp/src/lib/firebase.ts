@@ -1,38 +1,19 @@
-/**
- * Single Firebase app initialisation for the webapp. Every other file in src/ should
- * import `auth`, `db`, `storage`, and `functions` from here — never call
- * `initializeApp` themselves.
- *
- * This module is side-effectful: importing it boots the SDK. That's intentional so the
- * AuthContext can subscribe to `onAuthStateChanged` as soon as React mounts.
- */
+import { initializeApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
-import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
-import { getAuth, type Auth } from 'firebase/auth';
-import { getFirestore, type Firestore } from 'firebase/firestore';
-import { getStorage, type FirebaseStorage } from 'firebase/storage';
-import { getFunctions, type Functions } from 'firebase/functions';
-import { env } from './env';
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+};
 
-/** Lazy singleton — `getApps()` check avoids duplicate init during HMR reloads. */
-function getOrInitApp(): FirebaseApp {
-  if (getApps().length > 0) return getApps()[0]!;
-  return initializeApp({
-    apiKey: env.firebase.apiKey,
-    authDomain: env.firebase.authDomain,
-    projectId: env.firebase.projectId,
-    storageBucket: env.firebase.storageBucket,
-    messagingSenderId: env.firebase.messagingSenderId,
-    appId: env.firebase.appId,
-    measurementId: env.firebase.measurementId || undefined,
-  });
-}
-
-export const firebaseApp: FirebaseApp = getOrInitApp();
-
-// Eagerly export the core services. Using module-level consts means all consumers share
-// the same SDK instances (important for auth state propagation and caching).
-export const auth: Auth = getAuth(firebaseApp);
-export const db: Firestore = getFirestore(firebaseApp);
-export const storage: FirebaseStorage = getStorage(firebaseApp);
-export const functions: Functions = getFunctions(firebaseApp, env.functionsRegion);
+export const app = initializeApp(firebaseConfig);
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const storage = getStorage(app);

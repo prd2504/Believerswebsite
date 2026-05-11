@@ -1,7 +1,5 @@
 /**
  * Payment service — Firestore CRUD for /payments/{paymentId}.
- * Amounts are stored as integer paise in Firestore. The form accepts rupees;
- * conversion happens here.
  */
 
 import {
@@ -11,109 +9,55 @@ import {
   getDocs,
   addDoc,
   updateDoc,
-  deleteDoc,
-  serverTimestamp,
   query,
-  where,
   orderBy,
+  where,
+  serverTimestamp,
   type DocumentData,
   type Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { COLLECTIONS, PAYMENT, rupeesToPaise, type PaymentDocument, type PaymentStatus, type PaymentMethod } from '@bba/shared';
-import type { EnrollmentDocument } from '@bba/shared';
-import type { PaymentFormValues } from '@/lib/schemas/paymentSchema';
+import { COLLECTIONS, PAYMENT, formatINR } from '@bba/shared';
+import type { PaymentDocument, PaymentStatus, PaymentMethod } from '@bba/shared';
 
 function toIso(ts: unknown): string {
   if (!ts) return new Date().toISOString();
   if (typeof ts === 'string') return ts;
-  if (ts && typeof ts === 'object' && 'toDate' in ts) {
+  if (ts && typeof ts === 'object' && 'toDate' in ts)
     return (ts as Timestamp).toDate().toISOString();
-  }
   return new Date().toISOString();
 }
 
-function fromFirestore(id: string, data: DocumentData): PaymentDocument {
+function fromFirestore(id: string, d: DocumentData): PaymentDocument {
   return {
     id,
-    studentId: data.studentId ?? '',
-    batchId: data.batchId ?? '',
-    centreId: data.centreId ?? '',
-    month: data.month ?? '',
-    baseAmountPaise: data.baseAmountPaise ?? 0,
-    gstAmountPaise: data.gstAmountPaise ?? 0,
-    totalAmountPaise: data.totalAmountPaise ?? 0,
-    gstRatePercentSnapshot: data.gstRatePercentSnapshot ?? 0,
-    status: (data.status ?? 'PENDING') as PaymentStatus,
-    method: (data.method ?? 'NONE') as PaymentMethod,
-    dueDate: data.dueDate ?? null,
-    paidAt: data.paidAt ? toIso(data.paidAt) : null,
-    razorpayOrderId: data.razorpayOrderId ?? null,
-    razorpayPaymentId: data.razorpayPaymentId ?? null,
-    razorpaySignature: data.razorpaySignature ?? null,
-    notes: data.notes ?? null,
-    receiptNumber: data.receiptNumber ?? null,
-    receiptPdfPath: data.receiptPdfPath ?? null,
-    createdAt: toIso(data.createdAt),
-    updatedAt: toIso(data.updatedAt),
-    createdBy: data.createdBy ?? null,
-    updatedBy: data.updatedBy ?? null,
+    studentId: d.studentId ?? '',
+    batchId: d.batchId ?? '',
+    centreId: d.centreId ?? '',
+    month: d.month ?? '',
+    baseAmountPaise: d.baseAmountPaise ?? 0,
+    gstAmountPaise: d.gstAmountPaise ?? 0,
+    totalAmountPaise: d.totalAmountPaise ?? 0,
+    gstRatePercentSnapshot: d.gstRatePercentSnapshot ?? 0,
+    status: d.status ?? 'PENDING',
+    method: d.method ?? 'NONE',
+    dueDate: d.dueDate ?? null,
+    paidAt: d.paidAt ?? null,
+    razorpayOrderId: d.razorpayOrderId ?? null,
+    razorpayPaymentId: d.razorpayPaymentId ?? null,
+    razorpaySignature: d.razorpaySignature ?? null,
+    notes: d.notes ?? null,
+    receiptNumber: d.receiptNumber ?? null,
+    receiptPdfPath: d.receiptPdfPath ?? null,
+    createdAt: toIso(d.createdAt),
+    updatedAt: toIso(d.updatedAt),
+    createdBy: d.createdBy ?? null,
+    updatedBy: d.updatedBy ?? null,
   };
 }
-
-function toFirestoreData(values: PaymentFormValues, userId: string) {
-  const basePaise = rupeesToPaise(values.baseAmountRupees);
-  const gstPaise = Math.round(basePaise * values.gstRatePercent / 100);
-  const totalPaise = basePaise + gstPaise;
-
-  return {
-    studentId: values.studentId,
-    batchId: values.batchId,
-    centreId: values.centreId,
-    month: values.month,
-    baseAmountPaise: basePaise,
-    gstAmountPaise: gstPaise,
-    totalAmountPaise: totalPaise,
-    gstRatePercentSnapshot: values.gstRatePercent,
-    status: values.status as PaymentStatus,
-    method: values.method as PaymentMethod,
-    dueDate: values.dueDate || null,
-    paidAt: values.status === 'PAID' ? new Date().toISOString() : null,
-    razorpayOrderId: null,
-    razorpayPaymentId: null,
-    razorpaySignature: null,
-    notes: values.notes?.trim() || null,
-    receiptNumber: null,
-    receiptPdfPath: null,
-    updatedAt: serverTimestamp(),
-    updatedBy: userId,
-  };
-}
-
-// ── Queries ──
 
 export async function getAllPayments(): Promise<PaymentDocument[]> {
   const q = query(collection(db, COLLECTIONS.payments), orderBy('month', 'desc'));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => fromFirestore(d.id, d.data()));
-}
-
-export async function getPaymentsByStudent(studentId: string): Promise<PaymentDocument[]> {
-  const q = query(
-    collection(db, COLLECTIONS.payments),
-    where('studentId', '==', studentId),
-    orderBy('month', 'desc'),
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => fromFirestore(d.id, d.data()));
-}
-
-export async function getPaymentsByCentre(centreId: string): Promise<PaymentDocument[]> {
-  const q = query(
-    collection(db, COLLECTIONS.payments),
-    where('centreId', '==', centreId),
-    orderBy('month', 'desc'),
-  );
   const snap = await getDocs(q);
   return snap.docs.map((d) => fromFirestore(d.id, d.data()));
 }
@@ -128,140 +72,86 @@ export async function getPaymentsByMonth(month: string): Promise<PaymentDocument
   return snap.docs.map((d) => fromFirestore(d.id, d.data()));
 }
 
-export async function getPaymentById(paymentId: string): Promise<PaymentDocument | null> {
-  const snap = await getDoc(doc(db, COLLECTIONS.payments, paymentId));
-  if (!snap.exists()) return null;
-  return fromFirestore(snap.id, snap.data());
+export async function getPaymentsByStudent(studentId: string): Promise<PaymentDocument[]> {
+  const q = query(
+    collection(db, COLLECTIONS.payments),
+    where('studentId', '==', studentId),
+    orderBy('month', 'desc'),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => fromFirestore(d.id, d.data()));
 }
 
-// ── Mutations ──
+export interface CreatePaymentInput {
+  studentId: string;
+  batchId: string;
+  centreId: string;
+  month: string;
+  baseAmountPaise: number;
+  gstRatePercent?: number;
+  dueDate?: string | null;
+  notes?: string | null;
+  createdBy: string;
+}
 
-export async function createPayment(values: PaymentFormValues, userId: string): Promise<string> {
+export async function createPayment(input: CreatePaymentInput): Promise<string> {
+  const rate = input.gstRatePercent ?? PAYMENT.defaultGstRatePercent;
+  const gst = Math.round((input.baseAmountPaise * rate) / 100);
+  const total = input.baseAmountPaise + gst;
+
   const ref = await addDoc(collection(db, COLLECTIONS.payments), {
-    ...toFirestoreData(values, userId),
+    studentId: input.studentId,
+    batchId: input.batchId,
+    centreId: input.centreId,
+    month: input.month,
+    baseAmountPaise: input.baseAmountPaise,
+    gstAmountPaise: gst,
+    totalAmountPaise: total,
+    gstRatePercentSnapshot: rate,
+    status: 'PENDING',
+    method: 'NONE',
+    dueDate: input.dueDate ?? null,
+    paidAt: null,
+    razorpayOrderId: null,
+    razorpayPaymentId: null,
+    razorpaySignature: null,
+    notes: input.notes ?? null,
+    receiptNumber: null,
+    receiptPdfPath: null,
     createdAt: serverTimestamp(),
-    createdBy: userId,
+    updatedAt: serverTimestamp(),
+    createdBy: input.createdBy,
+    updatedBy: input.createdBy,
   });
   return ref.id;
 }
 
-export async function updatePayment(
-  paymentId: string,
-  values: PaymentFormValues,
-  userId: string,
-): Promise<void> {
-  const ref = doc(db, COLLECTIONS.payments, paymentId);
-  await updateDoc(ref, toFirestoreData(values, userId));
-}
-
-/** Mark a payment as paid (cash, bank transfer, etc.). */
 export async function markPaymentPaid(
   paymentId: string,
   method: PaymentMethod,
-  userId: string,
-  notes?: string,
+  notes: string | null,
+  updatedBy: string,
 ): Promise<void> {
   const ref = doc(db, COLLECTIONS.payments, paymentId);
   await updateDoc(ref, {
     status: 'PAID',
     method,
     paidAt: new Date().toISOString(),
-    notes: notes?.trim() || null,
+    notes,
     updatedAt: serverTimestamp(),
-    updatedBy: userId,
+    updatedBy,
   });
 }
 
-/** Waive a payment (discount, scholarship, etc.). */
-export async function waivePayment(
+export async function updatePaymentStatus(
   paymentId: string,
-  userId: string,
-  notes?: string,
+  status: PaymentStatus,
+  updatedBy: string,
 ): Promise<void> {
   const ref = doc(db, COLLECTIONS.payments, paymentId);
   await updateDoc(ref, {
-    status: 'WAIVED',
-    notes: notes?.trim() || null,
+    status,
     updatedAt: serverTimestamp(),
-    updatedBy: userId,
+    updatedBy,
   });
-}
-
-export async function deletePayment(paymentId: string): Promise<void> {
-  await deleteDoc(doc(db, COLLECTIONS.payments, paymentId));
-}
-
-/**
- * Bulk-generate PENDING payment records for all active enrollments for a given month.
- * Skips students who already have a payment record for that month+batch.
- * Returns { created, skipped } counts.
- */
-export async function generateMonthlyFees(
-  month: string, // "YYYY-MM"
-  userId: string,
-  centreId?: string, // optional — scope to one centre
-): Promise<{ created: number; skipped: number }> {
-  // Load active enrollments (optionally scoped to centre)
-  const enrollmentsQuery = centreId
-    ? query(collection(db, COLLECTIONS.enrollments), where('centreId', '==', centreId), where('status', '==', 'ACTIVE'))
-    : query(collection(db, COLLECTIONS.enrollments), where('status', '==', 'ACTIVE'));
-  const enrollSnap = await getDocs(enrollmentsQuery);
-  const enrollments = enrollSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<EnrollmentDocument, 'id'>) }));
-
-  // Load existing payments for this month (scoped or all)
-  const existingQuery = centreId
-    ? query(collection(db, COLLECTIONS.payments), where('month', '==', month), where('centreId', '==', centreId))
-    : query(collection(db, COLLECTIONS.payments), where('month', '==', month));
-  const existingSnap = await getDocs(existingQuery);
-  const existingKeys = new Set(existingSnap.docs.map((d) => `${d.data().studentId}:${d.data().batchId}`));
-
-  let created = 0;
-  let skipped = 0;
-
-  // Compute due date = last day of the month
-  const [yr, mo] = month.split('-').map(Number);
-  const lastDay = new Date(yr, mo, 0).getDate();
-  const dueDate = `${month}-${String(lastDay).padStart(2, '0')}`;
-
-  const gstRate = PAYMENT.defaultGstRatePercent;
-
-  for (const enrollment of enrollments) {
-    const key = `${enrollment.studentId}:${enrollment.batchId}`;
-    if (existingKeys.has(key)) {
-      skipped++;
-      continue;
-    }
-
-    const basePaise = enrollment.monthlyFeePaise;
-    const gstPaise = Math.round(basePaise * gstRate / 100);
-    const totalPaise = basePaise + gstPaise;
-
-    await addDoc(collection(db, COLLECTIONS.payments), {
-      studentId: enrollment.studentId,
-      batchId: enrollment.batchId,
-      centreId: enrollment.centreId,
-      month,
-      baseAmountPaise: basePaise,
-      gstAmountPaise: gstPaise,
-      totalAmountPaise: totalPaise,
-      gstRatePercentSnapshot: gstRate,
-      status: 'PENDING' as PaymentStatus,
-      method: 'NONE' as PaymentMethod,
-      dueDate,
-      paidAt: null,
-      razorpayOrderId: null,
-      razorpayPaymentId: null,
-      razorpaySignature: null,
-      notes: null,
-      receiptNumber: null,
-      receiptPdfPath: null,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      createdBy: userId,
-      updatedBy: userId,
-    });
-    created++;
-  }
-
-  return { created, skipped };
 }
