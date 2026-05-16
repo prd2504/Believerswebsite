@@ -14,3 +14,6 @@ export { health } from './http/health.js';
 
 // --- Notifications / Broadcasts ----------------------------------------------------------
 export { onBroadcastCreated } from './notifications/broadcast.js';
+
+// --- Attendance email digest -------------------------------------------------------------
+export { onAttendanceRecordCreated } from './attendance/onAttendanceMarked.js';

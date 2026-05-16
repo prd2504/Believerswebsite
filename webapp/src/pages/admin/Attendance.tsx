@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ClipboardCheck, Download, Search } from 'lucide-react';
+import { ClipboardCheck, Download, Search, CalendarDays } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { getAllBatches } from '@/services/batchService';
@@ -11,6 +11,7 @@ import { getAllCentres } from '@/services/centreService';
 import { getAllStudents } from '@/services/studentService';
 import { AttendanceMarker } from '@/components/attendance/AttendanceMarker';
 import { SessionHistory } from '@/components/attendance/SessionHistory';
+import { MonthlyRoster } from '@/components/attendance/MonthlyRoster';
 import {
   getSessionsByBatch,
   getAttendanceRecords,
@@ -20,7 +21,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
 import type { BatchDocument, CentreDocument, StudentDocument } from '@bba/shared';
 
-type Tab = 'mark' | 'history';
+type Tab = 'mark' | 'roster' | 'history';
 
 export default function AttendancePage() {
   const { profile } = useAuth();
@@ -147,6 +148,14 @@ export default function AttendancePage() {
           Mark Attendance
         </button>
         <button
+          onClick={() => setTab('roster')}
+          className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+            tab === 'roster' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Monthly Roster
+        </button>
+        <button
           onClick={() => setTab('history')}
           className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
             tab === 'history' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
@@ -164,6 +173,16 @@ export default function AttendancePage() {
             centreId={centreFilter || centres[0]?.id || ''}
             userId={profile.id}
             onDone={load}
+          />
+        </div>
+      )}
+
+      {tab === 'roster' && (
+        <div className="card">
+          <MonthlyRoster
+            batches={activeBatches}
+            students={students}
+            centreFilter={centreFilter}
           />
         </div>
       )}
