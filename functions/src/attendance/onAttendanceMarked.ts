@@ -139,7 +139,7 @@ export const onAttendanceRecordCreated = onDocumentCreated(
 <head><meta charset="utf-8"></head>
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:640px;margin:0 auto;padding:20px;color:#333">
   <div style="background:#E8593C;color:white;padding:16px 24px;border-radius:12px 12px 0 0">
-    <h2 style="margin:0;font-size:18px">Believers Badminton Academy</h2>
+    <h2 style="margin:0;font-size:18px">BBA Sports Academy</h2>
     <p style="margin:4px 0 0;font-size:13px;opacity:0.9">Attendance Update</p>
   </div>
   <div style="border:1px solid #e5e5e5;border-top:0;padding:24px;border-radius:0 0 12px 12px">

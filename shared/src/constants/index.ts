@@ -9,7 +9,7 @@ import { SportType } from '../types/centre.js';
 /** Company / brand metadata — safe to import from any component. */
 export const COMPANY = {
   legalName: 'BBA Sports Private Limited',
-  brandName: 'Believers Badminton Academy',
+  brandName: 'BBA Sports Academy',
   brandShortName: 'BBA',
   supportEmail: 'support@bbasports.in',
   defaultLocale: 'en-IN',

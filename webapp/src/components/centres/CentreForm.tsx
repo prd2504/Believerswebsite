@@ -56,7 +56,7 @@ export function CentreForm({ initialValues, onSubmit, onCancel, busy }: CentreFo
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="sm:col-span-2">
           <label className="label">Centre name</label>
-          <input {...register('name')} className="input" placeholder="Believers Badminton Academy — Andheri" disabled={busy} />
+          <input {...register('name')} className="input" placeholder="BBA Sports Academy — Andheri" disabled={busy} />
           {errors.name && <p className="mt-1 text-xs text-red-600">{errors.name.message}</p>}
         </div>
         <div className="sm:col-span-2">

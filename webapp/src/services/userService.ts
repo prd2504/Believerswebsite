@@ -165,7 +165,7 @@ export async function getAllCoaches(): Promise<UserDocument[]> {
 
 /**
  * Approve a pending coach: set accountStatus=ACTIVE, assign centre and batch access.
- * Does NOT overwrite existing centreIds or assignedBatchIds — it unions them.
+ * Also syncs the coach's uid into each assigned batch's `coachIds` array.
  */
 export async function approveCoach(
   uid: string,
@@ -180,21 +180,52 @@ export async function approveCoach(
     updatedAt: serverTimestamp(),
     updatedBy: adminId,
   });
+  for (const batchId of batchIds) {
+    await updateDoc(doc(db, COLLECTIONS.batches, batchId), {
+      coachIds: arrayUnion(uid),
+      updatedAt: serverTimestamp(),
+      updatedBy: adminId,
+    });
+  }
 }
 
-/** Update a coach's assigned centres and batches (replaces existing arrays). */
+/**
+ * Update a coach's assigned centres and batches (replaces existing arrays).
+ * Syncs batch `coachIds`: removes coach from old batches, adds to new ones.
+ */
 export async function updateCoachAssignments(
   uid: string,
   centreIds: string[],
   batchIds: string[],
   adminId: string,
 ): Promise<void> {
+  const existing = await getUserProfile(uid);
+  const oldBatchIds = existing?.assignedBatchIds ?? [];
+
   await updateDoc(doc(db, COLLECTIONS.users, uid), {
     centreIds,
     assignedBatchIds: batchIds,
     updatedAt: serverTimestamp(),
     updatedBy: adminId,
   });
+
+  const toRemove = oldBatchIds.filter((id) => !batchIds.includes(id));
+  const toAdd = batchIds.filter((id) => !oldBatchIds.includes(id));
+
+  for (const batchId of toRemove) {
+    await updateDoc(doc(db, COLLECTIONS.batches, batchId), {
+      coachIds: arrayRemove(uid),
+      updatedAt: serverTimestamp(),
+      updatedBy: adminId,
+    });
+  }
+  for (const batchId of toAdd) {
+    await updateDoc(doc(db, COLLECTIONS.batches, batchId), {
+      coachIds: arrayUnion(uid),
+      updatedAt: serverTimestamp(),
+      updatedBy: adminId,
+    });
+  }
 }
 
 /** Suspend a coach — they can still log in but will see a suspended screen. */

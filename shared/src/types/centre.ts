@@ -32,7 +32,7 @@ export interface OperatingHours {
 export interface CentreDocument extends BaseDocument {
   id: string;
 
-  /** Display name, e.g. "Believers Badminton Academy — Andheri". Entirely admin-defined. */
+  /** Display name, e.g. "BBA Sports Academy — Andheri". Entirely admin-defined. */
   name: string;
   /** Free-text street address. */
   address: string;

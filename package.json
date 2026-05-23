@@ -2,7 +2,7 @@
   "name": "bba-sports-platform",
   "version": "0.1.0",
   "private": true,
-  "description": "Believers Badminton Academy — multi-centre coaching platform (BBA Sports Private Limited)",
+  "description": "BBA Sports Academy — multi-centre coaching platform (BBA Sports Private Limited)",
   "workspaces": [
     "shared",
     "webapp",
