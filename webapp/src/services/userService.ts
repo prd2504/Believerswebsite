@@ -14,6 +14,7 @@ import {
   getDocs,
   setDoc,
   updateDoc,
+  runTransaction,
   serverTimestamp,
   query,
   where,
@@ -102,36 +103,38 @@ export async function getUserProfile(uid: string): Promise<UserDocument | null> 
  * SUPER_ADMIN" script (to be added in Step 2) to elevate themselves.
  */
 export async function ensureUserProfile(input: BootstrapProfileInput): Promise<UserDocument> {
-  const existing = await getUserProfile(input.uid);
-  if (existing) return existing;
-
   const ref = doc(db, COLLECTIONS.users, input.uid);
-  const base: Omit<UserDocument, 'createdAt' | 'updatedAt'> & {
-    createdAt: ReturnType<typeof serverTimestamp>;
-    updatedAt: ReturnType<typeof serverTimestamp>;
-  } = {
-    id: input.uid,
-    role: UserRole.STUDENT,
-    name: input.name || 'Guest',
-    phone: input.phone,
-    email: input.email,
-    photoPath: null,
-    allCentreAccess: false,
-    centreIds: [],
-    assignedBatchIds: [],
-    linkedStudentIds: [],
-    notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES,
-    onboardingComplete: false,
-    disabled: false,
-    accountStatus: AccountStatus.ACTIVE,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    createdBy: null,
-    updatedBy: null,
-  };
 
-  await setDoc(ref, base);
-  // Re-read so we return real ISO timestamps instead of FieldValue sentinels.
+  // Use a transaction so the read-then-write is atomic. This prevents the race condition
+  // where bootstrapCoachProfile() (called during coach registration) writes a COACH doc
+  // concurrently — if the doc already exists when our transaction reads it, we skip the
+  // write entirely and return the existing profile unchanged.
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (snap.exists()) return; // Profile already written (e.g. by bootstrapCoachProfile) — no-op.
+
+    transaction.set(ref, {
+      id: input.uid,
+      role: UserRole.STUDENT,
+      name: input.name || 'Guest',
+      phone: input.phone,
+      email: input.email,
+      photoPath: null,
+      allCentreAccess: false,
+      centreIds: [],
+      assignedBatchIds: [],
+      linkedStudentIds: [],
+      notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES,
+      onboardingComplete: false,
+      disabled: false,
+      accountStatus: AccountStatus.ACTIVE,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      createdBy: null,
+      updatedBy: null,
+    });
+  });
+
   const fresh = await getUserProfile(input.uid);
   if (!fresh) {
     throw new Error('Failed to create user profile — /users write succeeded but read returned null.');
