@@ -19,7 +19,7 @@ interface LogoProps {
 export function Logo({ size = 'md', className }: LogoProps) {
   return (
     <img
-      src="/logo.svg"
+      src="/logo.png"
       alt="BBA Sports"
       className={cn('object-contain select-none', SIZES[size], className)}
     />
