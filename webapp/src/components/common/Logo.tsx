@@ -1,14 +1,14 @@
 /**
- * BBA brand logo — renders the official logo image. Supports three sizes for
+ * BBA brand logo — renders the official logo SVG. Supports three sizes for
  * different contexts (nav bar, login page, full-page loader).
  */
 
 import { cn } from '@/lib/cn';
 
 const SIZES = {
-  sm: 'h-8 w-8',
-  md: 'h-10 w-10',
-  lg: 'h-20 w-20',
+  sm: 'h-8',
+  md: 'h-10',
+  lg: 'h-20',
 } as const;
 
 interface LogoProps {
@@ -19,7 +19,7 @@ interface LogoProps {
 export function Logo({ size = 'md', className }: LogoProps) {
   return (
     <img
-      src="/logo.png"
+      src="/logo.svg"
       alt="BBA Sports"
       className={cn('object-contain select-none', SIZES[size], className)}
     />
