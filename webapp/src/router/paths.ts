@@ -24,9 +24,11 @@ export const paths = {
     attendance: '/admin/attendance',
     payments: '/admin/payments',
     progress: '/admin/progress',
-    tournaments: '/admin/tournaments',
+    sessionLogs: '/admin/session-logs',
+    parentFeedback: '/admin/parent-feedback',
+    financials: '/admin/financials',
+    issues: '/admin/issues',
     notifications: '/admin/notifications',
-    analytics: '/admin/analytics',
     settings: '/admin/settings',
   },
   pendingApproval: '/pending-approval',
@@ -38,6 +40,7 @@ export const paths = {
     batches: '/coach/batches',
     attendance: '/coach/attendance',
     progress: '/coach/progress',
+    issues: '/coach/issues',
   },
 
   // Student / Parent (shared shell — parent sees scoped-to-child data)
@@ -48,7 +51,6 @@ export const paths = {
     attendance: '/me/attendance',
     fees: '/me/fees',
     progress: '/me/progress',
-    tournaments: '/me/tournaments',
     profile: '/me/profile',
   },
 } as const;

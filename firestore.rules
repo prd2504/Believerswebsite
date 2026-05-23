@@ -69,8 +69,12 @@ service cloud.firestore {
       return getUserDoc().data.centreIds;
     }
 
+    function isAllCentreManager() {
+      return isCentreManager() && getUserDoc().data.allCentreAccess == true;
+    }
+
     function managesCentre(centreId) {
-      return isSuperAdmin() || (isCentreManager() && centreId in managedCentreIds());
+      return isSuperAdmin() || isAllCentreManager() || (isCentreManager() && centreId in managedCentreIds());
     }
 
     // ── /users/{userId} ───────────────────────────────────────────────────────────────────
@@ -177,21 +181,39 @@ service cloud.firestore {
       }
     }
 
-    // ── /tournaments/{tournamentId} ───────────────────────────────────────────────────────
-    match /tournaments/{tournamentId} {
-      allow read: if isSignedIn();
-      allow create, update, delete: if isAdminLike();
+    // ── /parentFeedback/{feedbackId} ────────────────────────────────────────────────────────
+    match /parentFeedback/{feedbackId} {
+      allow read: if isAdminLike();
+      allow create, update: if isAdminLike();
+      allow delete: if isSuperAdmin();
+    }
 
-      match /registrations/{studentId} {
-        allow read: if isSignedIn();
-        // Students/parents can register/unregister themselves; admins can do anything
-        allow create: if isSignedIn() && (
-          isAdminLike() || studentId in getUserDoc().data.linkedStudentIds || studentId == uid()
-        );
-        allow delete: if isAdminLike() || (
-          isStudentOrParent() && (studentId in getUserDoc().data.linkedStudentIds || studentId == uid())
-        );
-        allow update: if isAdminLike();
+    // ── /centreExpenses/{expenseId} ──────────────────────────────────────────────────────
+    match /centreExpenses/{expenseId} {
+      allow read: if isAdminLike();
+      allow create, update: if isAdminLike();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /partnerPayouts/{payoutId} — SUPER_ADMIN ONLY ───────────────────────────────────
+    match /partnerPayouts/{payoutId} {
+      allow read: if isSuperAdmin();
+      allow create, update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /issues/{issueId} ───────────────────────────────────────────────────────────────
+    match /issues/{issueId} {
+      allow read: if isAdminOrCoach();
+      allow create: if isAdminOrCoach();
+      allow update: if isAdminOrCoach();
+      allow delete: if isAdminLike();
+
+      match /comments/{commentId} {
+        allow read: if isAdminOrCoach();
+        allow create: if isAdminOrCoach();
+        allow update: if isSignedIn() && resource.data.authorId == uid();
+        allow delete: if isAdminLike();
       }
     }
 

@@ -9,8 +9,15 @@
  * sports can be added without schema changes.
  */
 
-import type { BaseDocument, IsoDate, YearMonth } from './common.js';
+import type { BaseDocument, IsoDate, IsoTimestamp, YearMonth } from './common.js';
 import type { SportType } from './centre.js';
+
+export const CoachRecommendation = {
+  PROMOTE: 'PROMOTE',
+  MAINTAIN: 'MAINTAIN',
+  NEEDS_ATTENTION: 'NEEDS_ATTENTION',
+} as const;
+export type CoachRecommendation = (typeof CoachRecommendation)[keyof typeof CoachRecommendation];
 
 /** Single skill rating on a 1–10 scale. */
 export type SkillScore = number;
@@ -71,4 +78,24 @@ export interface ProgressReportDocument extends BaseDocument {
 
   /** Optional PDF if the admin generated one. */
   pdfPath: string | null;
+}
+
+/** Structured monthly assessment — one per student per month at /progress/{studentId}/assessments/{YYYY-MM}. */
+export interface MonthlyAssessmentDocument extends BaseDocument {
+  id: string;
+  studentId: string;
+  batchId: string;
+  coachId: string;
+  sport: SportType;
+  yearMonth: YearMonth;
+
+  scores: SkillScoreMap;
+  recommendation: CoachRecommendation;
+
+  strengths: string;
+  areasForImprovement: string;
+  coachComments: string;
+
+  sharedWithParent: boolean;
+  sharedAt: IsoTimestamp | null;
 }

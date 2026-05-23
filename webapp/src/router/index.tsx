@@ -37,22 +37,24 @@ const AdminRoster = lazy(() => import('@/pages/admin/Roster'));
 const AdminAttendance = lazy(() => import('@/pages/admin/Attendance'));
 const AdminPayments = lazy(() => import('@/pages/admin/Payments'));
 const AdminProgress = lazy(() => import('@/pages/admin/Progress'));
-const AdminTournaments = lazy(() => import('@/pages/admin/Tournaments'));
+const AdminSessionLogs = lazy(() => import('@/pages/admin/SessionLogs'));
+const AdminParentFeedback = lazy(() => import('@/pages/admin/ParentFeedback'));
+const AdminFinancials = lazy(() => import('@/pages/admin/Financials'));
+const AdminIssues = lazy(() => import('@/pages/admin/Issues'));
 const AdminNotifications = lazy(() => import('@/pages/admin/Notifications'));
-const AdminAnalytics = lazy(() => import('@/pages/admin/Analytics'));
 const AdminSettings = lazy(() => import('@/pages/admin/Settings'));
 
 const CoachDashboard = lazy(() => import('@/pages/coach/Dashboard'));
 const CoachBatches = lazy(() => import('@/pages/coach/Batches'));
 const CoachAttendance = lazy(() => import('@/pages/coach/Attendance'));
 const CoachProgress = lazy(() => import('@/pages/coach/Progress'));
+const CoachIssues = lazy(() => import('@/pages/coach/Issues'));
 
 const StudentDashboard = lazy(() => import('@/pages/student/Dashboard'));
 const SchedulePage = lazy(() => import('@/pages/student/Schedule'));
 const StudentAttendance = lazy(() => import('@/pages/student/Attendance'));
 const FeesPage = lazy(() => import('@/pages/student/Fees'));
 const StudentProgress = lazy(() => import('@/pages/student/Progress'));
-const StudentTournaments = lazy(() => import('@/pages/student/Tournaments'));
 const ProfilePage = lazy(() => import('@/pages/student/Profile'));
 
 // ---- Suspense wrapper ---------------------------------------------------------------
@@ -101,9 +103,11 @@ const routes: RouteObject[] = [
               { path: '/admin/attendance', element: <Lazy><AdminAttendance /></Lazy> },
               { path: '/admin/payments', element: <Lazy><AdminPayments /></Lazy> },
               { path: '/admin/progress', element: <Lazy><AdminProgress /></Lazy> },
-              { path: '/admin/tournaments', element: <Lazy><AdminTournaments /></Lazy> },
+              { path: '/admin/session-logs', element: <Lazy><AdminSessionLogs /></Lazy> },
+              { path: '/admin/parent-feedback', element: <Lazy><AdminParentFeedback /></Lazy> },
+              { path: '/admin/financials', element: <Lazy><AdminFinancials /></Lazy> },
+              { path: '/admin/issues', element: <Lazy><AdminIssues /></Lazy> },
               { path: '/admin/notifications', element: <Lazy><AdminNotifications /></Lazy> },
-              { path: '/admin/analytics', element: <Lazy><AdminAnalytics /></Lazy> },
               { path: '/admin/settings', element: <Lazy><AdminSettings /></Lazy> },
             ],
           },
@@ -121,6 +125,7 @@ const routes: RouteObject[] = [
               { path: '/coach/batches', element: <Lazy><CoachBatches /></Lazy> },
               { path: '/coach/attendance', element: <Lazy><CoachAttendance /></Lazy> },
               { path: '/coach/progress', element: <Lazy><CoachProgress /></Lazy> },
+              { path: '/coach/issues', element: <Lazy><CoachIssues /></Lazy> },
             ],
           },
         ],
@@ -138,7 +143,6 @@ const routes: RouteObject[] = [
               { path: '/me/attendance', element: <Lazy><StudentAttendance /></Lazy> },
               { path: '/me/fees', element: <Lazy><FeesPage /></Lazy> },
               { path: '/me/progress', element: <Lazy><StudentProgress /></Lazy> },
-              { path: '/me/tournaments', element: <Lazy><StudentTournaments /></Lazy> },
               { path: '/me/profile', element: <Lazy><ProfilePage /></Lazy> },
             ],
           },

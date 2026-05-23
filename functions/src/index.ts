@@ -17,3 +17,9 @@ export { onBroadcastCreated } from './notifications/broadcast.js';
 
 // --- Attendance email digest -------------------------------------------------------------
 export { onAttendanceRecordCreated } from './attendance/onAttendanceMarked.js';
+
+// --- Session log: late punch-in detection ------------------------------------------------
+export { onSessionLogUpdated } from './sessionLogs/onSessionUpdated.js';
+
+// --- Parent feedback: escalation notification --------------------------------------------
+export { onFeedbackCreated } from './feedback/onFeedbackCreated.js';

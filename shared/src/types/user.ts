@@ -16,7 +16,8 @@ export interface NotificationPreferences {
   absenceAlerts: boolean;
   progressReports: boolean;
   scheduleChanges: boolean;
-  tournamentUpdates: boolean;
+  feedbackAlerts: boolean;
+  issueUpdates: boolean;
   broadcasts: boolean;
 }
 
@@ -25,7 +26,8 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   absenceAlerts: true,
   progressReports: true,
   scheduleChanges: true,
-  tournamentUpdates: true,
+  feedbackAlerts: true,
+  issueUpdates: true,
   broadcasts: true,
 };
 
@@ -57,6 +59,12 @@ export interface UserDocument extends BaseDocument {
   email: string | null;
   /** Storage path (not public URL) to the profile photo. */
   photoPath: string | null;
+
+  /**
+   * When true, a CENTRE_MANAGER has access to ALL centres without needing each centreId
+   * listed. Survives new centre creation automatically. Only meaningful for CENTRE_MANAGER.
+   */
+  allCentreAccess: boolean;
 
   /**
    * Centre scope for CENTRE_MANAGER and COACH users. Empty array for SUPER_ADMIN (who has

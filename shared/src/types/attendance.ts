@@ -44,6 +44,13 @@ export const AttendeeType = {
 } as const;
 export type AttendeeType = (typeof AttendeeType)[keyof typeof AttendeeType];
 
+export const SessionLogStatus = {
+  PLANNED: 'PLANNED',
+  IN_PROGRESS: 'IN_PROGRESS',
+  COMPLETED: 'COMPLETED',
+} as const;
+export type SessionLogStatus = (typeof SessionLogStatus)[keyof typeof SessionLogStatus];
+
 /**
  * A single coaching session — one batch meeting on one date. Holds the session-level
  * metadata (who ran it, start/end, any cancellation note); the per-attendee marks live
@@ -75,6 +82,21 @@ export interface SessionDocument extends BaseDocument {
   /** Optional cancellation. If cancelled, no records are expected. */
   cancelled: boolean;
   cancellationReason: string | null;
+
+  // ── Session Log fields (all optional — existing docs lack these) ───────────
+
+  sessionPlan: string | null;
+  drillsConducted: string[];
+  postSessionNotes: string | null;
+  coachSelfRating: number | null;
+
+  punchInAt: IsoTimestamp | null;
+  punchOutAt: IsoTimestamp | null;
+  punchInGeo: { lat: number; lng: number } | null;
+  punchOutGeo: { lat: number; lng: number } | null;
+
+  latePunchIn: boolean;
+  logStatus: SessionLogStatus | null;
 }
 
 /**

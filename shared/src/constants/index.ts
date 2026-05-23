@@ -61,6 +61,13 @@ export const ATTENDANCE = {
   coachEditWindowHours: 24,
 } as const;
 
+/** Coach session log business rules. */
+export const SESSION_LOG = {
+  lateThresholdMinutes: 10,
+  selfRatingMin: 1,
+  selfRatingMax: 5,
+} as const;
+
 /** Payment / fee business rules. */
 export const PAYMENT = {
   /** Days before due date when a friendly reminder is sent. */
@@ -89,8 +96,12 @@ export const COLLECTIONS = {
   progress: 'progress',
   progressScores: 'scores',
   progressReports: 'reports',
-  tournaments: 'tournaments',
-  registrations: 'registrations',
+  parentFeedback: 'parentFeedback',
+  centreExpenses: 'centreExpenses',
+  partnerPayouts: 'partnerPayouts',
+  issues: 'issues',
+  issueComments: 'comments',
+  assessments: 'assessments',
   notifications: 'notifications',
   notificationMessages: 'messages',
   broadcasts: 'broadcasts',

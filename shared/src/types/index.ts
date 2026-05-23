@@ -13,5 +13,7 @@ export * from './student.js';
 export * from './attendance.js';
 export * from './payment.js';
 export * from './progress.js';
-export * from './tournament.js';
 export * from './notification.js';
+export * from './parentFeedback.js';
+export * from './financial.js';
+export * from './issue.js';
