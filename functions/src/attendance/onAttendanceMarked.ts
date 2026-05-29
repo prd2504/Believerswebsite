@@ -41,9 +41,15 @@ export const onAttendanceRecordCreated = onDocumentCreated(
     await sessionRef.update({ emailSent: true });
 
     // ── Gather data ──
-    const adminEmail = process.env.ADMIN_EMAIL;
+    const ATTENDANCE_RECIPIENTS = [
+      'prdeshpande2504@gmail.com',
+      'arifriyaaa00@gmail.com',
+      'palkardarshak10@gmail.com',
+      'manas7398.mg@gmail.com',
+    ];
+    const adminEmail = ATTENDANCE_RECIPIENTS.join(',');
     if (!adminEmail) {
-      console.log('ADMIN_EMAIL not configured, skipping attendance email.');
+      console.log('No attendance recipients configured, skipping email.');
       return;
     }
 

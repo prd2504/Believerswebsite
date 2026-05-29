@@ -25,6 +25,8 @@ import {
 import { cn } from '@/lib/cn';
 import { paths } from '@/router/paths';
 import { Logo } from '@/components/common/Logo';
+import { useAuth } from '@/hooks/useAuth';
+import { UserRole } from '@bba/shared';
 
 interface SidebarProps {
   open: boolean;
@@ -35,6 +37,7 @@ interface NavItem {
   to: To;
   label: string;
   icon: React.ReactNode;
+  superAdminOnly?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -49,13 +52,17 @@ const NAV_ITEMS: NavItem[] = [
   { to: paths.admin.progress, label: 'Progress', icon: <TrendingUp size={18} /> },
   { to: paths.admin.sessionLogs, label: 'Session Logs', icon: <ClipboardList size={18} /> },
   { to: paths.admin.parentFeedback, label: 'Parent Feedback', icon: <MessageSquare size={18} /> },
-  { to: paths.admin.financials, label: 'Financials', icon: <Wallet size={18} /> },
+  { to: paths.admin.financials, label: 'Financials', icon: <Wallet size={18} />, superAdminOnly: true },
   { to: paths.admin.issues, label: 'Issues', icon: <AlertTriangle size={18} /> },
   { to: paths.admin.notifications, label: 'Notifications', icon: <BellRing size={18} /> },
   { to: paths.admin.settings, label: 'Settings', icon: <Settings size={18} /> },
 ];
 
 export function Sidebar({ open, onClose }: SidebarProps) {
+  const { profile } = useAuth();
+  const isSuperAdmin = profile?.role === UserRole.SUPER_ADMIN;
+  const visibleItems = NAV_ITEMS.filter((item) => !item.superAdminOnly || isSuperAdmin);
+
   return (
     <>
       {/* Mobile overlay */}
@@ -97,7 +104,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
         {/* Navigation links */}
         <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
-          {NAV_ITEMS.map((item) => (
+          {visibleItems.map((item) => (
             <NavLink
               key={item.label}
               to={item.to}

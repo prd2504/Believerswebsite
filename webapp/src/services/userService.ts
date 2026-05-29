@@ -96,6 +96,21 @@ export async function getUserProfile(uid: string): Promise<UserDocument | null> 
 }
 
 /**
+ * Module-level promise that blocks ensureUserProfile until a coach bootstrap
+ * completes. Set by the coach registration flow to prevent the STUDENT-overwrite
+ * race condition.
+ */
+let pendingCoachBootstrap: Promise<void> | null = null;
+
+/**
+ * Signal that a coach bootstrap is about to happen. ensureUserProfile will
+ * await this promise before attempting to create a STUDENT doc.
+ */
+export function setPendingCoachBootstrap(p: Promise<void>): void {
+  pendingCoachBootstrap = p;
+}
+
+/**
  * Create the /users/{uid} document if it does not yet exist. Idempotent — safe to call
  * on every login. Returns the final (existing OR newly-created) profile.
  *
@@ -103,15 +118,18 @@ export async function getUserProfile(uid: string): Promise<UserDocument | null> 
  * SUPER_ADMIN" script (to be added in Step 2) to elevate themselves.
  */
 export async function ensureUserProfile(input: BootstrapProfileInput): Promise<UserDocument> {
+  // If a coach registration is in flight, wait for it to finish first so the
+  // COACH doc is already written by the time our transaction reads.
+  if (pendingCoachBootstrap) {
+    await pendingCoachBootstrap;
+    pendingCoachBootstrap = null;
+  }
+
   const ref = doc(db, COLLECTIONS.users, input.uid);
 
-  // Use a transaction so the read-then-write is atomic. This prevents the race condition
-  // where bootstrapCoachProfile() (called during coach registration) writes a COACH doc
-  // concurrently — if the doc already exists when our transaction reads it, we skip the
-  // write entirely and return the existing profile unchanged.
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(ref);
-    if (snap.exists()) return; // Profile already written (e.g. by bootstrapCoachProfile) — no-op.
+    if (snap.exists()) return;
 
     transaction.set(ref, {
       id: input.uid,

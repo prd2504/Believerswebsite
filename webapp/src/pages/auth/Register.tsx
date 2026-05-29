@@ -11,7 +11,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { roleHomePath } from '@/router/paths';
 import { registerWithEmail, translateAuthError } from '@/services/authService';
-import { bootstrapCoachProfile } from '@/services/userService';
+import { bootstrapCoachProfile, setPendingCoachBootstrap } from '@/services/userService';
 import { Logo } from '@/components/common/Logo';
 import { toast } from 'sonner';
 
@@ -59,11 +59,14 @@ export default function RegisterPage() {
 
     setBusy(true);
     try {
-      // Create Firebase Auth user
-      const user = await registerWithEmail(email.trim(), password, name.trim());
-      // Immediately write coach profile doc so ensureUserProfile finds it and doesn't
-      // overwrite with a default STUDENT role
-      await bootstrapCoachProfile(user.uid, name.trim(), email.trim(), null);
+      // Signal ensureUserProfile to wait before creating a STUDENT doc
+      const bootstrapPromise = (async () => {
+        const user = await registerWithEmail(email.trim(), password, name.trim());
+        await bootstrapCoachProfile(user.uid, name.trim(), email.trim(), null);
+        return user;
+      })();
+      setPendingCoachBootstrap(bootstrapPromise.then(() => {}));
+      const user = await bootstrapPromise;
       // Sign them out — they can't use the app until admin approves
       const { signOut } = await import('@/services/authService');
       await signOut();
