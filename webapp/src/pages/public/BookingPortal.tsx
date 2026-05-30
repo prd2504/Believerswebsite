@@ -43,7 +43,7 @@ const CENTRE_SLUG_MAP: Record<string, CentreConfig> = {
   ruia: {
     centreId: 'ruia-college',
     name: 'Ruia College',
-    upiId: 'bbasports@ybl',
+    upiId: 'getepay.tdmcblqr413065',
     upiQrPath: '/upi-qr-ruia.png',
   },
 };

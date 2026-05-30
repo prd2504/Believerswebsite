@@ -221,15 +221,26 @@ const BOOKING_STATUS_PILL: Record<string, string> = {
   EXPIRED: 'bg-gray-100 text-gray-400',
 };
 
+const BOOKING_CENTRES = [
+  { id: 'ruia-college', name: 'Ruia College (Booking Portal)' },
+];
+
 function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; profile: { id: string } | null }) {
   const [bookings, setBookings] = useState<SlotBookingDocument[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedCentre, setSelectedCentre] = useState('');
+  const [selectedCentre, setSelectedCentre] = useState('ruia-college');
   const [statusFilter, setStatusFilter] = useState('');
   const [month, setMonth] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
+
+  const allCentreOptions = useMemo(() => {
+    const existing = centres.map((c) => ({ id: c.id, name: c.name }));
+    const bookingIds = new Set(existing.map((c) => c.id));
+    const extra = BOOKING_CENTRES.filter((c) => !bookingIds.has(c.id));
+    return [...extra, ...existing];
+  }, [centres]);
 
   const load = useCallback(async () => {
     if (!selectedCentre) {
@@ -250,13 +261,6 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
   }, [selectedCentre, month]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Auto-select first centre
-  useEffect(() => {
-    if (centres.length > 0 && !selectedCentre) {
-      setSelectedCentre(centres[0].id);
-    }
-  }, [centres, selectedCentre]);
 
   const filtered = useMemo(() => {
     if (!statusFilter) return bookings;
@@ -306,7 +310,7 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
           className="input w-auto py-2 text-sm"
         >
           <option value="">Select Centre</option>
-          {centres.map((c) => (
+          {allCentreOptions.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
