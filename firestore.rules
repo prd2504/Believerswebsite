@@ -239,7 +239,7 @@ service cloud.firestore {
         request.resource.data.participantPhone is string &&
         request.resource.data.participantPhone.size() >= 10 &&
         request.resource.data.planType in ['TWO_DAY', 'THREE_DAY', 'GAMES_DAY', 'COMPLETE_BUNDLE'] &&
-        (request.resource.data.status == 'PENDING_PAYMENT' || request.resource.data.status == 'PENDING_VERIFICATION');
+        request.resource.data.status == 'PENDING_PAYMENT';
       allow update: if isAdminLike();
       allow delete: if isSuperAdmin();
     }

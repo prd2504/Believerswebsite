@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Check,
@@ -9,11 +9,11 @@ import {
   Phone,
   Mail,
   User,
-  Calendar,
   BadgeIndianRupee,
   Loader2,
   CheckCircle2,
   AlertCircle,
+  MessageCircle,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatINR } from '@bba/shared';
@@ -37,6 +37,7 @@ interface CentreConfig {
   name: string;
   upiId: string;
   upiQrPath: string;
+  whatsappGroupUrl: string;
 }
 
 const CENTRE_SLUG_MAP: Record<string, CentreConfig> = {
@@ -45,6 +46,7 @@ const CENTRE_SLUG_MAP: Record<string, CentreConfig> = {
     name: 'Ruia College',
     upiId: 'getepay.tdmcblqr413065',
     upiQrPath: '/upi-qr-ruia.png',
+    whatsappGroupUrl: 'https://chat.whatsapp.com/IMOn7V1P8KZAIPCW3zJhpt',
   },
 };
 
@@ -57,9 +59,10 @@ const TIME_SLOT_LABELS: Record<string, string> = {
   '07:00-09:00': '7:00 – 9:00 AM (Saturday)',
 };
 
-function getCurrentMonth(): string {
+function getBookingMonth(): string {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const nextMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  return `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function formatMonth(m: string): string {
@@ -79,34 +82,22 @@ function LiveSlotDisplay({
   timeSlot: string;
   label: string;
 }) {
-  const names = bookings.filter((b) => {
-    if (b.timeSlot === timeSlot) return true;
-    if (
-      b.planType === SlotPlanType.COMPLETE_BUNDLE &&
-      timeSlot === '07:00-09:00' &&
-      b.timeSlot !== '07:00-09:00'
-    )
-      return true;
-    if (
-      b.planType === SlotPlanType.COMPLETE_BUNDLE &&
-      timeSlot !== '07:00-09:00' &&
-      b.timeSlot === timeSlot
-    )
-      return true;
-    return false;
-  });
-
-  // For Saturday slot, also include Complete Bundle bookings
-  const saturdayNames =
-    timeSlot === '07:00-09:00'
-      ? bookings.filter(
-          (b) =>
-            b.planType === SlotPlanType.COMPLETE_BUNDLE ||
-            (b.planType === SlotPlanType.GAMES_DAY && b.timeSlot === '07:00-09:00'),
-        )
-      : names;
-
-  const displayNames = timeSlot === '07:00-09:00' ? saturdayNames : names;
+  const displayNames = (() => {
+    if (timeSlot === '07:00-09:00') {
+      return bookings.filter(
+        (b) =>
+          b.planType === SlotPlanType.COMPLETE_BUNDLE ||
+          b.planType === SlotPlanType.GAMES_DAY,
+      );
+    }
+    return bookings.filter(
+      (b) =>
+        b.timeSlot === timeSlot &&
+        (b.planType === SlotPlanType.TWO_DAY ||
+          b.planType === SlotPlanType.THREE_DAY ||
+          b.planType === SlotPlanType.COMPLETE_BUNDLE),
+    );
+  })();
 
   return (
     <div className="rounded-xl border border-gray-100 bg-white p-4">
@@ -131,13 +122,13 @@ function LiveSlotDisplay({
                 'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium',
                 b.status === SlotBookingStatus.CONFIRMED
                   ? 'bg-green-50 text-green-700'
-                  : 'bg-amber-50 text-amber-700',
+                  : 'bg-blue-50 text-blue-700',
               )}
             >
               {b.status === SlotBookingStatus.CONFIRMED ? (
                 <Check size={11} />
               ) : (
-                <Clock size={11} />
+                <User size={11} />
               )}
               {b.participantName}
             </span>
@@ -152,11 +143,9 @@ function LiveSlotDisplay({
 
 function PlanCard({
   plan,
-  selected,
   onSelect,
 }: {
   plan: SlotPlanConfig;
-  selected: boolean;
   onSelect: () => void;
 }) {
   const isBest = plan.planType === SlotPlanType.COMPLETE_BUNDLE;
@@ -165,12 +154,7 @@ function PlanCard({
     <button
       type="button"
       onClick={onSelect}
-      className={cn(
-        'relative w-full rounded-xl border-2 p-4 text-left transition-all',
-        selected
-          ? 'border-brand-primary bg-brand-primary/5 shadow-md'
-          : 'border-gray-100 bg-white hover:border-gray-200 hover:shadow-sm',
-      )}
+      className="relative w-full rounded-xl border-2 border-gray-100 bg-white p-4 text-left transition-all hover:border-brand-primary/40 hover:shadow-sm active:scale-[0.98]"
     >
       {isBest && (
         <span className="absolute -top-2.5 right-3 rounded-full bg-brand-primary px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
@@ -190,13 +174,6 @@ function PlanCard({
           <p className="text-[10px] text-gray-400">/month</p>
         </div>
       </div>
-      {selected && (
-        <div className="absolute right-3 bottom-3">
-          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-primary">
-            <Check size={12} className="text-white" />
-          </div>
-        </div>
-      )}
     </button>
   );
 }
@@ -209,29 +186,25 @@ export default function BookingPortal() {
   const { centreSlug } = useParams<{ centreSlug: string }>();
   const config = centreSlug ? CENTRE_SLUG_MAP[centreSlug] : undefined;
 
-  const [month] = useState(getCurrentMonth);
+  const [month] = useState(getBookingMonth);
   const [bookings, setBookings] = useState<SlotBookingDocument[]>([]);
   const [step, setStep] = useState<Step>('browse');
 
-  // Form state
   const [selectedPlan, setSelectedPlan] = useState<SlotPlanConfig | null>(null);
   const [timeSlot, setTimeSlot] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [upiTxnId, setUpiTxnId] = useState('');
   const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  // Real-time subscription
   useEffect(() => {
     if (!config) return;
     const unsubscribe = subscribeToBookings(config.centreId, month, setBookings);
     return unsubscribe;
   }, [config, month]);
 
-  // Group bookings for display
   const weekdaySlots = ['06:00-07:00', '07:00-08:00', '08:00-09:00'];
   const saturdaySlot = '07:00-09:00';
 
@@ -248,7 +221,6 @@ export default function BookingPortal() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback
       const ta = document.createElement('textarea');
       ta.value = config.upiId;
       document.body.appendChild(ta);
@@ -305,7 +277,6 @@ export default function BookingPortal() {
         planType: selectedPlan.planType,
         timeSlot: finalTimeSlot,
         amountPaise: selectedPlan.amountPaise,
-        upiTransactionId: upiTxnId.trim() || undefined,
       });
 
       setStep('success');
@@ -315,7 +286,7 @@ export default function BookingPortal() {
     } finally {
       setSubmitting(false);
     }
-  }, [config, selectedPlan, name, phone, email, timeSlot, upiTxnId, month]);
+  }, [config, selectedPlan, name, phone, email, timeSlot, month]);
 
   // ── Not found ─────────────────────────────────────────────────────────────
 
@@ -337,17 +308,16 @@ export default function BookingPortal() {
 
   if (step === 'success') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+      <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4">
         <div className="w-full max-w-sm text-center">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
             <CheckCircle2 size={32} className="text-green-600" />
           </div>
-          <h1 className="mt-5 text-xl font-bold text-brand-secondary">Booking Submitted!</h1>
+          <h1 className="mt-5 text-xl font-bold text-brand-secondary">Booking Confirmed!</h1>
           <p className="mt-2 text-sm text-gray-500">
-            {upiTxnId.trim()
-              ? 'Your booking is pending verification. Once the admin confirms your payment, your name will appear in green on the live list.'
-              : 'Please complete the UPI payment and share the transaction ID with the admin. Your booking will be confirmed once payment is verified.'}
+            Your slot has been booked. Please complete the payment and inform us on the WhatsApp group.
           </p>
+
           <div className="mt-6 rounded-xl border border-gray-100 bg-white p-4 text-left text-sm">
             <div className="space-y-2">
               <div className="flex justify-between">
@@ -370,6 +340,18 @@ export default function BookingPortal() {
               </div>
             </div>
           </div>
+
+          {/* WhatsApp CTA */}
+          <a
+            href={config.whatsappGroupUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#20bd5a] transition"
+          >
+            <MessageCircle size={18} />
+            Inform on WhatsApp Group & Share Screenshot
+          </a>
+
           <button
             onClick={() => {
               setStep('browse');
@@ -377,11 +359,10 @@ export default function BookingPortal() {
               setName('');
               setPhone('');
               setEmail('');
-              setUpiTxnId('');
               setTimeSlot('');
               setError('');
             }}
-            className="mt-6 w-full rounded-xl bg-brand-primary px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-brand-primary/90 transition"
+            className="mt-3 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
           >
             Book Another Slot
           </button>
@@ -413,7 +394,7 @@ export default function BookingPortal() {
         <section className="mb-6">
           <div className="mb-3 flex items-center gap-2">
             <div className="h-2 w-2 animate-pulse rounded-full bg-green-500" />
-            <h2 className="text-sm font-bold text-brand-secondary">Live Bookings</h2>
+            <h2 className="text-sm font-bold text-brand-secondary">Live Bookings — {formatMonth(month)}</h2>
           </div>
 
           <div className="space-y-3">
@@ -449,7 +430,6 @@ export default function BookingPortal() {
                 <PlanCard
                   key={plan.planType}
                   plan={plan}
-                  selected={false}
                   onSelect={() => handleSelectPlan(plan)}
                 />
               ))}
@@ -457,7 +437,7 @@ export default function BookingPortal() {
           </section>
         )}
 
-        {/* Step: Form */}
+        {/* Step: Form + Payment */}
         {(step === 'form' || step === 'payment') && selectedPlan && (
           <section className="space-y-5">
             {/* Selected plan summary */}
@@ -486,7 +466,7 @@ export default function BookingPortal() {
               </button>
             </div>
 
-            {/* Time slot picker (only for weekday plans with multiple slots) */}
+            {/* Time slot picker */}
             {selectedPlan.timeSlots.length > 1 && (
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-gray-700">
@@ -557,7 +537,7 @@ export default function BookingPortal() {
               </div>
             </div>
 
-            {/* Payment section */}
+            {/* Proceed to Payment */}
             {step === 'form' && (
               <button
                 type="button"
@@ -583,6 +563,7 @@ export default function BookingPortal() {
               </button>
             )}
 
+            {/* Payment step */}
             {step === 'payment' && (
               <div className="space-y-4">
                 <div className="rounded-xl border border-gray-100 bg-white p-4">
@@ -591,7 +572,7 @@ export default function BookingPortal() {
                     Pay via UPI
                   </h3>
 
-                  {/* UPI QR Code */}
+                  {/* QR Code */}
                   <div className="mb-4 flex justify-center">
                     <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
                       <img
@@ -622,45 +603,24 @@ export default function BookingPortal() {
                             : 'bg-brand-primary text-white hover:bg-brand-primary/90',
                         )}
                       >
-                        {copied ? (
-                          <>
-                            <Check size={12} /> Copied
-                          </>
-                        ) : (
-                          <>
-                            <Copy size={12} /> Copy
-                          </>
-                        )}
+                        {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
                       </button>
                     </div>
                   </div>
 
                   {/* Amount */}
-                  <div className="mb-4 rounded-lg bg-green-50 p-3 text-center">
+                  <div className="rounded-lg bg-green-50 p-3 text-center">
                     <p className="text-xs text-green-600">Amount to Pay</p>
                     <p className="text-2xl font-bold text-green-700">
                       {formatINR(selectedPlan.amountPaise, { withDecimals: false })}
                     </p>
                   </div>
+                </div>
 
-                  {/* UPI Transaction ID */}
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-gray-600">
-                      UPI Transaction / Reference ID
-                      <span className="ml-1 text-gray-400">(recommended)</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Enter UPI transaction ID after payment"
-                      value={upiTxnId}
-                      onChange={(e) => setUpiTxnId(e.target.value)}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-primary focus:outline-none focus:ring-1 focus:ring-brand-primary"
-                    />
-                    <p className="mt-1 text-[11px] text-gray-400">
-                      You can find this in your UPI app's payment history. Providing it speeds up
-                      verification.
-                    </p>
-                  </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-xs text-amber-800">
+                    After paying, click <strong>"Book My Slot"</strong> below. You'll then be redirected to the WhatsApp group to share your payment screenshot.
+                  </p>
                 </div>
 
                 {error && (
@@ -677,13 +637,9 @@ export default function BookingPortal() {
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-brand-primary/90 disabled:opacity-60 transition"
                 >
                   {submitting ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" /> Submitting…
-                    </>
+                    <><Loader2 size={16} className="animate-spin" /> Booking…</>
                   ) : (
-                    <>
-                      <Check size={16} /> Submit Booking
-                    </>
+                    <><Check size={16} /> Book My Slot</>
                   )}
                 </button>
 

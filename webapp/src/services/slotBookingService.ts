@@ -63,6 +63,7 @@ export function subscribeToBookings(
     where('centreId', '==', centreId),
     where('month', '==', month),
     where('status', 'in', [
+      SlotBookingStatus.PENDING_PAYMENT,
       SlotBookingStatus.PENDING_VERIFICATION,
       SlotBookingStatus.CONFIRMED,
     ]),
@@ -83,7 +84,6 @@ export interface CreateBookingInput {
   planType: SlotPlanType;
   timeSlot: string;
   amountPaise: number;
-  upiTransactionId?: string;
 }
 
 export async function createBooking(input: CreateBookingInput): Promise<string> {
@@ -96,10 +96,8 @@ export async function createBooking(input: CreateBookingInput): Promise<string> 
     planType: input.planType,
     timeSlot: input.timeSlot,
     amountPaise: input.amountPaise,
-    status: input.upiTransactionId
-      ? SlotBookingStatus.PENDING_VERIFICATION
-      : SlotBookingStatus.PENDING_PAYMENT,
-    upiTransactionId: input.upiTransactionId || null,
+    status: SlotBookingStatus.PENDING_PAYMENT,
+    upiTransactionId: null,
     verifiedBy: null,
     verifiedAt: null,
     rejectionReason: null,
