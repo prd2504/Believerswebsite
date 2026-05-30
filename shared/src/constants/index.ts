@@ -105,4 +105,5 @@ export const COLLECTIONS = {
   notifications: 'notifications',
   notificationMessages: 'messages',
   broadcasts: 'broadcasts',
+  slotBookings: 'slotBookings',
 } as const;

@@ -27,6 +27,7 @@ import { RootRedirect } from './RootRedirect';
 const LoginPage = lazy(() => import('@/pages/auth/Login'));
 const RegisterPage = lazy(() => import('@/pages/auth/Register'));
 const PendingApprovalPage = lazy(() => import('@/pages/auth/PendingApproval'));
+const BookingPortal = lazy(() => import('@/pages/public/BookingPortal'));
 
 const AdminDashboard = lazy(() => import('@/pages/admin/Dashboard'));
 const CentresPage = lazy(() => import('@/pages/admin/Centres'));
@@ -76,6 +77,10 @@ const routes: RouteObject[] = [
   {
     path: '/pending-approval',
     element: <Lazy><PendingApprovalPage /></Lazy>,
+  },
+  {
+    path: '/book/:centreSlug',
+    element: <Lazy><BookingPortal /></Lazy>,
   },
 
   // Root redirect — sends authenticated users to their role home, guests to /login

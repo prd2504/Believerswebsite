@@ -178,6 +178,35 @@
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     }
+    ,
+    {
+      "collectionGroup": "slotBookings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "centreId", "order": "ASCENDING" },
+        { "fieldPath": "month", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "slotBookings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "centreId", "order": "ASCENDING" },
+        { "fieldPath": "month", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "slotBookings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "participantPhone", "order": "ASCENDING" },
+        { "fieldPath": "centreId", "order": "ASCENDING" },
+        { "fieldPath": "month", "order": "ASCENDING" }
+      ]
+    }
   ],
   "fieldOverrides": []
 }

@@ -230,6 +230,20 @@ service cloud.firestore {
       }
     }
 
+    // ── /slotBookings/{bookingId} — PUBLIC booking portal ────────────────────────────────
+    match /slotBookings/{bookingId} {
+      allow read: if true;
+      allow create: if
+        request.resource.data.participantName is string &&
+        request.resource.data.participantName.size() > 0 &&
+        request.resource.data.participantPhone is string &&
+        request.resource.data.participantPhone.size() >= 10 &&
+        request.resource.data.planType in ['TWO_DAY', 'THREE_DAY', 'GAMES_DAY', 'COMPLETE_BUNDLE'] &&
+        (request.resource.data.status == 'PENDING_PAYMENT' || request.resource.data.status == 'PENDING_VERIFICATION');
+      allow update: if isAdminLike();
+      allow delete: if isSuperAdmin();
+    }
+
     // ── /broadcasts/{broadcastId} ─────────────────────────────────────────────────────────
     match /broadcasts/{broadcastId} {
       allow read: if isAdminLike();

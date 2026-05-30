@@ -14,6 +14,11 @@ import {
   Columns3,
   ChevronDown,
   ChevronUp,
+  CheckCircle2,
+  XCircle,
+  Ticket,
+  Clock,
+  ExternalLink,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { exportPaymentsCsv } from '@/lib/csv';
@@ -28,6 +33,11 @@ import {
   waivePayment,
   generateMonthlyFees,
 } from '@/services/paymentService';
+import {
+  getBookingsForMonth,
+  verifyBooking,
+  rejectBooking,
+} from '@/services/slotBookingService';
 import { getAllCentres } from '@/services/centreService';
 import { getAllBatches } from '@/services/batchService';
 import { getAllStudents } from '@/services/studentService';
@@ -35,15 +45,17 @@ import { PaymentCard } from '@/components/payments/PaymentCard';
 import { PaymentForm } from '@/components/payments/PaymentForm';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
-import { formatINR, paiseToRupees } from '@bba/shared';
+import { formatINR, paiseToRupees, SlotBookingStatus, SLOT_PLANS } from '@bba/shared';
 import type {
   PaymentDocument,
   CentreDocument,
   BatchDocument,
   StudentDocument,
+  SlotBookingDocument,
 } from '@bba/shared';
 import type { PaymentFormValues } from '@/lib/schemas/paymentSchema';
 
+type PageTab = 'payments' | 'slotBookings';
 type Mode = 'list' | 'create' | 'edit';
 type ViewMode = 'card' | 'table' | 'detail';
 type SortField = 'month' | 'status' | 'total' | 'dueDate' | 'student';
@@ -199,10 +211,238 @@ function DetailRow({
   );
 }
 
+// ─── Slot Bookings Tab ────────────────────────────────────────────────────────
+
+const BOOKING_STATUS_PILL: Record<string, string> = {
+  PENDING_PAYMENT: 'bg-gray-100 text-gray-600',
+  PENDING_VERIFICATION: 'bg-yellow-50 text-yellow-700',
+  CONFIRMED: 'bg-green-50 text-green-700',
+  REJECTED: 'bg-red-50 text-red-700',
+  EXPIRED: 'bg-gray-100 text-gray-400',
+};
+
+function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; profile: { id: string } | null }) {
+  const [bookings, setBookings] = useState<SlotBookingDocument[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedCentre, setSelectedCentre] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [month, setMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+
+  const load = useCallback(async () => {
+    if (!selectedCentre) {
+      setBookings([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await getBookingsForMonth(selectedCentre, month);
+      setBookings(data);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to load slot bookings');
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedCentre, month]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Auto-select first centre
+  useEffect(() => {
+    if (centres.length > 0 && !selectedCentre) {
+      setSelectedCentre(centres[0].id);
+    }
+  }, [centres, selectedCentre]);
+
+  const filtered = useMemo(() => {
+    if (!statusFilter) return bookings;
+    return bookings.filter((b) => b.status === statusFilter);
+  }, [bookings, statusFilter]);
+
+  const pendingCount = bookings.filter(
+    (b) => b.status === SlotBookingStatus.PENDING_VERIFICATION || b.status === SlotBookingStatus.PENDING_PAYMENT,
+  ).length;
+  const confirmedCount = bookings.filter((b) => b.status === SlotBookingStatus.CONFIRMED).length;
+
+  const handleVerify = async (booking: SlotBookingDocument) => {
+    if (!profile) return;
+    try {
+      await verifyBooking(booking.id, profile.id);
+      toast.success(`Confirmed booking for ${booking.participantName}`);
+      await load();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to verify booking');
+    }
+  };
+
+  const handleReject = async (booking: SlotBookingDocument) => {
+    if (!profile) return;
+    const reason = prompt('Reason for rejection:');
+    if (reason === null) return;
+    try {
+      await rejectBooking(booking.id, profile.id, reason || 'Payment not found');
+      toast.success(`Rejected booking for ${booking.participantName}`);
+      await load();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to reject booking');
+    }
+  };
+
+  const planLabel = (pt: string) => SLOT_PLANS.find((p) => p.planType === pt)?.label ?? pt;
+
+  return (
+    <div>
+      {/* Filters */}
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <select
+          value={selectedCentre}
+          onChange={(e) => setSelectedCentre(e.target.value)}
+          className="input w-auto py-2 text-sm"
+        >
+          <option value="">Select Centre</option>
+          {centres.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        <input
+          type="month"
+          value={month}
+          onChange={(e) => setMonth(e.target.value)}
+          className="input w-auto py-2 text-sm"
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="input w-auto py-2 text-sm"
+        >
+          <option value="">All Statuses</option>
+          <option value="PENDING_PAYMENT">Pending Payment</option>
+          <option value="PENDING_VERIFICATION">Pending Verification</option>
+          <option value="CONFIRMED">Confirmed</option>
+          <option value="REJECTED">Rejected</option>
+        </select>
+        <button onClick={load} className="btn-secondary" title="Refresh">
+          <RefreshCw size={16} />
+        </button>
+      </div>
+
+      {/* Summary */}
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="card flex items-center gap-3">
+          <div className="rounded-lg bg-yellow-50 p-2"><Clock size={18} className="text-yellow-600" /></div>
+          <div>
+            <p className="text-xs text-gray-500">Pending</p>
+            <p className="text-lg font-bold text-brand-secondary">{pendingCount}</p>
+          </div>
+        </div>
+        <div className="card flex items-center gap-3">
+          <div className="rounded-lg bg-green-50 p-2"><CheckCircle2 size={18} className="text-green-600" /></div>
+          <div>
+            <p className="text-xs text-gray-500">Confirmed</p>
+            <p className="text-lg font-bold text-brand-secondary">{confirmedCount}</p>
+          </div>
+        </div>
+        <div className="card flex items-center gap-3">
+          <div className="rounded-lg bg-blue-50 p-2"><Ticket size={18} className="text-blue-600" /></div>
+          <div>
+            <p className="text-xs text-gray-500">Total</p>
+            <p className="text-lg font-bold text-brand-secondary">{bookings.length}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <CardSkeleton count={4} />
+      ) : !selectedCentre ? (
+        <EmptyState
+          icon={<Ticket size={48} />}
+          title="Select a centre"
+          description="Choose a centre to view slot bookings."
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<Ticket size={48} />}
+          title="No slot bookings"
+          description="No bookings found for the selected month and filters."
+        />
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-gray-100 bg-white shadow-sm">
+          <table className="w-full text-sm">
+            <thead className="border-b bg-gray-50 text-left">
+              <tr>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Name</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Phone</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500 hidden md:table-cell">Plan</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500 hidden lg:table-cell">Time Slot</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500 text-right">Amount</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Status</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500 hidden lg:table-cell">UPI Txn ID</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {filtered.map((b) => (
+                <tr key={b.id} className="hover:bg-gray-50 transition">
+                  <td className="px-4 py-2.5 font-medium text-brand-secondary">{b.participantName}</td>
+                  <td className="px-4 py-2.5 text-gray-600">{b.participantPhone}</td>
+                  <td className="px-4 py-2.5 text-gray-600 hidden md:table-cell">{planLabel(b.planType)}</td>
+                  <td className="px-4 py-2.5 text-gray-500 hidden lg:table-cell">{b.timeSlot}</td>
+                  <td className="px-4 py-2.5 text-right font-semibold text-brand-secondary">
+                    {formatINR(b.amountPaise, { withDecimals: false })}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className={cn('inline-block rounded-full px-2 py-0.5 text-xs font-medium', BOOKING_STATUS_PILL[b.status])}>
+                      {b.status.replace(/_/g, ' ')}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-gray-400 text-xs hidden lg:table-cell">{b.upiTransactionId ?? '—'}</td>
+                  <td className="px-4 py-2.5">
+                    {(b.status === SlotBookingStatus.PENDING_VERIFICATION || b.status === SlotBookingStatus.PENDING_PAYMENT) && (
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => handleVerify(b)}
+                          className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-green-700"
+                          title="Verify payment"
+                        >
+                          <CheckCircle2 size={13} className="inline mr-0.5" /> Verify
+                        </button>
+                        <button
+                          onClick={() => handleReject(b)}
+                          className="rounded-lg bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
+                          title="Reject booking"
+                        >
+                          <XCircle size={13} className="inline mr-0.5" /> Reject
+                        </button>
+                      </div>
+                    )}
+                    {b.status === SlotBookingStatus.REJECTED && b.rejectionReason && (
+                      <span className="text-xs text-red-400" title={b.rejectionReason}>
+                        {b.rejectionReason.length > 20 ? b.rejectionReason.slice(0, 20) + '…' : b.rejectionReason}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function PaymentsPage() {
   const { profile } = useAuth();
+  const [pageTab, setPageTab] = useState<PageTab>('payments');
   const [payments, setPayments] = useState<PaymentDocument[]>([]);
   const [centres, setCentres] = useState<CentreDocument[]>([]);
   const [batches, setBatches] = useState<BatchDocument[]>([]);
@@ -472,6 +712,36 @@ export default function PaymentsPage() {
 
   return (
     <div>
+      {/* Tab bar */}
+      <div className="mb-5 flex gap-1 rounded-lg bg-gray-100 p-1">
+        <button
+          type="button"
+          onClick={() => setPageTab('payments')}
+          className={cn(
+            'flex-1 rounded-md py-2 text-sm font-medium transition-colors',
+            pageTab === 'payments' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700',
+          )}
+        >
+          <IndianRupee size={14} className="inline mr-1" />
+          Payments
+        </button>
+        <button
+          type="button"
+          onClick={() => setPageTab('slotBookings')}
+          className={cn(
+            'flex-1 rounded-md py-2 text-sm font-medium transition-colors',
+            pageTab === 'slotBookings' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700',
+          )}
+        >
+          <Ticket size={14} className="inline mr-1" />
+          Slot Bookings
+        </button>
+      </div>
+
+      {pageTab === 'slotBookings' ? (
+        <SlotBookingsTab centres={centres} profile={profile} />
+      ) : (
+      <>
       {/* Header */}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -750,6 +1020,8 @@ export default function PaymentsPage() {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );
