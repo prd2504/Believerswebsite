@@ -106,4 +106,5 @@ export const COLLECTIONS = {
   notificationMessages: 'messages',
   broadcasts: 'broadcasts',
   slotBookings: 'slotBookings',
+  slotBookingConfig: 'slotBookingConfig',
 } as const;

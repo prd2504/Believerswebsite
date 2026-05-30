@@ -4,7 +4,9 @@ import {
   addDoc,
   getDoc,
   getDocs,
+  setDoc,
   updateDoc,
+  deleteDoc,
   query,
   where,
   orderBy,
@@ -17,22 +19,25 @@ import { db } from '@/lib/firebase';
 import {
   COLLECTIONS,
   SlotBookingStatus,
+  DEFAULT_SLOT_CONFIG,
   type SlotBookingDocument,
+  type SlotBookingConfig,
   type SlotPlanType,
 } from '@bba/shared';
 
 const COL = COLLECTIONS.slotBookings;
+const CONFIG_COL = COLLECTIONS.slotBookingConfig;
+
+function toIso(ts: unknown): string | null {
+  if (!ts) return null;
+  if (typeof ts === 'string') return ts;
+  if (ts && typeof ts === 'object' && 'toDate' in ts) {
+    return (ts as Timestamp).toDate().toISOString();
+  }
+  return null;
+}
 
 function fromFirestore(id: string, data: DocumentData): SlotBookingDocument {
-  const toIso = (ts: unknown): string => {
-    if (!ts) return new Date().toISOString();
-    if (typeof ts === 'string') return ts;
-    if (ts && typeof ts === 'object' && 'toDate' in ts) {
-      return (ts as Timestamp).toDate().toISOString();
-    }
-    return new Date().toISOString();
-  };
-
   return {
     id,
     centreId: data.centreId ?? '',
@@ -46,12 +51,26 @@ function fromFirestore(id: string, data: DocumentData): SlotBookingDocument {
     status: data.status ?? SlotBookingStatus.PENDING_PAYMENT,
     upiTransactionId: data.upiTransactionId ?? null,
     verifiedBy: data.verifiedBy ?? null,
-    verifiedAt: toIso(data.verifiedAt) === new Date().toISOString() && !data.verifiedAt ? null : (data.verifiedAt ? toIso(data.verifiedAt) : null),
+    verifiedAt: toIso(data.verifiedAt),
     rejectionReason: data.rejectionReason ?? null,
-    createdAt: toIso(data.createdAt),
-    updatedAt: toIso(data.updatedAt),
+    createdAt: toIso(data.createdAt) ?? new Date().toISOString(),
+    updatedAt: toIso(data.updatedAt) ?? new Date().toISOString(),
   };
 }
+
+function configFromFirestore(id: string, data: DocumentData): SlotBookingConfig {
+  return {
+    centreId: id,
+    weekdayCapacity: data.weekdayCapacity ?? DEFAULT_SLOT_CONFIG.weekdayCapacity,
+    saturdayCapacity: data.saturdayCapacity ?? DEFAULT_SLOT_CONFIG.saturdayCapacity,
+    isOpen: data.isOpen ?? DEFAULT_SLOT_CONFIG.isOpen,
+    closedSlots: Array.isArray(data.closedSlots) ? data.closedSlots : [],
+    updatedAt: toIso(data.updatedAt) ?? new Date().toISOString(),
+    updatedBy: data.updatedBy ?? null,
+  };
+}
+
+// ── Real-time subscriptions ───────────────────────────────────────────────────
 
 export function subscribeToBookings(
   centreId: string,
@@ -70,10 +89,29 @@ export function subscribeToBookings(
     orderBy('createdAt', 'asc'),
   );
   return onSnapshot(q, (snap) => {
-    const bookings = snap.docs.map((d) => fromFirestore(d.id, d.data()));
-    callback(bookings);
+    callback(snap.docs.map((d) => fromFirestore(d.id, d.data())));
   });
 }
+
+export function subscribeToConfig(
+  centreId: string,
+  callback: (config: SlotBookingConfig) => void,
+): () => void {
+  return onSnapshot(doc(db, CONFIG_COL, centreId), (snap) => {
+    if (snap.exists()) {
+      callback(configFromFirestore(snap.id, snap.data()));
+    } else {
+      callback({
+        centreId,
+        ...DEFAULT_SLOT_CONFIG,
+        updatedAt: new Date().toISOString(),
+        updatedBy: null,
+      });
+    }
+  });
+}
+
+// ── Booking creation ──────────────────────────────────────────────────────────
 
 export interface CreateBookingInput {
   centreId: string;
@@ -107,6 +145,8 @@ export async function createBooking(input: CreateBookingInput): Promise<string> 
   return ref.id;
 }
 
+// ── Admin operations ──────────────────────────────────────────────────────────
+
 export async function getBookingsForMonth(
   centreId: string,
   month: string,
@@ -121,10 +161,7 @@ export async function getBookingsForMonth(
   return snap.docs.map((d) => fromFirestore(d.id, d.data()));
 }
 
-export async function verifyBooking(
-  bookingId: string,
-  adminUid: string,
-): Promise<void> {
+export async function verifyBooking(bookingId: string, adminUid: string): Promise<void> {
   await updateDoc(doc(db, COL, bookingId), {
     status: SlotBookingStatus.CONFIRMED,
     verifiedBy: adminUid,
@@ -147,6 +184,10 @@ export async function rejectBooking(
   });
 }
 
+export async function deleteBooking(bookingId: string): Promise<void> {
+  await deleteDoc(doc(db, COL, bookingId));
+}
+
 export async function checkDuplicatePhone(
   phone: string,
   centreId: string,
@@ -164,10 +205,21 @@ export async function checkDuplicatePhone(
   return !snap.empty;
 }
 
-export async function getBookingById(
-  bookingId: string,
-): Promise<SlotBookingDocument | null> {
-  const snap = await getDoc(doc(db, COL, bookingId));
-  if (!snap.exists()) return null;
-  return fromFirestore(snap.id, snap.data());
+// ── Config management (admin) ─────────────────────────────────────────────────
+
+export async function updateBookingConfig(
+  centreId: string,
+  patch: Partial<Pick<SlotBookingConfig, 'weekdayCapacity' | 'saturdayCapacity' | 'isOpen' | 'closedSlots'>>,
+  adminUid: string,
+): Promise<void> {
+  await setDoc(
+    doc(db, CONFIG_COL, centreId),
+    {
+      centreId,
+      ...patch,
+      updatedAt: serverTimestamp(),
+      updatedBy: adminUid,
+    },
+    { merge: true },
+  );
 }

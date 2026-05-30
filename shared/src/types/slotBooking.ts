@@ -41,6 +41,23 @@ export interface SlotBookingDocument {
   updatedAt: string;
 }
 
+export interface SlotBookingConfig {
+  centreId: string;
+  weekdayCapacity: number;
+  saturdayCapacity: number;
+  isOpen: boolean;
+  closedSlots: string[];
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+export const DEFAULT_SLOT_CONFIG: Omit<SlotBookingConfig, 'centreId' | 'updatedAt' | 'updatedBy'> = {
+  weekdayCapacity: 9,
+  saturdayCapacity: 15,
+  isOpen: true,
+  closedSlots: [],
+};
+
 export interface SlotPlanConfig {
   planType: SlotPlanType;
   label: string;

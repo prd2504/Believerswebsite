@@ -244,6 +244,12 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
+    // ── /slotBookingConfig/{centreId} — Portal config (public read, admin write) ──────────
+    match /slotBookingConfig/{centreId} {
+      allow read: if true;
+      allow write: if isAdminLike();
+    }
+
     // ── /broadcasts/{broadcastId} ─────────────────────────────────────────────────────────
     match /broadcasts/{broadcastId} {
       allow read: if isAdminLike();

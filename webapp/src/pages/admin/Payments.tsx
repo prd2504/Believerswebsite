@@ -19,6 +19,9 @@ import {
   Ticket,
   Clock,
   ExternalLink,
+  Trash2,
+  Settings,
+  Lock,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { exportPaymentsCsv } from '@/lib/csv';
@@ -37,6 +40,9 @@ import {
   getBookingsForMonth,
   verifyBooking,
   rejectBooking,
+  deleteBooking,
+  subscribeToConfig,
+  updateBookingConfig,
 } from '@/services/slotBookingService';
 import { getAllCentres } from '@/services/centreService';
 import { getAllBatches } from '@/services/batchService';
@@ -45,13 +51,20 @@ import { PaymentCard } from '@/components/payments/PaymentCard';
 import { PaymentForm } from '@/components/payments/PaymentForm';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
-import { formatINR, paiseToRupees, SlotBookingStatus, SLOT_PLANS } from '@bba/shared';
+import {
+  formatINR,
+  paiseToRupees,
+  SlotBookingStatus,
+  SLOT_PLANS,
+  DEFAULT_SLOT_CONFIG,
+} from '@bba/shared';
 import type {
   PaymentDocument,
   CentreDocument,
   BatchDocument,
   StudentDocument,
   SlotBookingDocument,
+  SlotBookingConfig,
 } from '@bba/shared';
 import type { PaymentFormValues } from '@/lib/schemas/paymentSchema';
 
@@ -225,14 +238,47 @@ const BOOKING_CENTRES = [
   { id: 'ruia-college', name: 'Ruia College (Booking Portal)' },
 ];
 
+const WEEKDAY_SLOTS = ['06:00-07:00', '07:00-08:00', '08:00-09:00'] as const;
+const SATURDAY_SLOT = '07:00-09:00';
+const ALL_SLOTS = [...WEEKDAY_SLOTS, SATURDAY_SLOT];
+const SLOT_DISPLAY: Record<string, string> = {
+  '06:00-07:00': '6–7 AM (MWF)',
+  '07:00-08:00': '7–8 AM (MWF)',
+  '08:00-09:00': '8–9 AM (MWF)',
+  '07:00-09:00': '7–9 AM (Sat)',
+};
+
+function bookingSlotCount(bookings: SlotBookingDocument[], slot: string): number {
+  if (slot === SATURDAY_SLOT) {
+    return bookings.filter(
+      (b) => b.planType === 'COMPLETE_BUNDLE' || b.planType === 'GAMES_DAY',
+    ).length;
+  }
+  return bookings.filter(
+    (b) =>
+      b.timeSlot === slot &&
+      (b.planType === 'TWO_DAY' || b.planType === 'THREE_DAY' || b.planType === 'COMPLETE_BUNDLE'),
+  ).length;
+}
+
 function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; profile: { id: string } | null }) {
   const [bookings, setBookings] = useState<SlotBookingDocument[]>([]);
+  const [portalConfig, setPortalConfig] = useState<SlotBookingConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedCentre, setSelectedCentre] = useState('ruia-college');
   const [statusFilter, setStatusFilter] = useState('');
+  const [showConfigEditor, setShowConfigEditor] = useState(false);
+  const [configDraft, setConfigDraft] = useState({
+    weekdayCapacity: DEFAULT_SLOT_CONFIG.weekdayCapacity,
+    saturdayCapacity: DEFAULT_SLOT_CONFIG.saturdayCapacity,
+    isOpen: DEFAULT_SLOT_CONFIG.isOpen,
+    closedSlots: [] as string[],
+  });
+  const [savingConfig, setSavingConfig] = useState(false);
   const [month, setMonth] = useState(() => {
     const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+    return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
   });
 
   const allCentreOptions = useMemo(() => {
@@ -241,6 +287,20 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
     const extra = BOOKING_CENTRES.filter((c) => !bookingIds.has(c.id));
     return [...extra, ...existing];
   }, [centres]);
+
+  // Real-time config subscription
+  useEffect(() => {
+    if (!selectedCentre) return;
+    return subscribeToConfig(selectedCentre, (cfg) => {
+      setPortalConfig(cfg);
+      setConfigDraft({
+        weekdayCapacity: cfg.weekdayCapacity,
+        saturdayCapacity: cfg.saturdayCapacity,
+        isOpen: cfg.isOpen,
+        closedSlots: cfg.closedSlots ?? [],
+      });
+    });
+  }, [selectedCentre]);
 
   const load = useCallback(async () => {
     if (!selectedCentre) {
@@ -272,6 +332,11 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
   ).length;
   const confirmedCount = bookings.filter((b) => b.status === SlotBookingStatus.CONFIRMED).length;
 
+  const weekdayCap = portalConfig?.weekdayCapacity ?? DEFAULT_SLOT_CONFIG.weekdayCapacity;
+  const saturdayCap = portalConfig?.saturdayCapacity ?? DEFAULT_SLOT_CONFIG.saturdayCapacity;
+  const isPortalOpen = portalConfig?.isOpen ?? DEFAULT_SLOT_CONFIG.isOpen;
+  const closedSlots = portalConfig?.closedSlots ?? [];
+
   const handleVerify = async (booking: SlotBookingDocument) => {
     if (!profile) return;
     try {
@@ -298,10 +363,240 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
     }
   };
 
+  const handleDelete = async (booking: SlotBookingDocument) => {
+    if (!confirm(`Delete booking for ${booking.participantName}? This cannot be undone.`)) return;
+    try {
+      await deleteBooking(booking.id);
+      toast.success(`Deleted booking for ${booking.participantName}`);
+      await load();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to delete booking');
+    }
+  };
+
+  const handleToggleOpen = async () => {
+    if (!profile || !selectedCentre) return;
+    const newVal = !isPortalOpen;
+    try {
+      await updateBookingConfig(selectedCentre, { isOpen: newVal }, profile.id);
+      toast.success(newVal ? 'Booking portal opened' : 'Booking portal closed');
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to update portal status');
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    if (!profile || !selectedCentre) return;
+    setSavingConfig(true);
+    try {
+      await updateBookingConfig(
+        selectedCentre,
+        {
+          weekdayCapacity: configDraft.weekdayCapacity,
+          saturdayCapacity: configDraft.saturdayCapacity,
+          isOpen: configDraft.isOpen,
+          closedSlots: configDraft.closedSlots,
+        },
+        profile.id,
+      );
+      toast.success('Config saved');
+      setShowConfigEditor(false);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to save config');
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
   const planLabel = (pt: string) => SLOT_PLANS.find((p) => p.planType === pt)?.label ?? pt;
 
   return (
     <div>
+      {/* Admin controls row */}
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <button
+          onClick={handleToggleOpen}
+          className={cn(
+            'flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold transition',
+            isPortalOpen
+              ? 'bg-green-50 text-green-700 hover:bg-green-100'
+              : 'bg-red-50 text-red-600 hover:bg-red-100',
+          )}
+        >
+          {isPortalOpen ? (
+            <>
+              <span className="h-2 w-2 animate-pulse rounded-full bg-green-500" />
+              Portal OPEN — Click to Close
+            </>
+          ) : (
+            <>
+              <Lock size={12} />
+              Portal CLOSED — Click to Open
+            </>
+          )}
+        </button>
+        <button
+          onClick={() => setShowConfigEditor(!showConfigEditor)}
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+        >
+          <Settings size={13} /> Manage Capacity
+        </button>
+        <a
+          href="/book/ruia"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+        >
+          <ExternalLink size={13} /> View Portal
+        </a>
+      </div>
+
+      {/* Config editor panel */}
+      {showConfigEditor && (
+        <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50 p-4">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-blue-800">
+            <Settings size={14} /> Slot Configuration
+          </h3>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Weekday Capacity (per MWF slot)
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={configDraft.weekdayCapacity}
+                onChange={(e) =>
+                  setConfigDraft((d) => ({ ...d, weekdayCapacity: Number(e.target.value) }))
+                }
+                className="input py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Saturday Capacity (Games Day)
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={configDraft.saturdayCapacity}
+                onChange={(e) =>
+                  setConfigDraft((d) => ({ ...d, saturdayCapacity: Number(e.target.value) }))
+                }
+                className="input py-1.5 text-sm"
+              />
+            </div>
+          </div>
+          <div className="mt-3">
+            <label className="mb-1.5 block text-xs font-medium text-gray-600">
+              Close Individual Slots (blocks new bookings for that slot)
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {ALL_SLOTS.map((slot) => (
+                <button
+                  key={slot}
+                  type="button"
+                  onClick={() =>
+                    setConfigDraft((d) => ({
+                      ...d,
+                      closedSlots: d.closedSlots.includes(slot)
+                        ? d.closedSlots.filter((s) => s !== slot)
+                        : [...d.closedSlots, slot],
+                    }))
+                  }
+                  className={cn(
+                    'rounded-lg border px-2.5 py-1 text-xs font-medium transition',
+                    configDraft.closedSlots.includes(slot)
+                      ? 'border-red-300 bg-red-100 text-red-700'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300',
+                  )}
+                >
+                  {configDraft.closedSlots.includes(slot) ? '✗ ' : '✓ '}
+                  {SLOT_DISPLAY[slot]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={handleSaveConfig}
+              disabled={savingConfig}
+              className="btn-primary py-1.5 text-xs disabled:opacity-60"
+            >
+              {savingConfig ? 'Saving…' : 'Save Changes'}
+            </button>
+            <button onClick={() => setShowConfigEditor(false)} className="btn-secondary py-1.5 text-xs">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Slot fill rates */}
+      <div className="mb-5 rounded-xl border border-gray-100 bg-white p-4">
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+          Slot Fill Rates — {fmtMonth(month)}
+        </h3>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {ALL_SLOTS.map((slot) => {
+            const cnt = bookingSlotCount(bookings, slot);
+            const cap = slot === SATURDAY_SLOT ? saturdayCap : weekdayCap;
+            const pct = cap > 0 ? Math.min(100, Math.round((cnt / cap) * 100)) : 0;
+            const isFull = cnt >= cap;
+            const isClosed = closedSlots.includes(slot);
+            return (
+              <div
+                key={slot}
+                className={cn(
+                  'rounded-lg border p-3',
+                  isClosed
+                    ? 'border-gray-200 bg-gray-50'
+                    : isFull
+                      ? 'border-red-100 bg-red-50'
+                      : pct >= 80
+                        ? 'border-amber-100 bg-amber-50'
+                        : 'border-green-100 bg-green-50',
+                )}
+              >
+                <p className="text-[10px] font-medium text-gray-500">{SLOT_DISPLAY[slot]}</p>
+                <p
+                  className={cn(
+                    'mt-1 text-lg font-bold',
+                    isClosed
+                      ? 'text-gray-400'
+                      : isFull
+                        ? 'text-red-600'
+                        : 'text-brand-secondary',
+                  )}
+                >
+                  {cnt}
+                  <span className="text-xs font-normal text-gray-400">/{cap}</span>
+                </p>
+                <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-200">
+                  <div
+                    className={cn(
+                      'h-full rounded-full',
+                      isFull || isClosed ? 'bg-red-400' : pct >= 80 ? 'bg-amber-400' : 'bg-green-400',
+                    )}
+                    style={{ width: `${isClosed ? 100 : pct}%` }}
+                  />
+                </div>
+                {(isFull || isClosed) && (
+                  <p className="mt-1 text-[10px] font-semibold text-red-500">
+                    {isClosed ? 'Closed' : 'FULL'}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Filters */}
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center">
         <select
@@ -384,53 +679,69 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
                 <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Name</th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Phone</th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500 hidden md:table-cell">Plan</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500 hidden lg:table-cell">Time Slot</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500 text-right">Amount</th>
+                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500 hidden lg:table-cell">Slot</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Amount</th>
                 <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Status</th>
-                <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500 hidden lg:table-cell">UPI Txn ID</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {filtered.map((b) => (
-                <tr key={b.id} className="hover:bg-gray-50 transition">
+                <tr key={b.id} className="transition hover:bg-gray-50">
                   <td className="px-4 py-2.5 font-medium text-brand-secondary">{b.participantName}</td>
                   <td className="px-4 py-2.5 text-gray-600">{b.participantPhone}</td>
-                  <td className="px-4 py-2.5 text-gray-600 hidden md:table-cell">{planLabel(b.planType)}</td>
-                  <td className="px-4 py-2.5 text-gray-500 hidden lg:table-cell">{b.timeSlot}</td>
+                  <td className="hidden px-4 py-2.5 text-gray-600 md:table-cell">{planLabel(b.planType)}</td>
+                  <td className="hidden px-4 py-2.5 text-gray-500 lg:table-cell">{b.timeSlot}</td>
                   <td className="px-4 py-2.5 text-right font-semibold text-brand-secondary">
                     {formatINR(b.amountPaise, { withDecimals: false })}
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className={cn('inline-block rounded-full px-2 py-0.5 text-xs font-medium', BOOKING_STATUS_PILL[b.status])}>
+                    <span
+                      className={cn(
+                        'inline-block rounded-full px-2 py-0.5 text-xs font-medium',
+                        BOOKING_STATUS_PILL[b.status],
+                      )}
+                    >
                       {b.status.replace(/_/g, ' ')}
                     </span>
                   </td>
-                  <td className="px-4 py-2.5 text-gray-400 text-xs hidden lg:table-cell">{b.upiTransactionId ?? '—'}</td>
                   <td className="px-4 py-2.5">
-                    {(b.status === SlotBookingStatus.PENDING_VERIFICATION || b.status === SlotBookingStatus.PENDING_PAYMENT) && (
-                      <div className="flex gap-1.5">
-                        <button
-                          onClick={() => handleVerify(b)}
-                          className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-green-700"
-                          title="Verify payment"
+                    <div className="flex items-center gap-1.5">
+                      {(b.status === SlotBookingStatus.PENDING_VERIFICATION ||
+                        b.status === SlotBookingStatus.PENDING_PAYMENT) && (
+                        <>
+                          <button
+                            onClick={() => handleVerify(b)}
+                            className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-green-700"
+                            title="Verify payment"
+                          >
+                            <CheckCircle2 size={13} className="inline mr-0.5" /> Verify
+                          </button>
+                          <button
+                            onClick={() => handleReject(b)}
+                            className="rounded-lg bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
+                            title="Reject booking"
+                          >
+                            <XCircle size={13} className="inline mr-0.5" /> Reject
+                          </button>
+                        </>
+                      )}
+                      {b.status === SlotBookingStatus.REJECTED && b.rejectionReason && (
+                        <span
+                          className="max-w-[120px] truncate text-xs text-red-400"
+                          title={b.rejectionReason}
                         >
-                          <CheckCircle2 size={13} className="inline mr-0.5" /> Verify
-                        </button>
-                        <button
-                          onClick={() => handleReject(b)}
-                          className="rounded-lg bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
-                          title="Reject booking"
-                        >
-                          <XCircle size={13} className="inline mr-0.5" /> Reject
-                        </button>
-                      </div>
-                    )}
-                    {b.status === SlotBookingStatus.REJECTED && b.rejectionReason && (
-                      <span className="text-xs text-red-400" title={b.rejectionReason}>
-                        {b.rejectionReason.length > 20 ? b.rejectionReason.slice(0, 20) + '…' : b.rejectionReason}
-                      </span>
-                    )}
+                          {b.rejectionReason}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => handleDelete(b)}
+                        className="rounded-lg p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 transition"
+                        title="Delete booking"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

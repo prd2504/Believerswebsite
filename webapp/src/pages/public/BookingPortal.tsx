@@ -14,6 +14,8 @@ import {
   CheckCircle2,
   AlertCircle,
   MessageCircle,
+  Zap,
+  Lock,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatINR } from '@bba/shared';
@@ -21,11 +23,14 @@ import {
   SLOT_PLANS,
   SlotPlanType,
   SlotBookingStatus,
+  DEFAULT_SLOT_CONFIG,
   type SlotBookingDocument,
   type SlotPlanConfig,
+  type SlotBookingConfig,
 } from '@bba/shared';
 import {
   subscribeToBookings,
+  subscribeToConfig,
   createBooking,
   checkDuplicatePhone,
 } from '@/services/slotBookingService';
@@ -56,7 +61,7 @@ const TIME_SLOT_LABELS: Record<string, string> = {
   '06:00-07:00': '6:00 – 7:00 AM',
   '07:00-08:00': '7:00 – 8:00 AM',
   '08:00-09:00': '8:00 – 9:00 AM',
-  '07:00-09:00': '7:00 – 9:00 AM (Saturday)',
+  '07:00-09:00': '7:00 – 9:00 AM',
 };
 
 function getBookingMonth(): string {
@@ -71,48 +76,144 @@ function formatMonth(m: string): string {
   return d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 }
 
+// ── Capacity helpers ────────────────────────────────────────────────────────
+
+function isSaturdaySlot(slot: string) {
+  return slot === '07:00-09:00';
+}
+
+function getSlotCount(bookings: SlotBookingDocument[], timeSlot: string): number {
+  if (isSaturdaySlot(timeSlot)) {
+    return bookings.filter(
+      (b) => b.planType === SlotPlanType.COMPLETE_BUNDLE || b.planType === SlotPlanType.GAMES_DAY,
+    ).length;
+  }
+  return bookings.filter(
+    (b) =>
+      b.timeSlot === timeSlot &&
+      (b.planType === SlotPlanType.TWO_DAY ||
+        b.planType === SlotPlanType.THREE_DAY ||
+        b.planType === SlotPlanType.COMPLETE_BUNDLE),
+  ).length;
+}
+
+// ── WhatsApp message helper ─────────────────────────────────────────────────
+
+function buildWhatsAppMessage(
+  name: string,
+  plan: SlotPlanConfig,
+  timeSlot: string,
+  month: string,
+  centreName: string,
+): string {
+  const slotLabel = isSaturdaySlot(timeSlot)
+    ? `${TIME_SLOT_LABELS[timeSlot]} (Saturday)`
+    : TIME_SLOT_LABELS[timeSlot] ?? timeSlot;
+  return (
+    `Hi! I've booked my slot at ${centreName} Morning Badminton for ${formatMonth(month)}.\n\n` +
+    `📋 Booking Details:\n` +
+    `• Name: ${name}\n` +
+    `• Plan: ${plan.label} (${plan.days})\n` +
+    `• Time Slot: ${slotLabel}\n` +
+    `• Month: ${formatMonth(month)}\n` +
+    `• Amount: ${formatINR(plan.amountPaise, { withDecimals: false })}\n\n` +
+    `✅ Payment done! Please find my payment screenshot below.`
+  );
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+}
+
 // ── Live names section ──────────────────────────────────────────────────────
 
 function LiveSlotDisplay({
   bookings,
   timeSlot,
   label,
+  capacity,
+  isClosed,
 }: {
   bookings: SlotBookingDocument[];
   timeSlot: string;
   label: string;
+  capacity: number;
+  isClosed: boolean;
 }) {
-  const displayNames = (() => {
-    if (timeSlot === '07:00-09:00') {
-      return bookings.filter(
+  const displayNames = isSaturdaySlot(timeSlot)
+    ? bookings.filter(
+        (b) => b.planType === SlotPlanType.COMPLETE_BUNDLE || b.planType === SlotPlanType.GAMES_DAY,
+      )
+    : bookings.filter(
         (b) =>
-          b.planType === SlotPlanType.COMPLETE_BUNDLE ||
-          b.planType === SlotPlanType.GAMES_DAY,
+          b.timeSlot === timeSlot &&
+          (b.planType === SlotPlanType.TWO_DAY ||
+            b.planType === SlotPlanType.THREE_DAY ||
+            b.planType === SlotPlanType.COMPLETE_BUNDLE),
       );
-    }
-    return bookings.filter(
-      (b) =>
-        b.timeSlot === timeSlot &&
-        (b.planType === SlotPlanType.TWO_DAY ||
-          b.planType === SlotPlanType.THREE_DAY ||
-          b.planType === SlotPlanType.COMPLETE_BUNDLE),
-    );
-  })();
+
+  const count = displayNames.length;
+  const isFull = count >= capacity;
+  const fillPercent = capacity > 0 ? Math.min(100, Math.round((count / capacity) * 100)) : 0;
+  const blocked = isClosed || isFull;
 
   return (
-    <div className="rounded-xl border border-gray-100 bg-white p-4">
-      <div className="mb-3 flex items-center justify-between">
+    <div
+      className={cn(
+        'rounded-xl border p-4',
+        blocked ? 'border-red-100 bg-red-50/30' : 'border-gray-100 bg-white',
+      )}
+    >
+      <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Clock size={16} className="text-brand-primary" />
+          <Clock size={15} className={blocked ? 'text-red-400' : 'text-brand-primary'} />
           <h3 className="text-sm font-semibold text-brand-secondary">{label}</h3>
+          {blocked && (
+            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase text-red-600">
+              {isClosed ? 'Closed' : 'Full'}
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-1.5 rounded-full bg-brand-primary/10 px-2.5 py-1">
-          <Users size={13} className="text-brand-primary" />
-          <span className="text-xs font-semibold text-brand-primary">{displayNames.length}</span>
+        <div
+          className={cn(
+            'flex items-center gap-1 rounded-full px-2.5 py-1',
+            blocked ? 'bg-red-100' : 'bg-brand-primary/10',
+          )}
+        >
+          <Users size={12} className={blocked ? 'text-red-500' : 'text-brand-primary'} />
+          <span
+            className={cn(
+              'text-xs font-semibold',
+              blocked ? 'text-red-500' : 'text-brand-primary',
+            )}
+          >
+            {count}/{capacity}
+          </span>
         </div>
       </div>
+
+      {/* Fill bar */}
+      <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+        <div
+          className={cn(
+            'h-full rounded-full transition-all',
+            blocked ? 'bg-red-400' : fillPercent >= 80 ? 'bg-amber-400' : 'bg-green-400',
+          )}
+          style={{ width: `${fillPercent}%` }}
+        />
+      </div>
+
       {displayNames.length === 0 ? (
-        <p className="text-xs text-gray-400 italic">No bookings yet — be the first!</p>
+        <p className="text-xs italic text-gray-400">No bookings yet — be the first!</p>
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {displayNames.map((b) => (
@@ -125,11 +226,7 @@ function LiveSlotDisplay({
                   : 'bg-blue-50 text-blue-700',
               )}
             >
-              {b.status === SlotBookingStatus.CONFIRMED ? (
-                <Check size={11} />
-              ) : (
-                <User size={11} />
-              )}
+              {b.status === SlotBookingStatus.CONFIRMED ? <Check size={11} /> : <User size={11} />}
               {b.participantName}
             </span>
           ))}
@@ -143,22 +240,43 @@ function LiveSlotDisplay({
 
 function PlanCard({
   plan,
+  bookings,
+  portalConfig,
   onSelect,
 }: {
   plan: SlotPlanConfig;
+  bookings: SlotBookingDocument[];
+  portalConfig: SlotBookingConfig | null;
   onSelect: () => void;
 }) {
   const isBest = plan.planType === SlotPlanType.COMPLETE_BUNDLE;
+  const isGameDay = plan.planType === SlotPlanType.GAMES_DAY;
+
+  const satCap = portalConfig?.saturdayCapacity ?? DEFAULT_SLOT_CONFIG.saturdayCapacity;
+  const satCount = getSlotCount(bookings, '07:00-09:00');
+  const gamesDayFull = isGameDay && satCount >= satCap;
+  const isDisabled = gamesDayFull;
 
   return (
     <button
       type="button"
       onClick={onSelect}
-      className="relative w-full rounded-xl border-2 border-gray-100 bg-white p-4 text-left transition-all hover:border-brand-primary/40 hover:shadow-sm active:scale-[0.98]"
+      disabled={isDisabled}
+      className={cn(
+        'relative w-full rounded-xl border-2 bg-white p-4 text-left transition-all',
+        isDisabled
+          ? 'cursor-not-allowed border-gray-100 opacity-60'
+          : 'cursor-pointer border-gray-100 hover:border-brand-primary/40 hover:shadow-sm active:scale-[0.98]',
+      )}
     >
-      {isBest && (
+      {isBest && !isDisabled && (
         <span className="absolute -top-2.5 right-3 rounded-full bg-brand-primary px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
           Best Value
+        </span>
+      )}
+      {isDisabled && (
+        <span className="absolute -top-2.5 right-3 flex items-center gap-1 rounded-full bg-red-500 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+          <Lock size={9} /> Full
         </span>
       )}
       <div className="flex items-start justify-between">
@@ -166,6 +284,16 @@ function PlanCard({
           <h3 className="text-sm font-bold text-brand-secondary">{plan.label}</h3>
           <p className="mt-0.5 text-xs text-gray-500">{plan.description}</p>
           <p className="mt-1 text-xs text-gray-400">{plan.days}</p>
+          {isGameDay && (
+            <p
+              className={cn(
+                'mt-1 text-xs font-medium',
+                gamesDayFull ? 'text-red-500' : 'text-green-600',
+              )}
+            >
+              {satCount}/{satCap} slots filled
+            </p>
+          )}
         </div>
         <div className="text-right">
           <p className="text-lg font-bold text-brand-primary">
@@ -175,6 +303,42 @@ function PlanCard({
         </div>
       </div>
     </button>
+  );
+}
+
+// ── Step instruction card ────────────────────────────────────────────────────
+
+function StepCard({
+  num,
+  title,
+  desc,
+  highlight,
+}: {
+  num: number;
+  title: string;
+  desc: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        'flex gap-3 rounded-xl border p-3',
+        highlight ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-white',
+      )}
+    >
+      <div
+        className={cn(
+          'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white',
+          highlight ? 'bg-amber-500' : 'bg-brand-primary',
+        )}
+      >
+        {num}
+      </div>
+      <div>
+        <p className="text-sm font-semibold text-brand-secondary">{title}</p>
+        <p className="mt-0.5 text-xs text-gray-500">{desc}</p>
+      </div>
+    </div>
   );
 }
 
@@ -188,6 +352,7 @@ export default function BookingPortal() {
 
   const [month] = useState(getBookingMonth);
   const [bookings, setBookings] = useState<SlotBookingDocument[]>([]);
+  const [portalConfig, setPortalConfig] = useState<SlotBookingConfig | null>(null);
   const [step, setStep] = useState<Step>('browse');
 
   const [selectedPlan, setSelectedPlan] = useState<SlotPlanConfig | null>(null);
@@ -195,18 +360,37 @@ export default function BookingPortal() {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [upiCopied, setUpiCopied] = useState(false);
+  const [msgCopied, setMsgCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!config) return;
-    const unsubscribe = subscribeToBookings(config.centreId, month, setBookings);
-    return unsubscribe;
+    const unsub1 = subscribeToBookings(config.centreId, month, setBookings);
+    const unsub2 = subscribeToConfig(config.centreId, setPortalConfig);
+    return () => {
+      unsub1();
+      unsub2();
+    };
   }, [config, month]);
+
+  const weekdayCapacity = portalConfig?.weekdayCapacity ?? DEFAULT_SLOT_CONFIG.weekdayCapacity;
+  const saturdayCapacity = portalConfig?.saturdayCapacity ?? DEFAULT_SLOT_CONFIG.saturdayCapacity;
+  const isPortalOpen = portalConfig?.isOpen ?? DEFAULT_SLOT_CONFIG.isOpen;
+  const closedSlots = portalConfig?.closedSlots ?? [];
 
   const weekdaySlots = ['06:00-07:00', '07:00-08:00', '08:00-09:00'];
   const saturdaySlot = '07:00-09:00';
+
+  const isSlotBlocked = useCallback(
+    (slot: string) => {
+      if (closedSlots.includes(slot)) return true;
+      const cap = isSaturdaySlot(slot) ? saturdayCapacity : weekdayCapacity;
+      return getSlotCount(bookings, slot) >= cap;
+    },
+    [bookings, closedSlots, weekdayCapacity, saturdayCapacity],
+  );
 
   const handleSelectPlan = useCallback((plan: SlotPlanConfig) => {
     setSelectedPlan(plan);
@@ -216,21 +400,20 @@ export default function BookingPortal() {
 
   const handleCopyUpi = useCallback(async () => {
     if (!config) return;
-    try {
-      await navigator.clipboard.writeText(config.upiId);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      const ta = document.createElement('textarea');
-      ta.value = config.upiId;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    await copyToClipboard(config.upiId);
+    setUpiCopied(true);
+    setTimeout(() => setUpiCopied(false), 2000);
   }, [config]);
+
+  const handleCopyMessage = useCallback(async () => {
+    if (!config || !selectedPlan) return;
+    const finalSlot =
+      selectedPlan.timeSlots.length === 1 ? selectedPlan.timeSlots[0] : timeSlot;
+    const msg = buildWhatsAppMessage(name, selectedPlan, finalSlot, month, config.name);
+    await copyToClipboard(msg);
+    setMsgCopied(true);
+    setTimeout(() => setMsgCopied(false), 3000);
+  }, [config, selectedPlan, name, timeSlot, month]);
 
   const handleSubmit = useCallback(async () => {
     if (!config || !selectedPlan) return;
@@ -246,6 +429,14 @@ export default function BookingPortal() {
     }
     if (!timeSlot && selectedPlan.timeSlots.length > 1) {
       setError('Please select a time slot');
+      return;
+    }
+
+    const finalTimeSlot =
+      selectedPlan.timeSlots.length === 1 ? selectedPlan.timeSlots[0] : timeSlot;
+
+    if (isSlotBlocked(finalTimeSlot)) {
+      setError('This time slot is now full or closed. Please select a different slot.');
       return;
     }
 
@@ -265,9 +456,6 @@ export default function BookingPortal() {
         return;
       }
 
-      const finalTimeSlot =
-        selectedPlan.timeSlots.length === 1 ? selectedPlan.timeSlots[0] : timeSlot;
-
       await createBooking({
         centreId: config.centreId,
         month,
@@ -286,7 +474,17 @@ export default function BookingPortal() {
     } finally {
       setSubmitting(false);
     }
-  }, [config, selectedPlan, name, phone, email, timeSlot, month]);
+  }, [config, selectedPlan, name, phone, email, timeSlot, month, isSlotBlocked]);
+
+  const resetForm = useCallback(() => {
+    setStep('browse');
+    setSelectedPlan(null);
+    setName('');
+    setPhone('');
+    setEmail('');
+    setTimeSlot('');
+    setError('');
+  }, []);
 
   // ── Not found ─────────────────────────────────────────────────────────────
 
@@ -304,21 +502,58 @@ export default function BookingPortal() {
     );
   }
 
+  // ── Portal closed ─────────────────────────────────────────────────────────
+
+  if (portalConfig !== null && !isPortalOpen) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <header className="sticky top-0 z-30 border-b border-gray-100 bg-white">
+          <div className="mx-auto flex max-w-lg items-center gap-3 px-4 py-3">
+            <img src="/logo.png" alt="BBA Sports" className="h-9 w-9 rounded-lg object-contain" />
+            <div className="flex-1">
+              <h1 className="text-sm font-bold text-brand-secondary">BBA Sports Academy</h1>
+              <p className="text-xs text-gray-500">{config.name} — Morning Badminton</p>
+            </div>
+          </div>
+        </header>
+        <div className="flex min-h-[60vh] items-center justify-center px-4">
+          <div className="text-center">
+            <Lock size={48} className="mx-auto text-gray-300" />
+            <h1 className="mt-4 text-lg font-bold text-gray-700">Bookings Closed</h1>
+            <p className="mt-1 text-sm text-gray-500">
+              Slot bookings for {formatMonth(month)} are not open yet. Please check back later.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Success ───────────────────────────────────────────────────────────────
 
   if (step === 'success') {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4">
-        <div className="w-full max-w-sm text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
-            <CheckCircle2 size={32} className="text-green-600" />
-          </div>
-          <h1 className="mt-5 text-xl font-bold text-brand-secondary">Booking Confirmed!</h1>
-          <p className="mt-2 text-sm text-gray-500">
-            Your slot has been booked. Please complete the payment and inform us on the WhatsApp group.
-          </p>
+    const finalSlot =
+      selectedPlan?.timeSlots.length === 1 ? selectedPlan.timeSlots[0] : timeSlot;
+    const whatsappMsg =
+      selectedPlan && finalSlot
+        ? buildWhatsAppMessage(name, selectedPlan, finalSlot, month, config.name)
+        : '';
 
-          <div className="mt-6 rounded-xl border border-gray-100 bg-white p-4 text-left text-sm">
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4 py-8">
+        <div className="w-full max-w-sm">
+          <div className="text-center">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
+              <CheckCircle2 size={32} className="text-green-600" />
+            </div>
+            <h1 className="mt-5 text-xl font-bold text-brand-secondary">Slot Booked!</h1>
+            <p className="mt-2 text-sm text-gray-500">
+              Now complete your payment and inform us on the WhatsApp group.
+            </p>
+          </div>
+
+          {/* Booking summary */}
+          <div className="mt-5 rounded-xl border border-gray-100 bg-white p-4 text-sm">
             <div className="space-y-2">
               <div className="flex justify-between">
                 <span className="text-gray-500">Name</span>
@@ -329,40 +564,79 @@ export default function BookingPortal() {
                 <span className="font-medium text-brand-secondary">{selectedPlan?.label}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">Amount</span>
-                <span className="font-medium text-brand-primary">
-                  {selectedPlan ? formatINR(selectedPlan.amountPaise, { withDecimals: false }) : ''}
+                <span className="text-gray-500">Time Slot</span>
+                <span className="font-medium text-brand-secondary">
+                  {isSaturdaySlot(finalSlot)
+                    ? `${TIME_SLOT_LABELS[finalSlot]} (Sat)`
+                    : (TIME_SLOT_LABELS[finalSlot] ?? finalSlot)}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Month</span>
                 <span className="font-medium text-brand-secondary">{formatMonth(month)}</span>
               </div>
+              <div className="flex justify-between border-t border-gray-100 pt-2">
+                <span className="font-semibold text-gray-700">Amount to Pay</span>
+                <span className="font-bold text-brand-primary">
+                  {selectedPlan ? formatINR(selectedPlan.amountPaise, { withDecimals: false }) : ''}
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* WhatsApp CTA */}
+          {/* Pre-typed message */}
+          <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-semibold text-green-800">
+                📋 Pre-typed WhatsApp Message
+              </p>
+              <button
+                onClick={handleCopyMessage}
+                className={cn(
+                  'flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition',
+                  msgCopied
+                    ? 'bg-green-600 text-white'
+                    : 'bg-green-200 text-green-800 hover:bg-green-300',
+                )}
+              >
+                {msgCopied ? (
+                  <>
+                    <Check size={11} /> Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy size={11} /> Copy Message
+                  </>
+                )}
+              </button>
+            </div>
+            <pre className="whitespace-pre-wrap rounded-lg border border-green-100 bg-white p-3 text-xs leading-relaxed text-gray-700">
+              {whatsappMsg}
+            </pre>
+          </div>
+
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <p className="text-xs font-semibold text-amber-800">
+              ⚠️ Don't forget to share your payment screenshot!
+            </p>
+            <p className="mt-1 text-xs text-amber-700">
+              Copy the message above → Open the group → Paste it → Attach your payment screenshot. Booking is confirmed after admin verifies.
+            </p>
+          </div>
+
           <a
             href={config.whatsappGroupUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#20bd5a] transition"
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#20bd5a]"
           >
             <MessageCircle size={18} />
-            Inform on WhatsApp Group & Share Screenshot
+            Open WhatsApp Group
           </a>
 
           <button
-            onClick={() => {
-              setStep('browse');
-              setSelectedPlan(null);
-              setName('');
-              setPhone('');
-              setEmail('');
-              setTimeSlot('');
-              setError('');
-            }}
-            className="mt-3 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium text-gray-600 hover:bg-gray-50 transition"
+            onClick={resetForm}
+            className="mt-3 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
           >
             Book Another Slot
           </button>
@@ -389,12 +663,70 @@ export default function BookingPortal() {
         </div>
       </header>
 
+      {/* Live blinking banner */}
+      <div className="bg-gradient-to-r from-brand-primary to-orange-400 py-3 text-center">
+        <div className="flex items-center justify-center gap-3">
+          <span className="relative flex h-3 w-3">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
+            <span className="relative inline-flex h-3 w-3 rounded-full bg-white" />
+          </span>
+          <p className="text-sm font-bold uppercase tracking-widest text-white">
+            {formatMonth(month)} Slots Are Live
+          </p>
+          <span className="relative flex h-3 w-3">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-75" />
+            <span className="relative inline-flex h-3 w-3 rounded-full bg-white" />
+          </span>
+        </div>
+        <p className="mt-0.5 text-[11px] text-white/80">
+          First come, first served · Book before slots fill up!
+        </p>
+      </div>
+
       <main className="mx-auto max-w-lg px-4 pb-8 pt-4">
+        {/* How to Book — step instructions */}
+        {step === 'browse' && (
+          <section className="mb-6 rounded-xl border border-blue-100 bg-blue-50 p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <Zap size={15} className="text-blue-600" />
+              <h2 className="text-sm font-bold text-blue-800">How to Book Your Slot</h2>
+            </div>
+            <div className="space-y-2">
+              <StepCard
+                num={1}
+                title="Select your plan below"
+                desc="Choose from 2-day, 3-day, Games Day (Sat), or Complete Bundle"
+              />
+              <StepCard
+                num={2}
+                title="Fill in your details"
+                desc="Enter your name and 10-digit phone number"
+              />
+              <StepCard
+                num={3}
+                title="Pay via UPI"
+                desc="Scan the QR code or copy the UPI ID to transfer the fee"
+              />
+              <StepCard
+                num={4}
+                title="Share screenshot on WhatsApp group"
+                highlight
+                desc="IMPORTANT: We'll prepare a message for you. Open the group, paste it, and attach your payment screenshot. Slot confirmed after admin verifies payment."
+              />
+            </div>
+          </section>
+        )}
+
         {/* Live slots */}
         <section className="mb-6">
           <div className="mb-3 flex items-center gap-2">
-            <div className="h-2 w-2 animate-pulse rounded-full bg-green-500" />
-            <h2 className="text-sm font-bold text-brand-secondary">Live Bookings — {formatMonth(month)}</h2>
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500" />
+            </span>
+            <h2 className="text-sm font-bold text-brand-secondary">
+              Live Bookings — {formatMonth(month)}
+            </h2>
           </div>
 
           <div className="space-y-3">
@@ -407,6 +739,8 @@ export default function BookingPortal() {
                 bookings={bookings}
                 timeSlot={slot}
                 label={TIME_SLOT_LABELS[slot]}
+                capacity={weekdayCapacity}
+                isClosed={closedSlots.includes(slot)}
               />
             ))}
 
@@ -416,7 +750,9 @@ export default function BookingPortal() {
             <LiveSlotDisplay
               bookings={bookings}
               timeSlot={saturdaySlot}
-              label={TIME_SLOT_LABELS[saturdaySlot]}
+              label={`${TIME_SLOT_LABELS[saturdaySlot]} (Saturday)`}
+              capacity={saturdayCapacity}
+              isClosed={closedSlots.includes(saturdaySlot)}
             />
           </div>
         </section>
@@ -430,6 +766,8 @@ export default function BookingPortal() {
                 <PlanCard
                   key={plan.planType}
                   plan={plan}
+                  bookings={bookings}
+                  portalConfig={portalConfig}
                   onSelect={() => handleSelectPlan(plan)}
                 />
               ))}
@@ -447,11 +785,9 @@ export default function BookingPortal() {
                   <h3 className="text-sm font-bold text-brand-secondary">{selectedPlan.label}</h3>
                   <p className="text-xs text-gray-500">{selectedPlan.days}</p>
                 </div>
-                <div className="text-right">
-                  <p className="text-lg font-bold text-brand-primary">
-                    {formatINR(selectedPlan.amountPaise, { withDecimals: false })}
-                  </p>
-                </div>
+                <p className="text-lg font-bold text-brand-primary">
+                  {formatINR(selectedPlan.amountPaise, { withDecimals: false })}
+                </p>
               </div>
               <button
                 type="button"
@@ -462,7 +798,7 @@ export default function BookingPortal() {
                 }}
                 className="mt-2 text-xs font-medium text-brand-primary hover:underline"
               >
-                Change plan
+                ← Change plan
               </button>
             </div>
 
@@ -473,21 +809,39 @@ export default function BookingPortal() {
                   Select Time Slot <span className="text-red-500">*</span>
                 </label>
                 <div className="grid grid-cols-3 gap-2">
-                  {selectedPlan.timeSlots.map((slot) => (
-                    <button
-                      key={slot}
-                      type="button"
-                      onClick={() => setTimeSlot(slot)}
-                      className={cn(
-                        'rounded-lg border-2 px-3 py-2.5 text-xs font-medium transition-all',
-                        timeSlot === slot
-                          ? 'border-brand-primary bg-brand-primary/5 text-brand-primary'
-                          : 'border-gray-100 text-gray-600 hover:border-gray-200',
-                      )}
-                    >
-                      {TIME_SLOT_LABELS[slot]}
-                    </button>
-                  ))}
+                  {selectedPlan.timeSlots.map((slot) => {
+                    const count = getSlotCount(bookings, slot);
+                    const cap = weekdayCapacity;
+                    const slotFull = count >= cap;
+                    const slotClosed = closedSlots.includes(slot);
+                    const blocked = slotFull || slotClosed;
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        onClick={() => !blocked && setTimeSlot(slot)}
+                        disabled={blocked}
+                        className={cn(
+                          'rounded-lg border-2 px-2 py-2.5 text-xs font-medium transition-all',
+                          blocked
+                            ? 'cursor-not-allowed border-red-100 bg-red-50 text-red-400'
+                            : timeSlot === slot
+                              ? 'border-brand-primary bg-brand-primary/5 text-brand-primary'
+                              : 'border-gray-100 text-gray-600 hover:border-gray-200',
+                        )}
+                      >
+                        <div>{TIME_SLOT_LABELS[slot]}</div>
+                        <div
+                          className={cn(
+                            'mt-1 text-[10px]',
+                            blocked ? 'text-red-400 font-semibold' : 'text-gray-400',
+                          )}
+                        >
+                          {blocked ? (slotClosed ? 'Closed' : 'Full') : `${count}/${cap}`}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -525,7 +879,8 @@ export default function BookingPortal() {
 
               <div>
                 <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
-                  <Mail size={13} /> Email <span className="text-xs text-gray-400">(optional)</span>
+                  <Mail size={13} /> Email{' '}
+                  <span className="text-xs text-gray-400">(optional)</span>
                 </label>
                 <input
                   type="email"
@@ -539,28 +894,44 @@ export default function BookingPortal() {
 
             {/* Proceed to Payment */}
             {step === 'form' && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (!name.trim()) {
-                    setError('Please enter your name');
-                    return;
-                  }
-                  if (!phone.trim() || phone.replace(/\D/g, '').length < 10) {
-                    setError('Please enter a valid 10-digit phone number');
-                    return;
-                  }
-                  if (selectedPlan.timeSlots.length > 1 && !timeSlot) {
-                    setError('Please select a time slot');
-                    return;
-                  }
-                  setError('');
-                  setStep('payment');
-                }}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-brand-primary/90 transition"
-              >
-                Proceed to Payment <ChevronRight size={16} />
-              </button>
+              <>
+                {error && (
+                  <div className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
+                    <AlertCircle size={14} />
+                    {error}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!name.trim()) {
+                      setError('Please enter your name');
+                      return;
+                    }
+                    if (!phone.trim() || phone.replace(/\D/g, '').length < 10) {
+                      setError('Please enter a valid 10-digit phone number');
+                      return;
+                    }
+                    if (selectedPlan.timeSlots.length > 1 && !timeSlot) {
+                      setError('Please select a time slot');
+                      return;
+                    }
+                    const finalSlot =
+                      selectedPlan.timeSlots.length === 1 ? selectedPlan.timeSlots[0] : timeSlot;
+                    if (isSlotBlocked(finalSlot)) {
+                      setError(
+                        'This time slot is now full or closed. Please select a different slot.',
+                      );
+                      return;
+                    }
+                    setError('');
+                    setStep('payment');
+                  }}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-primary/90"
+                >
+                  Proceed to Payment <ChevronRight size={16} />
+                </button>
+              </>
             )}
 
             {/* Payment step */}
@@ -572,7 +943,6 @@ export default function BookingPortal() {
                     Pay via UPI
                   </h3>
 
-                  {/* QR Code */}
                   <div className="mb-4 flex justify-center">
                     <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
                       <img
@@ -586,7 +956,6 @@ export default function BookingPortal() {
                     </div>
                   </div>
 
-                  {/* UPI ID */}
                   <div className="mb-4">
                     <p className="mb-1.5 text-xs text-gray-500">Or pay to this UPI ID:</p>
                     <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5">
@@ -598,17 +967,24 @@ export default function BookingPortal() {
                         onClick={handleCopyUpi}
                         className={cn(
                           'flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition',
-                          copied
+                          upiCopied
                             ? 'bg-green-100 text-green-700'
                             : 'bg-brand-primary text-white hover:bg-brand-primary/90',
                         )}
                       >
-                        {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
+                        {upiCopied ? (
+                          <>
+                            <Check size={12} /> Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy size={12} /> Copy
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>
 
-                  {/* Amount */}
                   <div className="rounded-lg bg-green-50 p-3 text-center">
                     <p className="text-xs text-green-600">Amount to Pay</p>
                     <p className="text-2xl font-bold text-green-700">
@@ -619,7 +995,7 @@ export default function BookingPortal() {
 
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
                   <p className="text-xs text-amber-800">
-                    After paying, click <strong>"Book My Slot"</strong> below. You'll then be redirected to the WhatsApp group to share your payment screenshot.
+                    After paying, click <strong>"Confirm Booking"</strong> below. You'll get a pre-typed message to send in the WhatsApp group along with your payment screenshot.
                   </p>
                 </div>
 
@@ -634,12 +1010,16 @@ export default function BookingPortal() {
                   type="button"
                   onClick={handleSubmit}
                   disabled={submitting}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-brand-primary/90 disabled:opacity-60 transition"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-primary/90 disabled:opacity-60"
                 >
                   {submitting ? (
-                    <><Loader2 size={16} className="animate-spin" /> Booking…</>
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Booking…
+                    </>
                   ) : (
-                    <><Check size={16} /> Book My Slot</>
+                    <>
+                      <Check size={16} /> Confirm Booking
+                    </>
                   )}
                 </button>
 
@@ -648,25 +1028,17 @@ export default function BookingPortal() {
                   onClick={() => setStep('form')}
                   className="w-full text-center text-xs font-medium text-gray-500 hover:text-gray-700"
                 >
-                  Go back to edit details
+                  ← Go back to edit details
                 </button>
-              </div>
-            )}
-
-            {error && step === 'form' && (
-              <div className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">
-                <AlertCircle size={14} />
-                {error}
               </div>
             )}
           </section>
         )}
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-gray-100 bg-white py-4 text-center">
         <p className="text-xs text-gray-400">
-          BBA Sports Academy &middot; First come, first served &middot; Monthly admissions
+          BBA Sports Academy · First come, first served · Monthly admissions
         </p>
       </footer>
     </div>
