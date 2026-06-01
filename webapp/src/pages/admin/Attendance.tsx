@@ -1,14 +1,16 @@
 /**
- * Admin attendance page — mark attendance and view session history per batch.
+ * Admin attendance page — mark attendance (unified or per-batch), view monthly
+ * roster, and browse session history.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ClipboardCheck, Download, Search, CalendarDays } from 'lucide-react';
+import { ClipboardCheck, Download, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { getAllBatches } from '@/services/batchService';
 import { getAllCentres } from '@/services/centreService';
 import { getAllStudents } from '@/services/studentService';
+import { QuickAttendance } from '@/components/attendance/QuickAttendance';
 import { AttendanceMarker } from '@/components/attendance/AttendanceMarker';
 import { SessionHistory } from '@/components/attendance/SessionHistory';
 import { MonthlyRoster } from '@/components/attendance/MonthlyRoster';
@@ -21,7 +23,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
 import type { BatchDocument, CentreDocument, StudentDocument } from '@bba/shared';
 
-type Tab = 'mark' | 'roster' | 'history';
+type Tab = 'quick' | 'batch' | 'roster' | 'history';
 
 export default function AttendancePage() {
   const { profile } = useAuth();
@@ -29,7 +31,7 @@ export default function AttendancePage() {
   const [centres, setCentres] = useState<CentreDocument[]>([]);
   const [students, setStudents] = useState<StudentDocument[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>('mark');
+  const [tab, setTab] = useState<Tab>('quick');
   const [centreFilter, setCentreFilter] = useState('');
   const [search, setSearch] = useState('');
   const [historyBatchId, setHistoryBatchId] = useState('');
@@ -140,12 +142,20 @@ export default function AttendancePage() {
       {/* Tabs */}
       <div className="mb-5 flex gap-1 rounded-lg bg-gray-100 p-1">
         <button
-          onClick={() => setTab('mark')}
+          onClick={() => setTab('quick')}
           className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-            tab === 'mark' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            tab === 'quick' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
-          Mark Attendance
+          Quick Mark
+        </button>
+        <button
+          onClick={() => setTab('batch')}
+          className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+            tab === 'batch' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Per Batch
         </button>
         <button
           onClick={() => setTab('roster')}
@@ -166,7 +176,21 @@ export default function AttendancePage() {
       </div>
 
       {/* Content */}
-      {tab === 'mark' && profile && (
+      {tab === 'quick' && profile && (
+        <div className="card">
+          <p className="mb-3 text-xs text-gray-500">
+            All expected students across batches for the selected day. Everyone defaults to present — just mark absences.
+          </p>
+          <QuickAttendance
+            batches={activeBatches}
+            centreId={centreFilter || centres[0]?.id || ''}
+            userId={profile.id}
+            onDone={load}
+          />
+        </div>
+      )}
+
+      {tab === 'batch' && profile && (
         <div className="card">
           <AttendanceMarker
             batches={activeBatches}

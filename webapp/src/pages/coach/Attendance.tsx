@@ -1,5 +1,6 @@
 /**
- * Coach attendance page — mark attendance for batches assigned to this coach.
+ * Coach attendance page — unified view of all expected students across assigned
+ * batches for a given day. Coach marks absences (all default PRESENT).
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -7,7 +8,7 @@ import { ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { getBatchesByCoach } from '@/services/batchService';
-import { AttendanceMarker } from '@/components/attendance/AttendanceMarker';
+import { QuickAttendance } from '@/components/attendance/QuickAttendance';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
 import type { BatchDocument } from '@bba/shared';
@@ -55,14 +56,19 @@ export default function CoachAttendance() {
     );
   }
 
+  const centreId = batches[0].centreId;
+
   return (
     <div className="p-4">
       <h1 className="mb-4 text-lg font-bold text-brand-secondary">Mark Attendance</h1>
+      <p className="mb-4 text-xs text-gray-500">
+        All expected students across your batches are shown below. Everyone is marked present by default — just tap to mark absences.
+      </p>
       <div className="card">
         {profile && (
-          <AttendanceMarker
+          <QuickAttendance
             batches={batches}
-            centreId={batches[0].centreId}
+            centreId={centreId}
             userId={profile.id}
             onDone={load}
           />
