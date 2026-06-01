@@ -277,8 +277,10 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
   const [savingConfig, setSavingConfig] = useState(false);
   const [month, setMonth] = useState(() => {
     const d = new Date();
-    const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-    return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+    const target = d.getDate() >= 25
+      ? new Date(d.getFullYear(), d.getMonth() + 1, 1)
+      : new Date(d.getFullYear(), d.getMonth(), 1);
+    return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}`;
   });
 
   const allCentreOptions = useMemo(() => {

@@ -66,8 +66,10 @@ const TIME_SLOT_LABELS: Record<string, string> = {
 
 function getBookingMonth(): string {
   const d = new Date();
-  const nextMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-  return `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}`;
+  const target = d.getDate() >= 25
+    ? new Date(d.getFullYear(), d.getMonth() + 1, 1)
+    : new Date(d.getFullYear(), d.getMonth(), 1);
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function formatMonth(m: string): string {
