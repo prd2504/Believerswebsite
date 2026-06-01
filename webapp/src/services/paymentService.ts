@@ -149,65 +149,99 @@ export async function waivePayment(
   });
 }
 
+/**
+ * Generate PENDING fee records for every ACTIVE enrollment whose student is
+ * also ACTIVE and whose `pausedMonths` does not include this month. Idempotent:
+ * skips student+batch+month combinations that already have a payment record.
+ *
+ * Uses each enrolment's own `monthlyFeePaise` snapshot (NOT the batch's
+ * frequency plan) so historical fee changes are respected per student.
+ */
 export async function generateMonthlyFees(
   month: string,
   userId: string,
   centreId?: string,
-): Promise<{ created: number; skipped: number }> {
-  const { getAllBatches } = await import('./batchService');
-  const allBatches = await getAllBatches();
-  const activeBatches = allBatches.filter(
-    (b) => b.status === 'ACTIVE' && (!centreId || b.centreId === centreId),
-  );
+): Promise<{ created: number; skipped: number; pausedSkipped: number; dormantSkipped: number }> {
+  const [{ getAllStudents }, enrollmentMod] = await Promise.all([
+    import('./studentService'),
+    import('./enrollmentService'),
+  ]);
+
+  const students = await getAllStudents();
+  const studentStatus = new Map(students.map((s) => [s.id, s.status] as const));
+
+  const allEnrollments = centreId
+    ? await enrollmentMod.getEnrollmentsByCentre(centreId)
+    : await fetchAllEnrollments();
 
   const existingPayments = await getPaymentsByMonth(month);
   const existingSet = new Set(existingPayments.map((p) => `${p.studentId}|${p.batchId}`));
 
   let created = 0;
   let skipped = 0;
+  let pausedSkipped = 0;
+  let dormantSkipped = 0;
 
-  for (const batch of activeBatches) {
-    for (const studentId of batch.studentIds) {
-      const key = `${studentId}|${batch.id}`;
-      if (existingSet.has(key)) {
-        skipped++;
-        continue;
-      }
-      const basePaise = batch.frequencyPlans?.[0]?.monthlyFeePaise ?? 0;
-      if (basePaise === 0) { skipped++; continue; }
-      const gst = Math.round((basePaise * PAYMENT.defaultGstRatePercent) / 100);
-      const [y, m] = month.split('-').map(Number);
-      const lastDay = new Date(y, m, 0).getDate();
-      const dueDate = `${month}-${String(lastDay).padStart(2, '0')}`;
+  for (const e of allEnrollments) {
+    if (e.status !== 'ACTIVE') { skipped++; continue; }
+    if (e.pausedMonths?.includes(month)) { pausedSkipped++; continue; }
 
-      await addDoc(collection(db, COLLECTIONS.payments), {
-        studentId,
-        batchId: batch.id,
-        centreId: batch.centreId,
-        month,
-        baseAmountPaise: basePaise,
-        gstAmountPaise: gst,
-        totalAmountPaise: basePaise + gst,
-        gstRatePercentSnapshot: PAYMENT.defaultGstRatePercent,
-        status: 'PENDING',
-        method: 'NONE',
-        dueDate,
-        paidAt: null,
-        razorpayOrderId: null,
-        razorpayPaymentId: null,
-        razorpaySignature: null,
-        notes: null,
-        receiptNumber: null,
-        receiptPdfPath: null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        createdBy: userId,
-        updatedBy: userId,
-      });
-      created++;
-    }
+    const sStatus = studentStatus.get(e.studentId);
+    if (sStatus !== 'ACTIVE') { dormantSkipped++; continue; }
+
+    const key = `${e.studentId}|${e.batchId}`;
+    if (existingSet.has(key)) { skipped++; continue; }
+
+    const basePaise = e.monthlyFeePaise ?? 0;
+    if (basePaise === 0) { skipped++; continue; }
+    const gst = Math.round((basePaise * PAYMENT.defaultGstRatePercent) / 100);
+    const [y, m] = month.split('-').map(Number);
+    const lastDay = new Date(y, m, 0).getDate();
+    const dueDate = `${month}-${String(lastDay).padStart(2, '0')}`;
+
+    await addDoc(collection(db, COLLECTIONS.payments), {
+      studentId: e.studentId,
+      batchId: e.batchId,
+      centreId: e.centreId,
+      month,
+      baseAmountPaise: basePaise,
+      gstAmountPaise: gst,
+      totalAmountPaise: basePaise + gst,
+      gstRatePercentSnapshot: PAYMENT.defaultGstRatePercent,
+      status: 'PENDING',
+      method: 'NONE',
+      dueDate,
+      paidAt: null,
+      razorpayOrderId: null,
+      razorpayPaymentId: null,
+      razorpaySignature: null,
+      notes: null,
+      receiptNumber: null,
+      receiptPdfPath: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      createdBy: userId,
+      updatedBy: userId,
+    });
+    created++;
   }
-  return { created, skipped };
+  return { created, skipped, pausedSkipped, dormantSkipped };
+}
+
+async function fetchAllEnrollments() {
+  const snap = await getDocs(collection(db, COLLECTIONS.enrollments));
+  return snap.docs.map((d) => {
+    const data = d.data();
+    return {
+      id: d.id,
+      studentId: (data.studentId as string) ?? '',
+      batchId: (data.batchId as string) ?? '',
+      centreId: (data.centreId as string) ?? '',
+      status: (data.status as string) ?? 'ACTIVE',
+      monthlyFeePaise: (data.monthlyFeePaise as number) ?? 0,
+      pausedMonths: Array.isArray(data.pausedMonths) ? (data.pausedMonths as string[]) : [],
+    };
+  });
 }
 
 export async function markPaymentPaid(

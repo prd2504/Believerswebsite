@@ -7,8 +7,9 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { CalendarDays, Users } from 'lucide-react';
+import { CalendarDays, Users, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn } from '@/lib/cn';
 import { getAllCentres } from '@/services/centreService';
 import { getAllBatches } from '@/services/batchService';
 import { getAllStudents } from '@/services/studentService';
@@ -20,6 +21,24 @@ import type { CentreDocument, BatchDocument, StudentDocument, EnrollmentDocument
 
 const DAY_OPTIONS = [1, 2, 3, 4, 5, 6, 0] as DayOfWeek[];
 
+function currentMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+const PLAN_COLOR: Record<number, string> = {
+  1: 'bg-gray-50 text-gray-600 border-gray-200',
+  2: 'bg-blue-50 text-blue-700 border-blue-200',
+  3: 'bg-purple-50 text-purple-700 border-purple-200',
+  4: 'bg-orange-50 text-orange-700 border-orange-200',
+  5: 'bg-green-50 text-green-700 border-green-200',
+  6: 'bg-amber-50 text-amber-700 border-amber-200',
+  7: 'bg-pink-50 text-pink-700 border-pink-200',
+};
+function planChipClass(days: number): string {
+  return PLAN_COLOR[days] ?? 'bg-gray-50 text-gray-600 border-gray-200';
+}
+
 export default function RosterPage() {
   const [centres, setCentres] = useState<CentreDocument[]>([]);
   const [batches, setBatches] = useState<BatchDocument[]>([]);
@@ -28,6 +47,7 @@ export default function RosterPage() {
   const [loading, setLoading] = useState(true);
   const [centreId, setCentreId] = useState('');
   const [dayOfWeek, setDayOfWeek] = useState<DayOfWeek>(new Date().getDay() as DayOfWeek);
+  const [month] = useState(currentMonth);
 
   const load = useCallback(async (cid: string) => {
     if (!cid) return;
@@ -79,41 +99,76 @@ export default function RosterPage() {
     ).sort((a, b) => a.startTime.localeCompare(b.startTime)),
   [batches, centreId, dayOfWeek]);
 
-  // For each batch, group enrollments by time slot
-  type SlotGroup = {
-    slotKey: string; // "HH:mm" or "all" for single-slot batches
+  // For each batch, group enrollments by time slot, then by plan within each slot.
+  // Plan groups within a slot reveal how many 2-day vs 3-day students are coming —
+  // useful for coaches deciding which drills to run for which sub-group.
+  type PlanGroup = {
+    daysPerWeek: number;
     label: string;
     enrollments: EnrollmentDocument[];
+  };
+
+  type SlotGroup = {
+    slotKey: string;
+    label: string;
+    planGroups: PlanGroup[];
+    total: number;
   };
 
   type BatchRoster = {
     batch: BatchDocument;
     slots: SlotGroup[];
     total: number;
+    /** Bookings that we filtered out so the user knows why a name is missing. */
+    excludedCount: number;
   };
+
+  function groupByPlan(items: EnrollmentDocument[]): PlanGroup[] {
+    const map = new Map<number, EnrollmentDocument[]>();
+    items.forEach((e) => {
+      const arr = map.get(e.daysPerWeek) ?? [];
+      arr.push(e);
+      map.set(e.daysPerWeek, arr);
+    });
+    return Array.from(map.entries())
+      .sort((a, b) => b[0] - a[0]) // highest commitment first
+      .map(([daysPerWeek, enrollments]) => ({
+        daysPerWeek,
+        label: `${daysPerWeek} day${daysPerWeek !== 1 ? 's' : ''} / week`,
+        enrollments,
+      }));
+  }
 
   const roster = useMemo((): BatchRoster[] => {
     return batchesForDay.map((batch) => {
-      // Enrollments in this batch that include the selected day
-      const batchEnrollments = enrollments.filter(
+      // Enrollments in this batch that include the selected day. Exclude
+      // enrollments paused for this month and students whose lifecycle status
+      // isn't ACTIVE (DORMANT/ON_HOLD/LEFT/GRADUATED stay in the data but
+      // don't show on the roster).
+      const allForBatch = enrollments.filter(
         (e) => e.batchId === batch.id && e.selectedDays.includes(dayOfWeek),
       );
+      const batchEnrollments = allForBatch.filter((e) => {
+        if (e.pausedMonths?.includes(month)) return false;
+        const s = studentMap.get(e.studentId);
+        return s ? s.status === 'ACTIVE' : false;
+      });
+      const excluded = allForBatch.length - batchEnrollments.length;
 
       let slots: SlotGroup[];
 
       if (batch.timeSlots.length === 0) {
-        // Single undivided batch
+        // Single undivided batch — one slot containing all plan groups
         slots = [{
           slotKey: 'all',
           label: `${batch.startTime}–${batch.endTime}`,
-          enrollments: batchEnrollments,
+          planGroups: groupByPlan(batchEnrollments),
+          total: batchEnrollments.length,
         }];
       } else {
-        // Group by time slot
+        // Group by time slot, then by plan within each slot
         const slotMap = new Map<string, EnrollmentDocument[]>();
-        // Initialise all defined slots (preserves order)
         batch.timeSlots.forEach((s) => slotMap.set(s.startTime, []));
-        // Bucket with no slot assigned
         slotMap.set('unassigned', []);
 
         batchEnrollments.forEach((e) => {
@@ -122,23 +177,33 @@ export default function RosterPage() {
           slotMap.get(key)!.push(e);
         });
 
-        slots = batch.timeSlots.map((s) => ({
-          slotKey: s.startTime,
-          label: `${s.startTime}–${s.endTime}${s.label ? ` (${s.label})` : ''}`,
-          enrollments: slotMap.get(s.startTime) ?? [],
-        }));
+        slots = batch.timeSlots.map((s) => {
+          const items = slotMap.get(s.startTime) ?? [];
+          return {
+            slotKey: s.startTime,
+            label: `${s.startTime}–${s.endTime}${s.label ? ` (${s.label})` : ''}`,
+            planGroups: groupByPlan(items),
+            total: items.length,
+          };
+        });
 
         const unassigned = slotMap.get('unassigned') ?? [];
         if (unassigned.length > 0) {
-          slots.push({ slotKey: 'unassigned', label: 'No slot assigned', enrollments: unassigned });
+          slots.push({
+            slotKey: 'unassigned',
+            label: 'No slot assigned',
+            planGroups: groupByPlan(unassigned),
+            total: unassigned.length,
+          });
         }
       }
 
-      return { batch, slots, total: batchEnrollments.length };
+      return { batch, slots, total: batchEnrollments.length, excludedCount: excluded };
     });
-  }, [batchesForDay, enrollments, dayOfWeek]);
+  }, [batchesForDay, enrollments, dayOfWeek, month, studentMap]);
 
   const grandTotal = roster.reduce((sum, r) => sum + r.total, 0);
+  const grandExcluded = roster.reduce((sum, r) => sum + r.excludedCount, 0);
 
   return (
     <div>
@@ -149,6 +214,11 @@ export default function RosterPage() {
           <p className="text-sm text-gray-500">
             {grandTotal} student{grandTotal !== 1 ? 's' : ''} expected
             {' · '}{DAY_OF_WEEK_LABELS[dayOfWeek]}
+            {grandExcluded > 0 && (
+              <span className="ml-1 text-xs text-gray-400">
+                · {grandExcluded} hidden (dormant / paused this month)
+              </span>
+            )}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -189,7 +259,7 @@ export default function RosterPage() {
         />
       ) : (
         <div className="space-y-4">
-          {roster.map(({ batch, slots, total }) => (
+          {roster.map(({ batch, slots, total, excludedCount }) => (
             <div key={batch.id} className="card">
               {/* Batch header */}
               <div className="mb-3 flex items-center justify-between">
@@ -197,6 +267,11 @@ export default function RosterPage() {
                   <h2 className="font-semibold text-brand-secondary">{batch.name}</h2>
                   <p className="text-xs text-gray-400">
                     {batch.startTime}–{batch.endTime} · {batch.level}
+                    {excludedCount > 0 && (
+                      <span className="ml-1 inline-flex items-center gap-0.5 text-amber-600">
+                        <AlertCircle size={10} /> {excludedCount} hidden
+                      </span>
+                    )}
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5 rounded-full bg-brand-primary-light px-3 py-1">
@@ -205,38 +280,57 @@ export default function RosterPage() {
                 </div>
               </div>
 
-              {/* Slots */}
-              <div className="space-y-3">
+              {/* Slots, each grouped by plan */}
+              <div className="space-y-4">
                 {slots.map((slot) => (
-                  <div key={slot.slotKey}>
-                    <div className="mb-1.5 flex items-center gap-2">
-                      <span className="text-xs font-semibold text-brand-secondary">
+                  <div key={slot.slotKey} className="rounded-lg border border-gray-100 p-3">
+                    {/* Slot header */}
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-sm font-semibold text-brand-secondary">
                         {slot.label}
                       </span>
-                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
-                        {slot.enrollments.length}
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+                        {slot.total} student{slot.total !== 1 ? 's' : ''}
                       </span>
                     </div>
-                    {slot.enrollments.length === 0 ? (
-                      <p className="text-xs text-gray-400">No students in this slot.</p>
+
+                    {slot.total === 0 ? (
+                      <p className="text-xs italic text-gray-400">No students in this slot.</p>
                     ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {slot.enrollments.map((e) => {
-                          const s = studentMap.get(e.studentId);
-                          return (
-                            <div
-                              key={e.id}
-                              className="flex items-center gap-1.5 rounded-full bg-gray-50 px-3 py-1"
-                            >
-                              <span className="text-xs text-gray-700">
-                                {s?.name ?? e.studentId}
+                      <div className="space-y-2.5">
+                        {slot.planGroups.map((pg) => (
+                          <div key={pg.daysPerWeek}>
+                            <div className="mb-1.5 flex items-center gap-2">
+                              <span
+                                className={cn(
+                                  'rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                                  planChipClass(pg.daysPerWeek),
+                                )}
+                              >
+                                {pg.label}
                               </span>
-                              <span className="text-[10px] text-gray-400">
-                                {e.daysPerWeek}d/wk
+                              <span className="text-[11px] text-gray-400">
+                                {pg.enrollments.length} student{pg.enrollments.length !== 1 ? 's' : ''}
                               </span>
                             </div>
-                          );
-                        })}
+                            <div className="flex flex-wrap gap-1.5">
+                              {pg.enrollments.map((e) => {
+                                const s = studentMap.get(e.studentId);
+                                return (
+                                  <div
+                                    key={e.id}
+                                    className={cn(
+                                      'rounded-full border px-2.5 py-0.5 text-xs',
+                                      planChipClass(pg.daysPerWeek),
+                                    )}
+                                  >
+                                    {s?.name ?? e.studentId}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>

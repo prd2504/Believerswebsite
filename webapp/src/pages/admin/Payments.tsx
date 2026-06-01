@@ -22,6 +22,10 @@ import {
   Trash2,
   Settings,
   Lock,
+  ChevronLeft,
+  ChevronRight,
+  Archive,
+  Unlock,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { exportPaymentsCsv } from '@/lib/csv';
@@ -44,6 +48,11 @@ import {
   subscribeToConfig,
   updateBookingConfig,
 } from '@/services/slotBookingService';
+import {
+  getMonthlySummary,
+  closeMonth,
+  reopenMonth,
+} from '@/services/monthCloseoutService';
 import { getAllCentres } from '@/services/centreService';
 import { getAllBatches } from '@/services/batchService';
 import { getAllStudents } from '@/services/studentService';
@@ -65,6 +74,7 @@ import type {
   StudentDocument,
   SlotBookingDocument,
   SlotBookingConfig,
+  PaymentMonthlySummary,
 } from '@bba/shared';
 import type { PaymentFormValues } from '@/lib/schemas/paymentSchema';
 
@@ -85,6 +95,24 @@ function fmtMonth(m: string) {
   const [y, mo] = m.split('-');
   const d = new Date(Number(y), Number(mo) - 1);
   return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+}
+
+function fmtMonthLong(m: string) {
+  if (!m) return '—';
+  const [y, mo] = m.split('-');
+  const d = new Date(Number(y), Number(mo) - 1);
+  return d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+}
+
+function currentMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function shiftMonth(m: string, delta: number): string {
+  const [y, mo] = m.split('-').map(Number);
+  const d = new Date(y, mo - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function fmtDate(d: string | null) {
@@ -775,11 +803,29 @@ export default function PaymentsPage() {
   });
   const [genCentreId, setGenCentreId] = useState('');
 
-  // Filters
+  // Filters — month defaults to the current month so the page is always scoped
+  // to "this month" instead of dumping every payment ever
   const [centreFilter, setCentreFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [monthFilter, setMonthFilter] = useState('');
+  const [monthFilter, setMonthFilter] = useState(() => currentMonth());
   const [search, setSearch] = useState('');
+
+  // Close-month state — keyed by `${centreId}_${month}`, only meaningful when a
+  // single centre is selected. We refetch when the centre+month combo changes.
+  const [monthSummary, setMonthSummary] = useState<PaymentMonthlySummary | null>(null);
+  const [closingMonth, setClosingMonth] = useState(false);
+
+  useEffect(() => {
+    if (!centreFilter || !monthFilter) {
+      setMonthSummary(null);
+      return;
+    }
+    let cancelled = false;
+    getMonthlySummary(centreFilter, monthFilter)
+      .then((s) => { if (!cancelled) setMonthSummary(s); })
+      .catch(() => { if (!cancelled) setMonthSummary(null); });
+    return () => { cancelled = true; };
+  }, [centreFilter, monthFilter]);
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [sortField, setSortField] = useState<SortField>('month');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
@@ -959,8 +1005,12 @@ export default function PaymentsPage() {
     if (!profile || !genMonth) return;
     setBusy(true);
     try {
-      const { created, skipped } = await generateMonthlyFees(genMonth, profile.id, genCentreId || undefined);
-      toast.success(`Generated ${created} fee record${created !== 1 ? 's' : ''}${skipped > 0 ? ` · ${skipped} already existed` : ''}`);
+      const res = await generateMonthlyFees(genMonth, profile.id, genCentreId || undefined);
+      const parts = [`Generated ${res.created} fee${res.created !== 1 ? 's' : ''}`];
+      if (res.skipped > 0) parts.push(`${res.skipped} already existed`);
+      if (res.pausedSkipped > 0) parts.push(`${res.pausedSkipped} paused`);
+      if (res.dormantSkipped > 0) parts.push(`${res.dormantSkipped} dormant/on-hold`);
+      toast.success(parts.join(' · '));
       setShowGenDialog(false);
       await load();
     } catch (err) {
@@ -970,6 +1020,46 @@ export default function PaymentsPage() {
       setBusy(false);
     }
   };
+
+  const handleCloseMonth = async () => {
+    if (!profile || !centreFilter || !monthFilter) {
+      toast.info('Pick a single centre and month before closing.');
+      return;
+    }
+    if (!confirm(
+      `Close ${fmtMonthLong(monthFilter)} for ${centreMap.get(centreFilter) ?? 'this centre'}? ` +
+      `This snapshots the totals and marks the month read-only. You can reopen it later if needed.`,
+    )) return;
+    setClosingMonth(true);
+    try {
+      const s = await closeMonth(centreFilter, monthFilter, profile.id);
+      setMonthSummary(s);
+      toast.success(`${fmtMonthLong(monthFilter)} closed`);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to close month');
+    } finally {
+      setClosingMonth(false);
+    }
+  };
+
+  const handleReopenMonth = async () => {
+    if (!profile || !centreFilter || !monthFilter) return;
+    if (!confirm(`Reopen ${fmtMonthLong(monthFilter)}? Mutation actions will be re-enabled.`)) return;
+    setClosingMonth(true);
+    try {
+      await reopenMonth(centreFilter, monthFilter, profile.id);
+      setMonthSummary((s) => (s ? { ...s, closedAt: null, closedBy: null } : null));
+      toast.success(`${fmtMonthLong(monthFilter)} reopened`);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to reopen month');
+    } finally {
+      setClosingMonth(false);
+    }
+  };
+
+  const monthIsClosed = !!monthSummary?.closedAt;
 
   function paymentToFormValues(p: PaymentDocument): Partial<PaymentFormValues> {
     return {
@@ -1091,21 +1181,108 @@ export default function PaymentsPage() {
           <button onClick={handleExport} className="btn-secondary" title="Export visible rows to CSV">
             <Download size={16} /> <span className="hidden sm:inline">Export CSV</span>
           </button>
-          <button onClick={() => setShowGenDialog(true)} className="btn-secondary" title="Bulk-create monthly fee records">
+          <button
+            onClick={() => {
+              if (monthFilter) setGenMonth(monthFilter);
+              if (centreFilter) setGenCentreId(centreFilter);
+              setShowGenDialog(true);
+            }}
+            className="btn-secondary"
+            title="Bulk-create monthly fee records"
+            disabled={monthIsClosed}
+          >
             <RefreshCw size={16} /> <span className="hidden sm:inline">Generate Fees</span>
           </button>
-          <button onClick={() => setMode('create')} className="btn-primary">
+          <button
+            onClick={() => setMode('create')}
+            className="btn-primary"
+            disabled={monthIsClosed}
+          >
             <Plus size={16} /> Record Payment
           </button>
         </div>
       </div>
 
-      {/* Summary cards */}
+      {/* Month navigator — primary segregation control */}
+      <div className="mb-5 flex flex-col gap-3 rounded-xl border border-gray-100 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setMonthFilter((m) => shiftMonth(m || currentMonth(), -1))}
+            className="rounded-lg border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-50"
+            aria-label="Previous month"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <input
+            type="month"
+            value={monthFilter}
+            onChange={(e) => setMonthFilter(e.target.value)}
+            className="input w-auto py-1.5 text-sm font-semibold"
+          />
+          <button
+            onClick={() => setMonthFilter((m) => shiftMonth(m || currentMonth(), 1))}
+            className="rounded-lg border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-50"
+            aria-label="Next month"
+          >
+            <ChevronRight size={16} />
+          </button>
+          <button
+            onClick={() => setMonthFilter(currentMonth())}
+            className={cn(
+              'rounded-lg px-2.5 py-1 text-xs font-medium transition',
+              monthFilter === currentMonth()
+                ? 'bg-brand-primary/10 text-brand-primary'
+                : 'text-gray-500 hover:bg-gray-50',
+            )}
+          >
+            This Month
+          </button>
+          {monthFilter && (
+            <span className="ml-2 text-sm font-semibold text-brand-secondary">
+              {fmtMonthLong(monthFilter)}
+            </span>
+          )}
+          {monthIsClosed && (
+            <span className="flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+              <Lock size={10} /> Closed {monthSummary?.closedAt && `· ${new Date(monthSummary.closedAt).toLocaleDateString('en-IN')}`}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {!centreFilter && (
+            <span className="text-xs text-gray-400">
+              Pick a centre to close / reopen the month
+            </span>
+          )}
+          {centreFilter && !monthIsClosed && (
+            <button
+              onClick={handleCloseMonth}
+              disabled={closingMonth}
+              className="flex items-center gap-1.5 rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-900 disabled:opacity-50"
+              title="Snapshot totals and lock this month"
+            >
+              <Archive size={12} /> Close Month
+            </button>
+          )}
+          {centreFilter && monthIsClosed && (
+            <button
+              onClick={handleReopenMonth}
+              disabled={closingMonth}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              title="Unlock this month for edits"
+            >
+              <Unlock size={12} /> Reopen Month
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Summary cards — scoped to selected month + filters */}
       <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="card flex items-center gap-3">
           <div className="rounded-lg bg-green-50 p-2"><IndianRupee size={18} className="text-green-600" /></div>
           <div>
-            <p className="text-xs text-gray-500">Collected</p>
+            <p className="text-xs text-gray-500">Collected {monthFilter ? `in ${fmtMonth(monthFilter)}` : ''}</p>
             <p className="text-lg font-bold text-brand-secondary">{formatINR(totalCollected, { withDecimals: false })}</p>
           </div>
         </div>
@@ -1151,13 +1328,18 @@ export default function PaymentsPage() {
           <option value="WAIVED">Waived</option>
           <option value="REFUNDED">Refunded</option>
         </select>
-        <input
-          type="month"
-          value={monthFilter}
-          onChange={(e) => setMonthFilter(e.target.value)}
-          className="input w-auto py-2 text-sm"
-          placeholder="Filter by month"
-        />
+        <button
+          onClick={() => setMonthFilter('')}
+          className={cn(
+            'rounded-lg border px-3 py-2 text-xs font-medium transition',
+            monthFilter
+              ? 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+              : 'border-brand-primary bg-brand-primary/5 text-brand-primary',
+          )}
+          title={monthFilter ? 'Clear month filter — show all months' : 'Showing all months'}
+        >
+          {monthFilter ? 'Show all months' : 'All months'}
+        </button>
       </div>
 
       {/* Content */}

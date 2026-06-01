@@ -2,7 +2,7 @@
  * Card display for a single student in the list view.
  */
 
-import { Phone, Mail, Pencil, Trash2, Calendar } from 'lucide-react';
+import { Phone, Mail, Pencil, Trash2, Calendar, RefreshCw } from 'lucide-react';
 import type { StudentDocument } from '@bba/shared';
 import { ageFromDob } from '@bba/shared';
 import { cn } from '@/lib/cn';
@@ -10,6 +10,7 @@ import { cn } from '@/lib/cn';
 const STATUS_STYLES: Record<string, string> = {
   ACTIVE: 'bg-green-50 text-green-700',
   ON_HOLD: 'bg-yellow-50 text-yellow-700',
+  DORMANT: 'bg-orange-50 text-orange-700',
   GRADUATED: 'bg-blue-50 text-blue-700',
   LEFT: 'bg-gray-100 text-gray-500',
 };
@@ -33,9 +34,10 @@ interface StudentCardProps {
   batchNames?: string[];
   onEdit: (student: StudentDocument) => void;
   onDelete: (student: StudentDocument) => void;
+  onChangeStatus?: (student: StudentDocument) => void;
 }
 
-export function StudentCard({ student, centreName, batchNames, onEdit, onDelete }: StudentCardProps) {
+export function StudentCard({ student, centreName, batchNames, onEdit, onDelete, onChangeStatus }: StudentCardProps) {
   const age = ageFromDob(student.dateOfBirth);
 
   return (
@@ -43,9 +45,20 @@ export function StudentCard({ student, centreName, batchNames, onEdit, onDelete 
       {/* Status + level badges & actions */}
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', STATUS_STYLES[student.status] ?? STATUS_STYLES.LEFT)}>
+          <button
+            type="button"
+            onClick={onChangeStatus ? () => onChangeStatus(student) : undefined}
+            disabled={!onChangeStatus}
+            title={onChangeStatus ? 'Click to change status' : student.status.replace('_', ' ')}
+            className={cn(
+              'rounded-full px-2.5 py-0.5 text-xs font-medium',
+              STATUS_STYLES[student.status] ?? STATUS_STYLES.LEFT,
+              onChangeStatus && 'cursor-pointer hover:ring-2 hover:ring-offset-1 transition',
+            )}
+          >
             {student.status.replace('_', ' ')}
-          </span>
+            {onChangeStatus && <RefreshCw size={9} className="ml-1 inline" />}
+          </button>
           <span className={cn('rounded-full px-2.5 py-0.5 text-xs font-medium', LEVEL_STYLES[student.level] ?? LEVEL_STYLES.BEGINNER)}>
             {student.level}
           </span>

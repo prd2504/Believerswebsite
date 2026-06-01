@@ -72,8 +72,11 @@ export interface PaymentDocument extends BaseDocument {
 }
 
 /**
- * A lightweight monthly dashboard rollup. Written by a scheduled function to keep the
- * admin dashboard fast without scanning the full payments collection.
+ * A lightweight monthly rollup snapshot, written when an admin "closes" the month.
+ * Doc id is `${centreId}_${yearMonth}` so a centre's months are easy to fetch.
+ * Once `closedAt` is set the UI treats the month as read-only (the underlying
+ * /payments docs are still mutable by super-admin, but the close prevents normal
+ * collection workflows from accidentally backdating).
  */
 export interface PaymentMonthlySummary {
   yearMonth: YearMonth;
@@ -85,4 +88,9 @@ export interface PaymentMonthlySummary {
   countPending: number;
   countOverdue: number;
   countWaived: number;
+
+  /** ISO timestamp when this month was closed. Null while still open. */
+  closedAt: string | null;
+  /** uid of admin who closed the month. Null while open. */
+  closedBy: string | null;
 }

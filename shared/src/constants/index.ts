@@ -93,6 +93,7 @@ export const COLLECTIONS = {
   sessions: 'sessions',
   records: 'records',
   payments: 'payments',
+  paymentMonthlySummaries: 'paymentMonthlySummaries',
   progress: 'progress',
   progressScores: 'scores',
   progressReports: 'reports',

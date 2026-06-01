@@ -12,7 +12,7 @@
  *   - frozen fee snapshot survives batch pricing changes
  */
 
-import type { BaseDocument, IsoDate } from './common.js';
+import type { BaseDocument, IsoDate, YearMonth } from './common.js';
 import type { DayOfWeek } from './batch.js';
 
 export const EnrollmentStatus = {
@@ -63,6 +63,14 @@ export interface EnrollmentDocument extends BaseDocument {
    * read as null and are displayed under the batch's main startTime.
    */
   timeSlotStartTime: string | null;
+
+  /**
+   * Months (YYYY-MM) when this enrollment is paused — no monthly fee is generated
+   * for these months and the student is hidden from rosters for these months.
+   * Use this when a student takes a break but plans to return; keeps continuity
+   * vs. ending and re-creating the enrollment.
+   */
+  pausedMonths: YearMonth[];
 
   /** Optional free-text note (e.g. "Switched from 3 to 4 days on 2026-04-15"). */
   notes: string | null;

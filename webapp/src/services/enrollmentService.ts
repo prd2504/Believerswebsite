@@ -55,6 +55,7 @@ function fromFirestore(id: string, data: DocumentData): EnrollmentDocument {
     endDate: data.endDate ?? null,
     status: (data.status ?? 'ACTIVE') as EnrollmentStatus,
     timeSlotStartTime: data.timeSlotStartTime ?? null,
+    pausedMonths: Array.isArray(data.pausedMonths) ? (data.pausedMonths as string[]) : [],
     notes: data.notes ?? null,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
@@ -111,6 +112,7 @@ export async function enrollStudent(input: EnrollInput, userId: string): Promise
     endDate: null,
     status: 'ACTIVE' satisfies EnrollmentStatus,
     timeSlotStartTime: input.timeSlotStartTime ?? null,
+    pausedMonths: [],
     notes: input.notes?.trim() || null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -209,6 +211,33 @@ export async function updateEnrollmentPlan(
     updatedAt: serverTimestamp(),
     updatedBy: userId,
   });
+}
+
+/**
+ * Toggle a specific month in the enrolment's pausedMonths. If the month is
+ * already paused, it's removed (un-pause). If not, it's added. Cleaner than
+ * setting the full array because two admins can edit different months without
+ * stomping each other.
+ */
+export async function toggleEnrollmentMonthPause(
+  enrollmentId: string,
+  yearMonth: string,
+  userId: string,
+): Promise<{ paused: boolean }> {
+  const ref = doc(db, COLLECTIONS.enrollments, enrollmentId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Enrollment not found');
+  const existing: string[] = Array.isArray(snap.data().pausedMonths)
+    ? snap.data().pausedMonths
+    : [];
+  const isPaused = existing.includes(yearMonth);
+  const next = isPaused ? existing.filter((m) => m !== yearMonth) : [...existing, yearMonth];
+  await updateDoc(ref, {
+    pausedMonths: next,
+    updatedAt: serverTimestamp(),
+    updatedBy: userId,
+  });
+  return { paused: !isPaused };
 }
 
 /** Set the enrolment to ON_HOLD or back to ACTIVE without ending it. */

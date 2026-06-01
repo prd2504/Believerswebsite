@@ -12,16 +12,18 @@ import {
   createStudent,
   updateStudent,
   deleteStudent,
+  changeStudentStatus,
 } from '@/services/studentService';
 import { getAllCentres } from '@/services/centreService';
 import { getAllBatches } from '@/services/batchService';
 import { StudentCard } from '@/components/students/StudentCard';
 import { StudentForm } from '@/components/students/StudentForm';
 import { EnrollmentDialog } from '@/components/students/EnrollmentDialog';
+import { StatusChangeDialog } from '@/components/students/StatusChangeDialog';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
 import { exportStudentsCsv } from '@/lib/csv';
-import type { StudentDocument, CentreDocument, BatchDocument } from '@bba/shared';
+import type { StudentDocument, CentreDocument, BatchDocument, StudentStatus } from '@bba/shared';
 import type { StudentFormValues } from '@/lib/schemas/studentSchema';
 
 type Mode = 'list' | 'create' | 'edit';
@@ -35,6 +37,7 @@ export default function StudentsPage() {
   const [mode, setMode] = useState<Mode>('list');
   const [editTarget, setEditTarget] = useState<StudentDocument | null>(null);
   const [enrolTarget, setEnrolTarget] = useState<StudentDocument | null>(null);
+  const [statusTarget, setStatusTarget] = useState<StudentDocument | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Filters
@@ -160,6 +163,19 @@ export default function StudentsPage() {
     setMode('edit');
   };
 
+  const handleChangeStatus = async (newStatus: StudentStatus, reason: string) => {
+    if (!profile || !statusTarget) return;
+    try {
+      await changeStudentStatus(statusTarget.id, newStatus, reason || null, profile.id);
+      toast.success(`${statusTarget.name} is now ${newStatus.replace('_', ' ')}`);
+      setStatusTarget(null);
+      await load();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to update status');
+    }
+  };
+
   function studentToFormValues(s: StudentDocument): Partial<StudentFormValues> {
     return {
       name: s.name,
@@ -260,6 +276,7 @@ export default function StudentsPage() {
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="input w-auto py-2 text-sm">
           <option value="">All Statuses</option>
           <option value="ACTIVE">Active</option>
+          <option value="DORMANT">Dormant</option>
           <option value="ON_HOLD">On Hold</option>
           <option value="GRADUATED">Graduated</option>
           <option value="LEFT">Left</option>
@@ -310,6 +327,7 @@ export default function StudentsPage() {
                 batchNames={s.batchIds.map((id) => batchMap.get(id)).filter(Boolean) as string[]}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
+                onChangeStatus={setStatusTarget}
               />
               <button
                 onClick={() => setEnrolTarget(s)}
@@ -320,6 +338,14 @@ export default function StudentsPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {statusTarget && (
+        <StatusChangeDialog
+          student={statusTarget}
+          onClose={() => setStatusTarget(null)}
+          onConfirm={handleChangeStatus}
+        />
       )}
 
       {enrolTarget && profile && (

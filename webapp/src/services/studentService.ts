@@ -27,6 +27,7 @@ import {
   COLLECTIONS,
   type StudentDocument,
   type StudentStatus,
+  type StudentStatusHistoryEntry,
   type BloodGroup,
   type BatchLevel,
 } from '@bba/shared';
@@ -61,6 +62,9 @@ function fromFirestore(id: string, data: DocumentData): StudentDocument {
     batchIds: Array.isArray(data.batchIds) ? data.batchIds : [],
     level: (data.level ?? 'BEGINNER') as BatchLevel,
     status: (data.status ?? 'ACTIVE') as StudentStatus,
+    statusHistory: Array.isArray(data.statusHistory)
+      ? (data.statusHistory as StudentStatusHistoryEntry[])
+      : [],
     joinedDate: data.joinedDate ?? '',
     medicalNotes: data.medicalNotes ?? null,
     createdAt: toIso(data.createdAt),
@@ -75,6 +79,8 @@ function todayStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/** Fields written on every save (create + edit). Status is NOT in here — it's
+ * managed separately via changeStudentStatus so edits don't reset it. */
 function toFirestoreData(values: StudentFormValues, userId: string) {
   return {
     name: values.name.trim(),
@@ -82,9 +88,17 @@ function toFirestoreData(values: StudentFormValues, userId: string) {
     email: values.email?.trim() || null,
     level: values.level as BatchLevel,
     primaryCentreId: values.primaryCentreId,
-    // defaults for fields not collected in the form
+    updatedAt: serverTimestamp(),
+    updatedBy: userId,
+  };
+}
+
+/** Fields written only on first create. */
+function createDefaults() {
+  return {
     dateOfBirth: '',
     gender: 'UNDISCLOSED' as const,
+    photoPath: null,
     guardianName: '',
     guardianUserId: null,
     address: '',
@@ -93,10 +107,10 @@ function toFirestoreData(values: StudentFormValues, userId: string) {
     bloodGroup: 'UNKNOWN' as BloodGroup,
     emergencyContact: { name: '', relationship: '', phone: '' },
     status: 'ACTIVE' as StudentStatus,
+    statusHistory: [] as StudentStatusHistoryEntry[],
+    batchIds: [] as string[],
     joinedDate: todayStr(),
     medicalNotes: null,
-    updatedAt: serverTimestamp(),
-    updatedBy: userId,
   };
 }
 
@@ -135,12 +149,66 @@ export async function getStudentById(studentId: string): Promise<StudentDocument
 export async function createStudent(values: StudentFormValues, userId: string): Promise<string> {
   const ref = await addDoc(collection(db, COLLECTIONS.students), {
     ...toFirestoreData(values, userId),
-    photoPath: null,
-    batchIds: [],
+    ...createDefaults(),
     createdAt: serverTimestamp(),
     createdBy: userId,
   });
   return ref.id;
+}
+
+/**
+ * Change a student's lifecycle status and append an audit-trail entry. This is
+ * the *only* way status should change after creation — plain updates leave it
+ * untouched.
+ */
+export async function changeStudentStatus(
+  studentId: string,
+  newStatus: StudentStatus,
+  reason: string | null,
+  userId: string,
+): Promise<void> {
+  const ref = doc(db, COLLECTIONS.students, studentId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Student not found');
+  const current = snap.data();
+  const fromStatus = (current.status ?? 'ACTIVE') as StudentStatus;
+  if (fromStatus === newStatus) return; // no-op
+  const history: StudentStatusHistoryEntry[] = Array.isArray(current.statusHistory)
+    ? current.statusHistory
+    : [];
+  const entry: StudentStatusHistoryEntry = {
+    from: fromStatus,
+    to: newStatus,
+    changedAt: new Date().toISOString(),
+    changedBy: userId,
+    reason: reason?.trim() || null,
+  };
+  await updateDoc(ref, {
+    status: newStatus,
+    statusHistory: [...history, entry],
+    updatedAt: serverTimestamp(),
+    updatedBy: userId,
+  });
+}
+
+/**
+ * Bulk-flip students who don't have a PAID payment for the given month to
+ * DORMANT. Skips students already in a terminal/paused state (GRADUATED, LEFT,
+ * ON_HOLD, DORMANT). Returns the ids of students whose status changed.
+ */
+export async function markUnpaidStudentsDormant(
+  month: string,
+  paidStudentIds: Set<string>,
+  userId: string,
+): Promise<string[]> {
+  const all = await getAllStudents();
+  const candidates = all.filter(
+    (s) => s.status === 'ACTIVE' && s.batchIds.length > 0 && !paidStudentIds.has(s.id),
+  );
+  for (const s of candidates) {
+    await changeStudentStatus(s.id, 'DORMANT', `Auto-marked dormant for ${month}`, userId);
+  }
+  return candidates.map((s) => s.id);
 }
 
 /** Update an existing student's profile fields. Does NOT touch batch enrolment. */

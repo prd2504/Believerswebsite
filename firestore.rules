@@ -244,6 +244,13 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
+    // ── /paymentMonthlySummaries/{summaryId} — admin-only monthly rollups ─────────────────
+    match /paymentMonthlySummaries/{summaryId} {
+      allow read: if isAdminLike();
+      allow create, update: if isAdminLike();
+      allow delete: if isSuperAdmin();
+    }
+
     // ── /slotBookingConfig/{centreId} — Portal config (public read, admin write) ──────────
     match /slotBookingConfig/{centreId} {
       allow read: if true;
