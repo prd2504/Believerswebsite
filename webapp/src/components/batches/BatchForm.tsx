@@ -72,6 +72,17 @@ export function BatchForm({ centres, initialValues, onSubmit, onCancel, busy }: 
     else set.add(day);
     const next = Array.from(set).sort((a, b) => a - b);
     setValue('offeredDays', next as typeof offeredDays, { shouldValidate: true });
+
+    const currentPlans = watch('frequencyPlans');
+    const overflow = currentPlans.filter((p) => p.daysPerWeek > next.length);
+    if (overflow.length > 0) {
+      const kept = currentPlans.filter((p) => p.daysPerWeek <= next.length);
+      if (kept.length === 0) {
+        setValue('frequencyPlans', [{ daysPerWeek: Math.min(2, next.length), monthlyFeeRupees: 2000 }], { shouldValidate: true });
+      } else {
+        setValue('frequencyPlans', kept, { shouldValidate: true });
+      }
+    }
   };
 
   const onInvalid = (fieldErrors: FieldErrors<BatchFormValues>) => {
