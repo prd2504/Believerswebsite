@@ -77,18 +77,38 @@ service cloud.firestore {
       return isSuperAdmin() || isAllCentreManager() || (isCentreManager() && centreId in managedCentreIds());
     }
 
+    // ── /appState/{docId} — bootstrap sentinel (public read, one-time create) ─────────────
+    // The "bootstrap" document marks that initial admin setup has been completed.
+    // firstAdminUid lets the original founder reclaim SUPER_ADMIN if their Firestore
+    // doc gets deleted while their Firebase Auth account still exists.
+    match /appState/{docId} {
+      allow read: if true;
+      allow create: if isSignedIn() && docId == 'bootstrap';
+      allow update, delete: if isSuperAdmin();
+    }
+
     // ── /users/{userId} ───────────────────────────────────────────────────────────────────
     match /users/{userId} {
       // Own profile or admin can read
       allow read: if isSignedIn() && (uid() == userId || isAdminLike());
 
-      // Self-create on first login
+      // Self-create on first login (any role allowed so ensureUserProfile can set SUPER_ADMIN)
       allow create: if isSignedIn() && uid() == userId;
 
-      // Self can update own mutable fields; super-admin can update any field including role
+      // Self can update own mutable fields; super-admin can update any field including role.
+      // The first-admin exception: any signed-in user may elevate their own role to
+      // SUPER_ADMIN ONLY IF either (a) the bootstrap doc doesn't exist yet, or (b) the
+      // bootstrap doc names them as the original first admin.
       allow update: if isSignedIn() && (
-        uid() == userId && !('role' in request.resource.data.diff(resource.data).affectedKeys())
-      ) || isSuperAdmin();
+        (uid() == userId && !('role' in request.resource.data.diff(resource.data).affectedKeys()))
+        || isSuperAdmin()
+        || (uid() == userId
+            && request.resource.data.role == 'SUPER_ADMIN'
+            && (
+              !exists(/databases/$(database)/documents/appState/bootstrap)
+              || get(/databases/$(database)/documents/appState/bootstrap).data.firstAdminUid == uid()
+            ))
+      );
 
       // Only super-admin can delete
       allow delete: if isSuperAdmin();

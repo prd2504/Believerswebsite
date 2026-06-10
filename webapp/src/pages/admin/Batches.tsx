@@ -64,7 +64,12 @@ export default function BatchesPage() {
       await load();
     } catch (err) {
       console.error(err);
-      toast.error('Failed to create batch');
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('permission') || msg.includes('PERMISSION_DENIED')) {
+        toast.error('Permission denied — your account may not have admin role. Visit /setup to fix this.');
+      } else {
+        toast.error('Failed to create batch. See browser console for details.');
+      }
     } finally {
       setBusy(false);
     }
@@ -176,7 +181,12 @@ export default function BatchesPage() {
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
-          <button onClick={() => setMode('create')} className="btn-primary">
+          <button
+            onClick={() => setMode('create')}
+            className="btn-primary"
+            disabled={loading || centres.length === 0}
+            title={centres.length === 0 && !loading ? 'Create a centre first before adding batches' : undefined}
+          >
             <Plus size={16} /> Add Batch
           </button>
         </div>

@@ -110,12 +110,33 @@ export function setPendingCoachBootstrap(p: Promise<void>): void {
   pendingCoachBootstrap = p;
 }
 
+/** Firestore path for the admin bootstrap sentinel document. */
+const bootstrapRef = () => doc(db, 'appState', 'bootstrap');
+
+/**
+ * Returns true if the admin setup bootstrap document exists.
+ * Publicly readable, so this works for any authenticated user.
+ */
+export async function isAdminBootstrapped(): Promise<boolean> {
+  const snap = await getDoc(bootstrapRef());
+  return snap.exists();
+}
+
+/**
+ * Returns the UID of the original first admin, or null if not bootstrapped.
+ */
+export async function getFirstAdminUid(): Promise<string | null> {
+  const snap = await getDoc(bootstrapRef());
+  if (!snap.exists()) return null;
+  return (snap.data() as { firstAdminUid?: string }).firstAdminUid ?? null;
+}
+
 /**
  * Create the /users/{uid} document if it does not yet exist. Idempotent — safe to call
  * on every login. Returns the final (existing OR newly-created) profile.
  *
- * The default role is STUDENT. The founder should run the one-off "promote to
- * SUPER_ADMIN" script (to be added in Step 2) to elevate themselves.
+ * The FIRST user to register (detected via the /appState/bootstrap sentinel document)
+ * automatically receives SUPER_ADMIN role. All subsequent users default to STUDENT.
  */
 export async function ensureUserProfile(input: BootstrapProfileInput): Promise<UserDocument> {
   // If a coach registration is in flight, wait for it to finish first so the
@@ -126,19 +147,32 @@ export async function ensureUserProfile(input: BootstrapProfileInput): Promise<U
   }
 
   const ref = doc(db, COLLECTIONS.users, input.uid);
+  const bsRef = bootstrapRef();
 
   await runTransaction(db, async (transaction) => {
-    const snap = await transaction.get(ref);
+    const [snap, bootstrapSnap] = await Promise.all([
+      transaction.get(ref),
+      transaction.get(bsRef),
+    ]);
     if (snap.exists()) return;
+
+    const isFirstAdmin = !bootstrapSnap.exists();
+
+    if (isFirstAdmin) {
+      transaction.set(bsRef, {
+        firstAdminUid: input.uid,
+        claimedAt: serverTimestamp(),
+      });
+    }
 
     transaction.set(ref, {
       id: input.uid,
-      role: UserRole.STUDENT,
+      role: isFirstAdmin ? UserRole.SUPER_ADMIN : UserRole.STUDENT,
       name: input.name || 'Guest',
       phone: input.phone,
       email: input.email,
       photoPath: null,
-      allCentreAccess: false,
+      allCentreAccess: isFirstAdmin,
       centreIds: [],
       assignedBatchIds: [],
       linkedStudentIds: [],
@@ -158,6 +192,49 @@ export async function ensureUserProfile(input: BootstrapProfileInput): Promise<U
     throw new Error('Failed to create user profile — /users write succeeded but read returned null.');
   }
   return fresh;
+}
+
+/**
+ * Promotes the caller's own account to SUPER_ADMIN. Only permitted when:
+ *   (a) no bootstrap doc exists yet (truly the first admin), OR
+ *   (b) the bootstrap doc names this UID as the original first admin
+ *       (handles the case where the Firestore doc was deleted but Auth wasn't).
+ *
+ * Throws 'ADMIN_EXISTS' when another admin has already been bootstrapped and
+ * the caller is not the original founder.
+ */
+export async function claimFirstAdmin(uid: string): Promise<void> {
+  const userRef = doc(db, COLLECTIONS.users, uid);
+  const bsRef = bootstrapRef();
+
+  await runTransaction(db, async (transaction) => {
+    const [userSnap, bootstrapSnap] = await Promise.all([
+      transaction.get(userRef),
+      transaction.get(bsRef),
+    ]);
+
+    if (!userSnap.exists()) throw new Error('USER_NOT_FOUND');
+
+    const isFirstAdmin = !bootstrapSnap.exists();
+    const bsData = bootstrapSnap.data() as { firstAdminUid?: string } | undefined;
+    const isOriginalAdmin = bootstrapSnap.exists() && bsData?.firstAdminUid === uid;
+
+    if (!isFirstAdmin && !isOriginalAdmin) throw new Error('ADMIN_EXISTS');
+
+    if (isFirstAdmin) {
+      transaction.set(bsRef, {
+        firstAdminUid: uid,
+        claimedAt: serverTimestamp(),
+      });
+    }
+
+    transaction.update(userRef, {
+      role: UserRole.SUPER_ADMIN,
+      allCentreAccess: true,
+      updatedAt: serverTimestamp(),
+      updatedBy: uid,
+    });
+  });
 }
 
 /**
