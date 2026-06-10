@@ -14,6 +14,7 @@
  */
 
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import nodemailer from 'nodemailer';
 import { db } from '../admin.js';
 
 const REGION = 'asia-south1';
@@ -205,7 +206,6 @@ export const onAttendanceRecordCreated = onDocumentCreated(
     }
 
     try {
-      const nodemailer = await import('nodemailer');
       const transporter = nodemailer.createTransport({
         host: smtpHost,
         port: Number(smtpPort ?? '587'),
