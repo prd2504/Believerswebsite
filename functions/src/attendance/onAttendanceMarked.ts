@@ -41,17 +41,12 @@ export const onAttendanceRecordCreated = onDocumentCreated(
     await sessionRef.update({ emailSent: true });
 
     // ── Gather data ──
-    const ATTENDANCE_RECIPIENTS = [
-      'prdeshpande2504@gmail.com',
+    const ATTENDANCE_TO = 'hello@bbashuttle.com';
+    const ATTENDANCE_CC = [
       'arifriyaaa00@gmail.com',
       'palkardarshak10@gmail.com',
       'manas7398.mg@gmail.com',
     ];
-    const adminEmail = ATTENDANCE_RECIPIENTS.join(',');
-    if (!adminEmail) {
-      console.log('No attendance recipients configured, skipping email.');
-      return;
-    }
 
     // Wait briefly for all records to settle (batch write completes quickly)
     await new Promise((r) => setTimeout(r, 3000));
@@ -202,13 +197,13 @@ export const onAttendanceRecordCreated = onDocumentCreated(
 
     if (!smtpHost || !smtpUser || !smtpPass) {
       console.log('SMTP not configured, logging email to console instead.');
-      console.log(`TO: ${adminEmail}`);
+      console.log(`TO: ${ATTENDANCE_TO}`);
+      console.log(`CC: ${ATTENDANCE_CC.join(', ')}`);
       console.log(`SUBJECT: ${subject}`);
       console.log(`RECORDS: ${records.length}`);
       return;
     }
 
-    // Dynamic import to avoid breaking deploys if nodemailer isn't installed
     try {
       const nodemailer = await import('nodemailer');
       const transporter = nodemailer.createTransport({
@@ -220,15 +215,15 @@ export const onAttendanceRecordCreated = onDocumentCreated(
 
       await transporter.sendMail({
         from: emailFrom,
-        to: adminEmail,
+        to: ATTENDANCE_TO,
+        cc: ATTENDANCE_CC.join(','),
         subject,
         html,
       });
 
-      console.log(`Attendance email sent to ${adminEmail} for session ${sessionId}`);
+      console.log(`Attendance email sent to ${ATTENDANCE_TO} (cc: ${ATTENDANCE_CC.join(', ')}) for session ${sessionId}`);
     } catch (err) {
       console.error('Failed to send attendance email:', err);
-      // Don't throw — we don't want to retry the function for email failures
     }
   },
 );

@@ -9,9 +9,10 @@
  * Per-student day choices live on the Enrollment, not here.
  */
 
-import { useForm, useFieldArray } from 'react-hook-form';
+import { useForm, useFieldArray, type FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   batchFormSchema,
   type BatchFormValues,
@@ -73,8 +74,25 @@ export function BatchForm({ centres, initialValues, onSubmit, onCancel, busy }: 
     setValue('offeredDays', next as typeof offeredDays, { shouldValidate: true });
   };
 
+  const onInvalid = (fieldErrors: FieldErrors<BatchFormValues>) => {
+    const messages: string[] = [];
+    const walk = (obj: Record<string, unknown>) => {
+      for (const v of Object.values(obj)) {
+        if (v && typeof v === 'object') {
+          if ('message' in v && typeof (v as { message?: unknown }).message === 'string') {
+            messages.push((v as { message: string }).message);
+          } else {
+            walk(v as Record<string, unknown>);
+          }
+        }
+      }
+    };
+    walk(fieldErrors as unknown as Record<string, unknown>);
+    toast.error(messages[0] ?? 'Please fix the highlighted fields.');
+  };
+
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+    <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="space-y-5">
       {/* Centre selector */}
       <div>
         <label className="label">Centre</label>
@@ -304,6 +322,11 @@ export function BatchForm({ centres, initialValues, onSubmit, onCancel, busy }: 
           </div>
         )}
       </div>
+
+      {/* Root-level validation errors */}
+      {errors.root && (
+        <p className="text-xs text-red-600">{errors.root.message}</p>
+      )}
 
       {/* Actions */}
       <div className="flex justify-end gap-3 border-t border-gray-100 pt-4">
