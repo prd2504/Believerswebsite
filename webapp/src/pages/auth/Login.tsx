@@ -44,12 +44,6 @@ export default function LoginPage() {
             Sign up
           </Link>
         </p>
-        <p className="mt-2 text-center text-xs text-gray-400">
-          Admin whose role was reset?{' '}
-          <Link to="/setup" className="font-medium text-brand-primary hover:underline">
-            Restore access →
-          </Link>
-        </p>
       </div>
     </div>
   );

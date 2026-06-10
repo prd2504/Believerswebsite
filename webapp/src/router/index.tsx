@@ -27,7 +27,6 @@ import { RootRedirect } from './RootRedirect';
 const LoginPage = lazy(() => import('@/pages/auth/Login'));
 const RegisterPage = lazy(() => import('@/pages/auth/Register'));
 const PendingApprovalPage = lazy(() => import('@/pages/auth/PendingApproval'));
-const SetupPage = lazy(() => import('@/pages/auth/Setup'));
 const BookingPortal = lazy(() => import('@/pages/public/BookingPortal'));
 
 const AdminDashboard = lazy(() => import('@/pages/admin/Dashboard'));
@@ -88,14 +87,6 @@ const routes: RouteObject[] = [
   {
     path: '/',
     element: <RootRedirect />,
-  },
-
-  // Setup — auth-required but role-agnostic (allows STUDENT to claim admin)
-  {
-    element: <ProtectedRoute />,
-    children: [
-      { path: '/setup', element: <Lazy><SetupPage /></Lazy> },
-    ],
   },
 
   // ---- Admin / Manager shell ----------------------------------------------------------
