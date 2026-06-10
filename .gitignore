@@ -5,11 +5,10 @@ node_modules/
 # Build outputs
 dist/
 build/
-lib/
 **/dist/
 **/build/
-**/lib/
-!webapp/src/lib/
+shared/lib/
+functions/lib/
 .vite/
 *.tsbuildinfo
 

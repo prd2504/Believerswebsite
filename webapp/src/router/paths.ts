@@ -10,7 +10,6 @@ export const paths = {
   // Public
   login: '/login',
   register: '/register',
-  otp: '/otp',
   booking: '/book/:centreSlug',
 
   // Admin / Manager (sidebar shell)
