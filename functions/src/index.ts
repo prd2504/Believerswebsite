@@ -1,7 +1,4 @@
-/**
- * Cloud Functions entry point. All deployable functions are re-exported here.
- * Firebase inspects this file at deploy time.
- */
+/* Cloud Functions entry – v2 – 2026-06-11 */
 
 // Ensure Admin SDK is initialised before anything else imports db/auth.
 import './admin.js';
