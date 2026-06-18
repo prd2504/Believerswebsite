@@ -12,8 +12,8 @@ export { health } from './http/health.js';
 // --- Notifications / Broadcasts ----------------------------------------------------------
 export { onBroadcastCreated } from './notifications/broadcast.js';
 
-// --- Attendance email digest -------------------------------------------------------------
-export { onAttendanceRecordCreated } from './attendance/onAttendanceMarked.js';
+// --- Attendance email digest (consolidated per centre + date) ----------------------------
+export { onAttendanceDigest } from './attendance/onAttendanceMarked.js';
 
 // --- Session log: late punch-in detection ------------------------------------------------
 export { onSessionLogUpdated } from './sessionLogs/onSessionUpdated.js';
