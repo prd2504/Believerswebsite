@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
@@ -7,19 +7,27 @@ import {
   type PayrollRunFormValues,
   defaultPayrollRunFormValues,
 } from '@/lib/schemas/payrollSchema';
-import { calculateProfessionalTax } from '@/services/payrollService';
+import { calculateProfessionalTax, countCoachSessions } from '@/services/payrollService';
 import { paiseToRupees, formatINR, rupeesToPaise, PAYROLL } from '@bba/shared';
-import type { StaffDocument } from '@bba/shared';
+import type { StaffDocument, BatchDocument } from '@bba/shared';
 
 interface PayrollRunFormProps {
   staffList: StaffDocument[];
+  batches: BatchDocument[];
   initialValues?: Partial<PayrollRunFormValues>;
   onSubmit: (values: PayrollRunFormValues) => Promise<void>;
   onCancel: () => void;
   busy?: boolean;
 }
 
-export function PayrollRunForm({ staffList, initialValues, onSubmit, onCancel, busy }: PayrollRunFormProps) {
+export function PayrollRunForm({
+  staffList,
+  batches,
+  initialValues,
+  onSubmit,
+  onCancel,
+  busy,
+}: PayrollRunFormProps) {
   const {
     register,
     handleSubmit,
@@ -31,6 +39,8 @@ export function PayrollRunForm({ staffList, initialValues, onSubmit, onCancel, b
     defaultValues: { ...defaultPayrollRunFormValues(), ...initialValues },
   });
 
+  const [fetchingSessions, setFetchingSessions] = useState(false);
+
   const staffId = watch('staffId');
   const month = watch('month');
   const selectedStaff = staffList.find((s) => s.id === staffId);
@@ -38,6 +48,7 @@ export function PayrollRunForm({ staffList, initialValues, onSubmit, onCancel, b
   const basicRupees = watch('basicRupees');
   const perSessionPayRupees = watch('perSessionPayRupees');
   const allowancesRupees = watch('allowancesRupees');
+  const sessionsCount = watch('sessionsCount');
   const ptRupees = watch('professionalTaxRupees');
   const tdsRupees = watch('tdsRupees');
   const advanceRupees = watch('advanceRecoveryRupees');
@@ -47,6 +58,7 @@ export function PayrollRunForm({ staffList, initialValues, onSubmit, onCancel, b
   const deductions = (ptRupees || 0) + (tdsRupees || 0) + (advanceRupees || 0) + (otherRupees || 0);
   const net = gross - deductions;
 
+  // Auto-fill basic salary when staff is selected (new runs only)
   useEffect(() => {
     if (!selectedStaff || initialValues?.staffId) return;
     if (selectedStaff.employmentType === 'SALARIED') {
@@ -57,6 +69,31 @@ export function PayrollRunForm({ staffList, initialValues, onSubmit, onCancel, b
     }
   }, [staffId, selectedStaff, setValue, initialValues?.staffId]);
 
+  // Auto-fetch session count from attendance data
+  useEffect(() => {
+    if (!selectedStaff || !month || initialValues?.staffId) return;
+    if (!selectedStaff.authUid) return;
+
+    const coachBatchIds = batches
+      .filter((b) => b.coachIds?.includes(selectedStaff.authUid!))
+      .map((b) => b.id);
+
+    if (coachBatchIds.length === 0) return;
+
+    setFetchingSessions(true);
+    countCoachSessions(selectedStaff.authUid, coachBatchIds, month)
+      .then((count) => {
+        setValue('sessionsCount', count);
+        if (selectedStaff.employmentType === 'PER_SESSION') {
+          const payRupees = count * paiseToRupees(selectedStaff.ratePaise);
+          setValue('perSessionPayRupees', payRupees);
+        }
+      })
+      .catch((err) => console.error('Failed to fetch sessions:', err))
+      .finally(() => setFetchingSessions(false));
+  }, [staffId, month, selectedStaff, batches, setValue, initialValues?.staffId]);
+
+  // Auto-calculate Professional Tax for salaried staff
   useEffect(() => {
     if (!selectedStaff || selectedStaff.employmentType !== 'SALARIED') return;
     const grossPaise = rupeesToPaise(gross);
@@ -64,6 +101,13 @@ export function PayrollRunForm({ staffList, initialValues, onSubmit, onCancel, b
     const ptPaise = calculateProfessionalTax(grossPaise, monthNum);
     setValue('professionalTaxRupees', paiseToRupees(ptPaise));
   }, [gross, month, selectedStaff, setValue]);
+
+  // Auto-calculate TDS for per-session staff
+  useEffect(() => {
+    if (!selectedStaff || selectedStaff.employmentType !== 'PER_SESSION') return;
+    const tds = Math.round(gross * PAYROLL.section194JTdsRatePercent / 100);
+    setValue('tdsRupees', tds);
+  }, [gross, selectedStaff, setValue]);
 
   return (
     <form
@@ -95,6 +139,12 @@ export function PayrollRunForm({ staffList, initialValues, onSubmit, onCancel, b
           {selectedStaff.employmentType === 'SALARIED'
             ? `Salaried — Monthly basic: ${formatINR(selectedStaff.ratePaise, { withDecimals: false })}`
             : `Per session — Rate: ${formatINR(selectedStaff.ratePaise, { withDecimals: false })} / session`}
+          {selectedStaff.authUid && (
+            <span className="ml-2 text-green-600">Linked to app account</span>
+          )}
+          {!selectedStaff.authUid && (
+            <span className="ml-2 text-yellow-600">No linked account — session count entered manually</span>
+          )}
         </div>
       )}
 
@@ -102,18 +152,22 @@ export function PayrollRunForm({ staffList, initialValues, onSubmit, onCancel, b
       <div>
         <h3 className="mb-2 text-sm font-semibold text-brand-secondary">Earnings</h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-          {selectedStaff?.employmentType === 'PER_SESSION' && (
-            <div>
-              <label className="label">Sessions</label>
-              <input
-                {...register('sessionsCount', { valueAsNumber: true })}
-                type="number"
-                min={0}
-                className="input"
-                disabled={busy}
-              />
-            </div>
-          )}
+          <div>
+            <label className="label">
+              Sessions
+              {fetchingSessions && <span className="ml-1 text-gray-400">(loading…)</span>}
+            </label>
+            <input
+              {...register('sessionsCount', { valueAsNumber: true })}
+              type="number"
+              min={0}
+              className="input"
+              disabled={busy || fetchingSessions}
+            />
+            {selectedStaff?.authUid && !fetchingSessions && sessionsCount > 0 && (
+              <p className="mt-0.5 text-[10px] text-green-600">Auto-fetched from attendance</p>
+            )}
+          </div>
           <div>
             <label className="label">Basic (₹)</label>
             <input
@@ -135,6 +189,11 @@ export function PayrollRunForm({ staffList, initialValues, onSubmit, onCancel, b
               className="input"
               disabled={busy}
             />
+            {selectedStaff?.employmentType === 'PER_SESSION' && sessionsCount > 0 && (
+              <p className="mt-0.5 text-[10px] text-gray-400">
+                {sessionsCount} sessions × {formatINR(selectedStaff.ratePaise, { withDecimals: false })}
+              </p>
+            )}
           </div>
           <div>
             <label className="label">Allowances (₹)</label>
@@ -163,7 +222,9 @@ export function PayrollRunForm({ staffList, initialValues, onSubmit, onCancel, b
               className="input"
               disabled={busy}
             />
-            <p className="mt-0.5 text-[10px] text-gray-400">Auto-calculated for salaried</p>
+            {selectedStaff?.employmentType === 'SALARIED' && (
+              <p className="mt-0.5 text-[10px] text-gray-400">Auto-calculated (Maharashtra)</p>
+            )}
           </div>
           <div>
             <label className="label">TDS (₹)</label>

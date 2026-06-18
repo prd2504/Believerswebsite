@@ -12,13 +12,14 @@ import {
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { getAllCentres } from '@/services/centreService';
+import { getAllCoaches } from '@/services/userService';
+import { getAllBatches } from '@/services/batchService';
 import {
   getAllStaff,
   createStaff,
   updateStaff,
   deleteStaff,
   getAllPayrollRuns,
-  getPayrollRunsByMonth,
   createPayrollRun,
   updatePayrollRun,
   approvePayrollRun,
@@ -34,6 +35,8 @@ import type {
   StaffDocument,
   PayrollRunDocument,
   CentreDocument,
+  BatchDocument,
+  UserDocument,
   PayrollRunStatus,
 } from '@bba/shared';
 import type { StaffFormValues, PayrollRunFormValues } from '@/lib/schemas/payrollSchema';
@@ -60,6 +63,8 @@ export default function PayrollPage() {
   const [staff, setStaff] = useState<StaffDocument[]>([]);
   const [runs, setRuns] = useState<PayrollRunDocument[]>([]);
   const [centres, setCentres] = useState<CentreDocument[]>([]);
+  const [coachUsers, setCoachUsers] = useState<UserDocument[]>([]);
+  const [allBatches, setAllBatches] = useState<BatchDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editTarget, setEditTarget] = useState<StaffDocument | PayrollRunDocument | null>(null);
@@ -76,10 +81,18 @@ export default function PayrollPage() {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const [s, r, c] = await Promise.all([getAllStaff(), getAllPayrollRuns(), getAllCentres()]);
+      const [s, r, c, coaches, bData] = await Promise.all([
+        getAllStaff(),
+        getAllPayrollRuns(),
+        getAllCentres(),
+        getAllCoaches(),
+        getAllBatches(),
+      ]);
       setStaff(s);
       setRuns(r);
       setCentres(c);
+      setCoachUsers(coaches);
+      setAllBatches(bData);
     } catch (err) {
       console.error(err);
       toast.error('Failed to load payroll data');
@@ -107,11 +120,11 @@ export default function PayrollPage() {
 
   // ── Staff CRUD ──
 
-  async function handleCreateStaff(values: StaffFormValues) {
+  async function handleCreateStaff(values: StaffFormValues, authUid: string | null) {
     if (!profile) return;
     setBusy(true);
     try {
-      await createStaff(values, profile.id);
+      await createStaff(values, profile.id, authUid);
       toast.success('Staff member added');
       setMode('list');
       await load();
@@ -123,11 +136,11 @@ export default function PayrollPage() {
     }
   }
 
-  async function handleUpdateStaff(values: StaffFormValues) {
+  async function handleUpdateStaff(values: StaffFormValues, authUid: string | null) {
     if (!profile || !editTarget) return;
     setBusy(true);
     try {
-      await updateStaff(editTarget.id, values, profile.id);
+      await updateStaff(editTarget.id, values, profile.id, authUid);
       toast.success('Staff updated');
       setMode('list');
       setEditTarget(null);
@@ -267,7 +280,9 @@ export default function PayrollPage() {
         <div className="card">
           <StaffForm
             centres={centres}
+            coachUsers={coachUsers}
             initialValues={initial}
+            initialAuthUid={staffDoc?.authUid}
             onSubmit={mode === 'create-staff' ? handleCreateStaff : handleUpdateStaff}
             onCancel={() => { setMode('list'); setEditTarget(null); }}
             busy={busy}
@@ -309,6 +324,7 @@ export default function PayrollPage() {
         <div className="card">
           <PayrollRunForm
             staffList={staff}
+            batches={allBatches}
             initialValues={initial}
             onSubmit={mode === 'create-run' ? handleCreateRun : handleUpdateRun}
             onCancel={() => { setMode('list'); setEditTarget(null); }}

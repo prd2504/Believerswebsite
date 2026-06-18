@@ -42,6 +42,7 @@ export const paths = {
     attendance: '/coach/attendance',
     progress: '/coach/progress',
     issues: '/coach/issues',
+    salary: '/coach/salary',
   },
 
   // Student / Parent (shared shell — parent sees scoped-to-child data)

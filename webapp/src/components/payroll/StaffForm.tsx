@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
@@ -6,18 +7,28 @@ import {
   type StaffFormValues,
   defaultStaffFormValues,
 } from '@/lib/schemas/payrollSchema';
-import type { CentreDocument } from '@bba/shared';
+import type { CentreDocument, UserDocument } from '@bba/shared';
 import { cn } from '@/lib/cn';
 
 interface StaffFormProps {
   centres: CentreDocument[];
+  coachUsers: UserDocument[];
   initialValues?: Partial<StaffFormValues>;
-  onSubmit: (values: StaffFormValues) => Promise<void>;
+  initialAuthUid?: string | null;
+  onSubmit: (values: StaffFormValues, authUid: string | null) => Promise<void>;
   onCancel: () => void;
   busy?: boolean;
 }
 
-export function StaffForm({ centres, initialValues, onSubmit, onCancel, busy }: StaffFormProps) {
+export function StaffForm({
+  centres,
+  coachUsers,
+  initialValues,
+  initialAuthUid,
+  onSubmit,
+  onCancel,
+  busy,
+}: StaffFormProps) {
   const {
     register,
     handleSubmit,
@@ -32,6 +43,8 @@ export function StaffForm({ centres, initialValues, onSubmit, onCancel, busy }: 
   const selectedCentres = watch('centreIds');
   const employmentType = watch('employmentType');
 
+  const [authUid, setAuthUid] = useState(initialAuthUid ?? '');
+
   function toggleCentre(id: string) {
     const next = selectedCentres.includes(id)
       ? selectedCentres.filter((c) => c !== id)
@@ -39,11 +52,51 @@ export function StaffForm({ centres, initialValues, onSubmit, onCancel, busy }: 
     setValue('centreIds', next, { shouldValidate: true });
   }
 
+  function handleCoachSelect(uid: string) {
+    setAuthUid(uid);
+    if (uid) {
+      const coach = coachUsers.find((c) => c.id === uid);
+      if (coach) {
+        const name = watch('name');
+        if (!name) setValue('name', coach.name);
+        if (!watch('phone')) setValue('phone', coach.phone ?? '');
+        if (!watch('email')) setValue('email', coach.email ?? '');
+        if (selectedCentres.length === 0 && coach.centreIds.length > 0) {
+          setValue('centreIds', coach.centreIds, { shouldValidate: true });
+        }
+      }
+    }
+  }
+
   return (
     <form
-      onSubmit={handleSubmit(onSubmit, () => toast.error('Please fix the highlighted fields.'))}
+      onSubmit={handleSubmit(
+        (vals) => onSubmit(vals, authUid || null),
+        () => toast.error('Please fix the highlighted fields.'),
+      )}
       className="space-y-5"
     >
+      {/* Link to coach account */}
+      <div>
+        <label className="label">Link to Coach Account (optional)</label>
+        <select
+          value={authUid}
+          onChange={(e) => handleCoachSelect(e.target.value)}
+          className="input"
+          disabled={busy}
+        >
+          <option value="">No linked account</option>
+          {coachUsers.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} ({c.email ?? c.phone ?? c.id.slice(0, 8)})
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-gray-400">
+          Linking lets the coach view their salary slips in the app.
+        </p>
+      </div>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className="label">Staff Code</label>

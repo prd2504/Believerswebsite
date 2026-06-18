@@ -67,13 +67,13 @@ export async function getStaffById(id: string): Promise<StaffDocument | null> {
   return staffFromFirestore(snap.id, snap.data());
 }
 
-export async function createStaff(values: StaffFormValues, userId: string): Promise<string> {
+export async function createStaff(values: StaffFormValues, userId: string, authUid?: string | null): Promise<string> {
   const ref = await addDoc(collection(db, COLLECTIONS.staff), {
     staffCode: values.staffCode.trim(),
     name: values.name.trim(),
     phone: values.phone?.trim() || null,
     email: values.email?.trim() || null,
-    authUid: null,
+    authUid: authUid || null,
     centreIds: values.centreIds,
     employmentType: values.employmentType,
     ratePaise: rupeesToPaise(values.rateRupees),
@@ -93,12 +93,14 @@ export async function updateStaff(
   staffId: string,
   values: StaffFormValues,
   userId: string,
+  authUid?: string | null,
 ): Promise<void> {
   await updateDoc(doc(db, COLLECTIONS.staff, staffId), {
     staffCode: values.staffCode.trim(),
     name: values.name.trim(),
     phone: values.phone?.trim() || null,
     email: values.email?.trim() || null,
+    authUid: authUid ?? null,
     centreIds: values.centreIds,
     employmentType: values.employmentType,
     ratePaise: rupeesToPaise(values.rateRupees),
@@ -287,4 +289,58 @@ export function calculateProfessionalTax(grossPayPaise: number, month: number): 
   if (grossRupees <= 10000) return rupeesToPaise(175);
   const isSurchargeMonth = month === 2;
   return rupeesToPaise(isSurchargeMonth ? 300 : 200);
+}
+
+/**
+ * Count sessions a coach conducted in a given month across all their assigned batches.
+ * Used to auto-populate the payroll run form for per-session coaches.
+ */
+export async function countCoachSessions(
+  authUid: string,
+  batchIds: string[],
+  month: string,
+): Promise<number> {
+  if (batchIds.length === 0) return 0;
+
+  const [year, mon] = month.split('-').map(Number);
+  const startDate = `${year}-${String(mon).padStart(2, '0')}-01`;
+  const lastDay = new Date(year, mon, 0).getDate();
+  const endDate = `${year}-${String(mon).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+  const { getSessionsByDateRange } = await import('./attendanceService');
+
+  let total = 0;
+  for (const batchId of batchIds) {
+    const sessions = await getSessionsByDateRange(batchId, startDate, endDate);
+    total += sessions.filter(
+      (s) => !s.cancelled && s.coachIds.includes(authUid),
+    ).length;
+  }
+  return total;
+}
+
+/**
+ * Get payroll runs for a specific staff member (used by coach salary view).
+ */
+export async function getPayrollRunsByStaff(staffId: string): Promise<PayrollRunDocument[]> {
+  const q = query(
+    collection(db, COLLECTIONS.payrollRuns),
+    where('staffId', '==', staffId),
+    orderBy('month', 'desc'),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => runFromFirestore(d.id, d.data()));
+}
+
+/**
+ * Find the staff record linked to a Firebase Auth UID.
+ */
+export async function getStaffByAuthUid(authUid: string): Promise<StaffDocument | null> {
+  const q = query(
+    collection(db, COLLECTIONS.staff),
+    where('authUid', '==', authUid),
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  return staffFromFirestore(snap.docs[0].id, snap.docs[0].data());
 }

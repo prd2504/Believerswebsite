@@ -51,6 +51,7 @@ const CoachBatches = lazy(() => import('@/pages/coach/Batches'));
 const CoachAttendance = lazy(() => import('@/pages/coach/Attendance'));
 const CoachProgress = lazy(() => import('@/pages/coach/Progress'));
 const CoachIssues = lazy(() => import('@/pages/coach/Issues'));
+const CoachSalary = lazy(() => import('@/pages/coach/Salary'));
 
 const StudentDashboard = lazy(() => import('@/pages/student/Dashboard'));
 const SchedulePage = lazy(() => import('@/pages/student/Schedule'));
@@ -133,6 +134,7 @@ const routes: RouteObject[] = [
               { path: '/coach/attendance', element: <Lazy><CoachAttendance /></Lazy> },
               { path: '/coach/progress', element: <Lazy><CoachProgress /></Lazy> },
               { path: '/coach/issues', element: <Lazy><CoachIssues /></Lazy> },
+              { path: '/coach/salary', element: <Lazy><CoachSalary /></Lazy> },
             ],
           },
         ],

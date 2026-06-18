@@ -266,9 +266,12 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
-    // ── /payrollRuns/{runId} — Monthly payroll entries (SUPER_ADMIN only for now) ──────
+    // ── /payrollRuns/{runId} — Monthly payroll entries ─────────────────────────────
     match /payrollRuns/{runId} {
-      allow read, create, update: if isSuperAdmin();
+      allow read: if isSuperAdmin() || (
+        isCoach() && get(/databases/$(database)/documents/staff/$(resource.data.staffId)).data.authUid == uid()
+      );
+      allow create, update: if isSuperAdmin();
       allow delete: if isSuperAdmin();
     }
 

@@ -13,6 +13,7 @@ import {
   Calendar,
   CreditCard,
   User,
+  Banknote,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { paths } from '@/router/paths';
@@ -29,6 +30,7 @@ const COACH_TABS: Tab[] = [
   { to: paths.coach.dashboard, label: 'Home', icon: <LayoutDashboard size={20} /> },
   { to: paths.coach.batches, label: 'Batches', icon: <Layers size={20} /> },
   { to: paths.coach.attendance, label: 'Attendance', icon: <ClipboardCheck size={20} /> },
+  { to: paths.coach.salary, label: 'Salary', icon: <Banknote size={20} /> },
   { to: paths.coach.progress, label: 'Progress', icon: <TrendingUp size={20} /> },
 ];
 
