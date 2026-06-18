@@ -257,6 +257,26 @@ service cloud.firestore {
       allow write: if isAdminLike();
     }
 
+    // ── /staff/{staffId} — Coach payroll profiles (SUPER_ADMIN only) ───────────────────
+    match /staff/{staffId} {
+      allow read: if isSuperAdmin() || (
+        isCoach() && resource.data.authUid == uid()
+      );
+      allow create, update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /payrollRuns/{runId} — Monthly payroll entries (SUPER_ADMIN only for now) ──────
+    match /payrollRuns/{runId} {
+      allow read, create, update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /emailDigests/{digestId} — Attendance email dedup (Cloud Functions only) ──────
+    match /emailDigests/{digestId} {
+      allow read, write: if false;
+    }
+
     // ── /broadcasts/{broadcastId} ─────────────────────────────────────────────────────────
     match /broadcasts/{broadcastId} {
       allow read: if isAdminLike();

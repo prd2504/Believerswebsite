@@ -18,3 +18,4 @@ export * from './parentFeedback.js';
 export * from './financial.js';
 export * from './issue.js';
 export * from './slotBooking.js';
+export * from './payroll.js';

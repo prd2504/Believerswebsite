@@ -43,6 +43,7 @@ const AdminParentFeedback = lazy(() => import('@/pages/admin/ParentFeedback'));
 const AdminFinancials = lazy(() => import('@/pages/admin/Financials'));
 const AdminIssues = lazy(() => import('@/pages/admin/Issues'));
 const AdminNotifications = lazy(() => import('@/pages/admin/Notifications'));
+const AdminPayroll = lazy(() => import('@/pages/admin/Payroll'));
 const AdminSettings = lazy(() => import('@/pages/admin/Settings'));
 
 const CoachDashboard = lazy(() => import('@/pages/coach/Dashboard'));
@@ -113,6 +114,7 @@ const routes: RouteObject[] = [
               { path: '/admin/financials', element: <Lazy><AdminFinancials /></Lazy> },
               { path: '/admin/issues', element: <Lazy><AdminIssues /></Lazy> },
               { path: '/admin/notifications', element: <Lazy><AdminNotifications /></Lazy> },
+              { path: '/admin/payroll', element: <Lazy><AdminPayroll /></Lazy> },
               { path: '/admin/settings', element: <Lazy><AdminSettings /></Lazy> },
             ],
           },

@@ -82,6 +82,12 @@ export const PAYMENT = {
   receiptNumberPrefix: 'BBA',
 } as const;
 
+/** Payroll business rules. */
+export const PAYROLL = {
+  ptSurchargeMonth: 2,
+  section194JTdsRatePercent: 10,
+} as const;
+
 /** Path segments — stored as constants so typos are caught at compile time. */
 export const COLLECTIONS = {
   users: 'users',
@@ -108,4 +114,6 @@ export const COLLECTIONS = {
   broadcasts: 'broadcasts',
   slotBookings: 'slotBookings',
   slotBookingConfig: 'slotBookingConfig',
+  staff: 'staff',
+  payrollRuns: 'payrollRuns',
 } as const;

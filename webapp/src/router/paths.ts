@@ -29,6 +29,7 @@ export const paths = {
     financials: '/admin/financials',
     issues: '/admin/issues',
     notifications: '/admin/notifications',
+    payroll: '/admin/payroll',
     settings: '/admin/settings',
   },
   pendingApproval: '/pending-approval',
