@@ -20,3 +20,6 @@ export { onSessionLogUpdated } from './sessionLogs/onSessionUpdated.js';
 
 // --- Parent feedback: escalation notification --------------------------------------------
 export { onFeedbackCreated } from './feedback/onFeedbackCreated.js';
+
+// --- Payroll: send salary slip email when marked PAID ------------------------------------
+export { onPayrollPaid } from './payroll/onPayrollPaid.js';

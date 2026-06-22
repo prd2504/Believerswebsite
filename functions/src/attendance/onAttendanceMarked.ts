@@ -9,7 +9,7 @@
  * Consolidates ALL batches for the same centre + date into ONE email,
  * using an `emailDigests/{centreId}_{date}` doc for deduplication.
  * A Firestore transaction ensures exactly one function instance claims
- * the digest; the winner waits 20 seconds for all batch saves to settle,
+ * the digest; the winner waits for all batch saves to settle,
  * then fetches every session + record for the centre and sends a single
  * email to the admin team.
  */
@@ -19,8 +19,8 @@ import nodemailer from 'nodemailer';
 import { db } from '../admin.js';
 
 const REGION = 'asia-south1';
-const CONSOLIDATION_WAIT_MS = 20_000;
-const DEDUP_WINDOW_MS = 90_000;
+const CONSOLIDATION_WAIT_MS = 45_000;
+const DEDUP_WINDOW_MS = 120_000;
 
 const ATTENDANCE_TO = 'hello@bbashuttle.com';
 const ATTENDANCE_CC = [
@@ -33,7 +33,7 @@ export const onAttendanceDigest = onDocumentWritten(
   {
     document: 'attendance/{batchId}/sessions/{sessionId}',
     region: REGION,
-    timeoutSeconds: 120,
+    timeoutSeconds: 180,
   },
   async (event) => {
     if (!event.data) return;
@@ -63,18 +63,23 @@ export const onAttendanceDigest = onDocumentWritten(
     const claimed = await db.runTransaction(async (tx) => {
       const snap = await tx.get(digestRef);
       if (snap.exists) {
-        const sentAt = snap.data()!.sentAt as string | undefined;
+        const data = snap.data()!;
+        const sentAt = data.sentAt as string | undefined;
+        const claimedAt = data.claimedAt as string | undefined;
+
         if (sentAt && Date.now() - new Date(sentAt).getTime() < DEDUP_WINDOW_MS) {
           return false;
         }
+        if (claimedAt && !sentAt && Date.now() - new Date(claimedAt).getTime() < CONSOLIDATION_WAIT_MS + 30_000) {
+          return false;
+        }
       }
-      tx.set(digestRef, { centreId, sessionDate, claimedAt: new Date().toISOString() });
+      tx.set(digestRef, { centreId, sessionDate, claimedAt: new Date().toISOString(), sentAt: null });
       return true;
     });
 
     if (!claimed) return;
 
-    // Wait for the webapp to finish saving all batches
     await new Promise((r) => setTimeout(r, CONSOLIDATION_WAIT_MS));
 
     // ── Gather data ──
@@ -92,6 +97,8 @@ export const onAttendanceDigest = onDocumentWritten(
 
     const batchSessions: Array<{
       batchName: string;
+      startTime: string;
+      endTime: string;
       coachIds: string[];
       records: RawRecord[];
     }> = [];
@@ -109,6 +116,7 @@ export const onAttendanceDigest = onDocumentWritten(
         .get();
       if (recordsSnap.empty) continue;
 
+      const batchData = batchDoc.data();
       const records = recordsSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as RawRecord[];
       records.forEach((r) => {
         if (r.studentId) allStudentIds.add(r.studentId);
@@ -116,13 +124,17 @@ export const onAttendanceDigest = onDocumentWritten(
       ((sesData.coachIds as string[]) ?? []).forEach((id) => allCoachIds.add(id));
 
       batchSessions.push({
-        batchName: batchDoc.data().name ?? batchDoc.id,
+        batchName: batchData.name ?? batchDoc.id,
+        startTime: batchData.startTime ?? '',
+        endTime: batchData.endTime ?? '',
         coachIds: sesData.coachIds ?? [],
         records,
       });
     }
 
     if (batchSessions.length === 0) return;
+
+    batchSessions.sort((a, b) => a.startTime.localeCompare(b.startTime) || a.batchName.localeCompare(b.batchName));
 
     // Fetch student names in chunks of 30
     const studentNames = new Map<string, string>();
@@ -153,6 +165,14 @@ export const onAttendanceDigest = onDocumentWritten(
     const emoji = (s: string) =>
       s === 'PRESENT' ? '✅' : s === 'ABSENT' ? '❌' : s === 'LATE' ? '⏰' : '🔵';
 
+    function formatTime12(t: string): string {
+      if (!t) return '';
+      const [h, m] = t.split(':').map(Number);
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const h12 = h % 12 || 12;
+      return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+    }
+
     const sectionsHtml = batchSessions
       .map((bs) => {
         const present = bs.records.filter(
@@ -166,6 +186,10 @@ export const onAttendanceDigest = onDocumentWritten(
         const coach =
           bs.coachIds.map((id) => coachNames.get(id) ?? id).join(', ') || 'Unknown';
 
+        const timeLabel = bs.startTime && bs.endTime
+          ? `${formatTime12(bs.startTime)} – ${formatTime12(bs.endTime)}`
+          : '';
+
         const rows = bs.records
           .sort((a, b) => {
             const nA = a.studentId
@@ -176,15 +200,15 @@ export const onAttendanceDigest = onDocumentWritten(
               : (b.walkInName ?? '');
             return nA.localeCompare(nB);
           })
-          .map((r) => {
+          .map((r, i) => {
             const name = r.studentId
               ? (studentNames.get(r.studentId) ?? r.studentId)
               : (r.walkInName ?? 'Walk-in');
             return `<tr>
+          <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0;color:#666">${i + 1}</td>
           <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0">${name}</td>
-          <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0">${r.attendeeType}</td>
           <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0">${emoji(r.status)} ${r.status}</td>
-          <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0">${r.note ?? '—'}</td>
+          <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0;color:#999">${r.note ?? '—'}</td>
         </tr>`;
           })
           .join('\n');
@@ -192,7 +216,7 @@ export const onAttendanceDigest = onDocumentWritten(
         return `
       <div style="margin-bottom:24px">
         <div style="background:#f9fafb;padding:12px 16px;border-radius:8px 8px 0 0;border:1px solid #e5e5e5;border-bottom:none">
-          <h3 style="margin:0;font-size:15px;color:#1a1a1a">${bs.batchName}</h3>
+          <h3 style="margin:0;font-size:15px;color:#1a1a1a">${bs.batchName}${timeLabel ? ` <span style="font-weight:400;font-size:13px;color:#666">(${timeLabel})</span>` : ''}</h3>
           <p style="margin:4px 0 0;font-size:12px;color:#666">
             Coach: ${coach} &middot;
             <span style="color:#16a34a;font-weight:600">${present}P</span> /
@@ -203,8 +227,8 @@ export const onAttendanceDigest = onDocumentWritten(
         <table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid #e5e5e5;border-top:none">
           <thead>
             <tr style="background:#f9fafb">
+              <th style="padding:8px 12px;text-align:left;font-weight:600;border-bottom:2px solid #e5e5e5;width:30px">#</th>
               <th style="padding:8px 12px;text-align:left;font-weight:600;border-bottom:2px solid #e5e5e5">Student</th>
-              <th style="padding:8px 12px;text-align:left;font-weight:600;border-bottom:2px solid #e5e5e5">Type</th>
               <th style="padding:8px 12px;text-align:left;font-weight:600;border-bottom:2px solid #e5e5e5">Status</th>
               <th style="padding:8px 12px;text-align:left;font-weight:600;border-bottom:2px solid #e5e5e5">Note</th>
             </tr>
@@ -215,7 +239,7 @@ export const onAttendanceDigest = onDocumentWritten(
       })
       .join('\n');
 
-    const subject = `📋 ${centreName} — ${sessionDate} (${totalPresent}P / ${totalAbsent}A across ${batchSessions.length} batch${batchSessions.length !== 1 ? 'es' : ''})`;
+    const subject = `📋 ${centreName} — Attendance ${sessionDate} (${totalPresent}P / ${totalAbsent}A across ${batchSessions.length} batch${batchSessions.length !== 1 ? 'es' : ''})`;
 
     const html = `<!DOCTYPE html>
 <html>
@@ -254,7 +278,6 @@ export const onAttendanceDigest = onDocumentWritten(
 </body>
 </html>`;
 
-    // Mark sent before attempting delivery
     await digestRef.update({ sentAt: new Date().toISOString() });
 
     // ── Send email via SMTP ──
@@ -293,7 +316,6 @@ export const onAttendanceDigest = onDocumentWritten(
       );
     } catch (err) {
       console.error('Failed to send attendance email:', err);
-      // Allow retry on next write
       await digestRef.update({ sentAt: null });
     }
   },
