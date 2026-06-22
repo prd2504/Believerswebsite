@@ -223,13 +223,6 @@
         { "fieldPath": "month", "order": "ASCENDING" },
         { "fieldPath": "staffName", "order": "ASCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "staff",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "authUid", "order": "ASCENDING" }
-      ]
     }
   ],
   "fieldOverrides": []
