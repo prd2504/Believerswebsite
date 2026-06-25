@@ -59,6 +59,7 @@ function fromFirestore(id: string, data: DocumentData): StudentDocument {
     bloodGroup: (data.bloodGroup ?? 'UNKNOWN') as BloodGroup,
     emergencyContact: data.emergencyContact ?? { name: '', relationship: '', phone: '' },
     primaryCentreId: data.primaryCentreId ?? '',
+    externalStudentId: data.externalStudentId ?? null,
     batchIds: Array.isArray(data.batchIds) ? data.batchIds : [],
     level: (data.level ?? 'BEGINNER') as BatchLevel,
     status: (data.status ?? 'ACTIVE') as StudentStatus,

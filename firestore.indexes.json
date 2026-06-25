@@ -223,6 +223,22 @@
         { "fieldPath": "month", "order": "ASCENDING" },
         { "fieldPath": "staffName", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "centres",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "centreCode", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "students",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "primaryCentreId", "order": "ASCENDING" },
+        { "fieldPath": "phone", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

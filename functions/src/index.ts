@@ -23,3 +23,10 @@ export { onFeedbackCreated } from './feedback/onFeedbackCreated.js';
 
 // --- Payroll: send salary slip email when marked PAID ------------------------------------
 export { onPayrollPaid } from './payroll/onPayrollPaid.js';
+
+// --- Fee submission (Sheets + public /fees page) -----------------------------------------
+export { submitFeePayment } from './fees/submitFeePayment.js';
+export { lookupStudent } from './fees/lookupStudent.js';
+
+// --- Fee invoice email (on payment marked PAID with paymentSource) -----------------------
+export { onFeePaymentCreated } from './fees/onFeePaymentCreated.js';

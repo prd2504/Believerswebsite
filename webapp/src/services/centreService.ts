@@ -46,6 +46,8 @@ function fromFirestore(id: string, data: DocumentData): CentreDocument {
     active: data.active ?? true,
     contactPhone: data.contactPhone ?? null,
     contactEmail: data.contactEmail ?? null,
+    centreCode: data.centreCode ?? null,
+    lastStudentNo: data.lastStudentNo ?? 0,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     createdBy: data.createdBy ?? null,

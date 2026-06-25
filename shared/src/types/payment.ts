@@ -22,9 +22,18 @@ export const PaymentMethod = {
   RAZORPAY: 'RAZORPAY',
   BANK_TRANSFER: 'BANK_TRANSFER',
   CHEQUE: 'CHEQUE',
+  UPI: 'UPI',
   NONE: 'NONE',
 } as const;
 export type PaymentMethod = (typeof PaymentMethod)[keyof typeof PaymentMethod];
+
+export const PaymentSource = {
+  SHEETS_FORM: 'SHEETS_FORM',
+  PUBLIC_FEES_PAGE: 'PUBLIC_FEES_PAGE',
+  ADMIN_MANUAL: 'ADMIN_MANUAL',
+  RAZORPAY: 'RAZORPAY',
+} as const;
+export type PaymentSource = (typeof PaymentSource)[keyof typeof PaymentSource];
 
 export interface PaymentDocument extends BaseDocument {
   id: string;
@@ -69,6 +78,15 @@ export interface PaymentDocument extends BaseDocument {
   receiptNumber: string | null;
   /** Storage path (not public URL) of the rendered PDF receipt. Lazy-generated. */
   receiptPdfPath: string | null;
+
+  /** Sheets-compatible external invoice number, e.g. "BBA-DAD-001". Null for legacy payments. */
+  externalInvoiceNo: string | null;
+  /** Storage path or URL to the payment proof screenshot. Null when not provided. */
+  screenshotUrl: string | null;
+  /** Name of the coach who collected this payment, if applicable. */
+  coachName: string | null;
+  /** Where this payment originated. Null for legacy payments. */
+  paymentSource: PaymentSource | null;
 }
 
 /**

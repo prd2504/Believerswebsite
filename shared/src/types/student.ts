@@ -88,6 +88,9 @@ export interface StudentDocument extends BaseDocument {
   /** Centre the student is primarily attached to. Batches may span — see `batchIds`. */
   primaryCentreId: string;
 
+  /** Sheets-compatible external ID, e.g. "DAD-001". Null until first fee submission assigns one. */
+  externalStudentId: string | null;
+
   /** All batches this student is currently enrolled in. */
   batchIds: string[];
 

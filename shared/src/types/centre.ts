@@ -66,4 +66,9 @@ export interface CentreDocument extends BaseDocument {
   contactPhone: string | null;
   /** Contact email for bookings. */
   contactEmail: string | null;
+
+  /** Short unique code (3-4 uppercase chars), e.g. "DAD", "RBI". Used in external IDs. */
+  centreCode: string | null;
+  /** Auto-incrementing counter for externalStudentId assignment. Starts at 0. */
+  lastStudentNo: number;
 }

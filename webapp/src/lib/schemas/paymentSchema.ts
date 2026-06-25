@@ -12,7 +12,7 @@ export const paymentFormSchema = z.object({
   month: z.string().regex(/^\d{4}-\d{2}$/, 'Use YYYY-MM format'),
   baseAmountRupees: z.number().min(0, 'Amount must be positive'),
   gstRatePercent: z.number().min(0).max(100),
-  method: z.enum(['CASH', 'RAZORPAY', 'BANK_TRANSFER', 'CHEQUE', 'NONE']),
+  method: z.enum(['CASH', 'RAZORPAY', 'BANK_TRANSFER', 'CHEQUE', 'UPI', 'NONE']),
   status: z.enum(['PENDING', 'PAID', 'OVERDUE', 'WAIVED', 'REFUNDED']),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD format').nullable().or(z.literal('')),
   notes: z.string().optional(),

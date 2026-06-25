@@ -96,8 +96,8 @@ service cloud.firestore {
 
     // ── /centres/{centreId} ───────────────────────────────────────────────────────────────
     match /centres/{centreId} {
-      // All signed-in users can read centres (needed for selecting batches, etc.)
-      allow read: if isSignedIn();
+      // Public can read active centres (for /fees page). Signed-in users can read all.
+      allow read: if resource.data.active == true || isSignedIn();
       // Admin-like can write. Managers can only write to their own centres.
       allow create: if isAdminLike();
       allow update, delete: if managesCentre(centreId);
