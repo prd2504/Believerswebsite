@@ -36,9 +36,10 @@ interface CentreFeeConfig {
 }
 
 const CENTRE_FEE_CONFIG: Record<string, CentreFeeConfig> = {
-  DAD: { centreCode: 'DAD', upiId: '85287401@ubin', upiQrPath: '/upi-qr-bba.png' },
-  RBI: { centreCode: 'RBI', upiId: '85287401@ubin', upiQrPath: '/upi-qr-bba.png' },
-  RUI: { centreCode: 'RUI', upiId: '85287401@ubin', upiQrPath: '/upi-qr-bba.png' },
+  DAD: { centreCode: 'DAD', upiId: '85287401@ubin', upiQrPath: '/Payment_QR.png' },
+  RBI: { centreCode: 'RBI', upiId: '85287401@ubin', upiQrPath: '/Payment_QR.png' },
+  RUI: { centreCode: 'RUI', upiId: '85287401@ubin', upiQrPath: '/Payment_QR.png' },
+  BAN: { centreCode: 'BAN', upiId: '85287401@ubin', upiQrPath: '/Payment_QR.png' },
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

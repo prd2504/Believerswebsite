@@ -168,7 +168,7 @@ export const submitFeePayment = onRequest(
       }
 
       // --- Generate external invoice number ---
-      const externalInvoiceNo = await generateExternalInvoiceNo(input.centreCode);
+      const externalInvoiceNo = await generateExternalInvoiceNo(centreId, input.centreCode);
 
       // --- Create payment doc ---
       const now = new Date().toISOString();

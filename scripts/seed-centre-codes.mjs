@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * One-time script: set centreCode and lastStudentNo on each centre document,
- * and seed the counters/invoices document.
+ * One-time script: set centreCode, lastStudentNo, and lastInvoiceNo on each
+ * centre document.
  *
  * Usage:
  *   node scripts/seed-centre-codes.mjs
@@ -18,16 +18,16 @@ const PROJECT_ID = 'bba-sports-prod';
 initializeApp({ credential: applicationDefault(), projectId: PROJECT_ID });
 const db = getFirestore();
 
-// ── EDIT THESE VALUES ──────────────────────────────────────────────────────
-// Map: partial centre name match → { centreCode, lastStudentNo }
+// ── Centre data from Google Sheets system ─────────────────────────────────
+// Values: { match, centreCode, lastInvoiceNo, lastStudentNo }
+// lastInvoiceNo = highest invoice already issued (next will be +1)
+// lastStudentNo = highest student number already assigned (next will be +1)
 const CENTRE_MAP = [
-  { match: 'dadar',  centreCode: 'DAD', lastStudentNo: 0 },
-  { match: 'rbi',    centreCode: 'RBI', lastStudentNo: 0 },
-  { match: 'ruia',   centreCode: 'RUI', lastStudentNo: 0 },
+  { match: 'dadar',   centreCode: 'DAD', lastInvoiceNo: 25, lastStudentNo: 25 },
+  { match: 'ruia',    centreCode: 'RUI', lastInvoiceNo: 1,  lastStudentNo: 1 },
+  { match: 'rbi',     centreCode: 'RBI', lastInvoiceNo: 34, lastStudentNo: 36 },
+  { match: 'bandra',  centreCode: 'BAN', lastInvoiceNo: 0,  lastStudentNo: 0 },
 ];
-
-// Starting invoice counter (set to highest existing invoice number)
-const STARTING_INVOICE_NO = 0;
 // ───────────────────────────────────────────────────────────────────────────
 
 function normalize(s) {
@@ -48,26 +48,24 @@ async function main() {
       continue;
     }
 
-    if (data.centreCode === mapping.centreCode) {
-      console.log(`  ✅ "${data.name}" already has centreCode=${mapping.centreCode}`);
+    const updates = {};
+    if (data.centreCode !== mapping.centreCode) {
+      updates.centreCode = mapping.centreCode;
+    }
+    if ((data.lastStudentNo ?? 0) < mapping.lastStudentNo) {
+      updates.lastStudentNo = mapping.lastStudentNo;
+    }
+    if ((data.lastInvoiceNo ?? 0) < mapping.lastInvoiceNo) {
+      updates.lastInvoiceNo = mapping.lastInvoiceNo;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      console.log(`  ✅ "${data.name}" already up to date (${mapping.centreCode})`);
       continue;
     }
 
-    await doc.ref.update({
-      centreCode: mapping.centreCode,
-      lastStudentNo: data.lastStudentNo ?? mapping.lastStudentNo,
-    });
-    console.log(`  ✅ "${data.name}" → centreCode=${mapping.centreCode}, lastStudentNo=${mapping.lastStudentNo}`);
-  }
-
-  // Seed counters/invoices
-  const counterRef = db.collection('counters').doc('invoices');
-  const counterSnap = await counterRef.get();
-  if (counterSnap.exists) {
-    console.log(`\n  ℹ️  counters/invoices already exists (lastInvoiceNo=${counterSnap.data().lastInvoiceNo})`);
-  } else {
-    await counterRef.set({ lastInvoiceNo: STARTING_INVOICE_NO });
-    console.log(`\n  ✅ counters/invoices created with lastInvoiceNo=${STARTING_INVOICE_NO}`);
+    await doc.ref.update(updates);
+    console.log(`  ✅ "${data.name}" → code=${mapping.centreCode}, invoices=${mapping.lastInvoiceNo}, students=${mapping.lastStudentNo}`);
   }
 
   console.log('\nDone.');

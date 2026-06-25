@@ -71,4 +71,6 @@ export interface CentreDocument extends BaseDocument {
   centreCode: string | null;
   /** Auto-incrementing counter for externalStudentId assignment. Starts at 0. */
   lastStudentNo: number;
+  /** Auto-incrementing counter for externalInvoiceNo assignment. Starts at 0. */
+  lastInvoiceNo: number;
 }
