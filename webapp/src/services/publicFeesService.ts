@@ -17,6 +17,64 @@ export interface FeeSubmissionResult {
   studentName: string;
 }
 
+export interface CentreOption {
+  id: string;
+  name: string;
+  city: string;
+  centreCode: string | null;
+}
+
+export interface StudentSearchResult {
+  studentId: string;
+  name: string;
+  maskedPhone: string;
+  externalStudentId: string | null;
+  batchName: string;
+  monthlyFeeRupees: number;
+  daysPerWeek: number;
+}
+
+export interface RegisterStudentResult {
+  studentId: string;
+  name: string;
+  maskedPhone: string;
+}
+
+/** Active centres for the /fees page — plain HTTP GET (faster cold load than the Firestore SDK). */
+export async function fetchActiveCentres(): Promise<CentreOption[]> {
+  const res = await fetch(`${FUNCTIONS_BASE}/listCentres`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load centres');
+  return data.centres;
+}
+
+/** All ACTIVE / ON_HOLD students at a centre, for client-side name autocomplete. */
+export async function searchStudentsByCentre(centreCode: string): Promise<StudentSearchResult[]> {
+  const res = await fetch(
+    `${FUNCTIONS_BASE}/searchStudents?centreCode=${encodeURIComponent(centreCode)}`,
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load students');
+  return data.students;
+}
+
+/** Register a new student from the public page when their name isn't found. */
+export async function registerStudent(input: {
+  centreCode: string;
+  name: string;
+  phone: string;
+  guardianName: string;
+}): Promise<RegisterStudentResult> {
+  const res = await fetch(`${FUNCTIONS_BASE}/registerStudent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Registration failed');
+  return data;
+}
+
 export async function lookupStudentByPhone(
   centreCode: string,
   phone: string,
@@ -34,7 +92,8 @@ export async function lookupStudentByPhone(
 
 export async function submitFeePayment(input: {
   centreCode: string;
-  phone: string;
+  studentId?: string;
+  phone?: string;
   externalStudentId?: string;
   month: string;
   amountRupees: number;

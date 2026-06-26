@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   ChevronRight,
   ChevronLeft,
-  Phone,
+  Search,
+  UserPlus,
   User,
   BadgeIndianRupee,
   Loader2,
@@ -17,13 +19,15 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { formatINR, COMPANY } from '@bba/shared';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '@/lib/firebase';
+import { storage } from '@/lib/firebase';
 import {
-  lookupStudentByPhone,
+  fetchActiveCentres,
+  searchStudentsByCentre,
+  registerStudent,
   submitFeePayment,
-  type StudentLookupResult,
+  type CentreOption,
+  type StudentSearchResult,
   type FeeSubmissionResult,
 } from '@/services/publicFeesService';
 
@@ -83,13 +87,6 @@ async function copyToClipboard(text: string) {
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-interface CentreOption {
-  id: string;
-  name: string;
-  city: string;
-  centreCode: string | null;
-}
-
 type Step = 'centre' | 'lookup' | 'form' | 'payment' | 'success';
 
 // ── Main component ─────────────────────────────────────────────────────────
@@ -97,21 +94,45 @@ type Step = 'centre' | 'lookup' | 'form' | 'payment' | 'success';
 export default function FeesPortal() {
   const [step, setStep] = useState<Step>('centre');
 
-  // Centre step
-  const [centres, setCentres] = useState<CentreOption[]>([]);
-  const [centresLoading, setCentresLoading] = useState(true);
+  // Centre step (cached via React Query — 5-min staleTime from App.tsx)
+  const { data: centres = [], isLoading: centresLoading } = useQuery({
+    queryKey: ['activeCentres'],
+    queryFn: fetchActiveCentres,
+  });
   const [selectedCentre, setSelectedCentre] = useState<CentreOption | null>(null);
 
-  // Lookup step
-  const [phone, setPhone] = useState('');
-  const [lookupLoading, setLookupLoading] = useState(false);
-  const [lookupError, setLookupError] = useState('');
-  const [students, setStudents] = useState<StudentLookupResult[]>([]);
-  const [selectedStudent, setSelectedStudent] = useState<StudentLookupResult | null>(null);
+  // Lookup step — name autocomplete
+  const [nameQuery, setNameQuery] = useState('');
+  const [selectedStudent, setSelectedStudent] = useState<StudentSearchResult | null>(null);
+
+  // Inline "register new student" form
+  const [showRegister, setShowRegister] = useState(false);
+  const [regName, setRegName] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [regGuardian, setRegGuardian] = useState('');
+  const [registering, setRegistering] = useState(false);
+  const [registerError, setRegisterError] = useState('');
+
+  // All students at the selected centre — fetched once, filtered client-side
+  const studentsQuery = useQuery({
+    queryKey: ['centreStudents', selectedCentre?.centreCode],
+    queryFn: () => searchStudentsByCentre(selectedCentre!.centreCode!),
+    enabled: !!selectedCentre?.centreCode,
+  });
+
+  const filteredStudents = useMemo(() => {
+    const q = nameQuery.trim().toLowerCase();
+    if (q.length < 2) return [];
+    return (studentsQuery.data ?? [])
+      .filter((s) => s.name.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [nameQuery, studentsQuery.data]);
 
   // Form step
   const [month, setMonth] = useState(getDefaultMonth());
   const [method, setMethod] = useState<'UPI' | 'CASH' | 'BANK_TRANSFER'>('UPI');
+  // Editable amount — only used when the student has no enrollment fee (e.g. just registered)
+  const [amountInput, setAmountInput] = useState('');
 
   // Payment step
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
@@ -123,32 +144,10 @@ export default function FeesPortal() {
   // Success step
   const [result, setResult] = useState<FeeSubmissionResult | null>(null);
 
-  // ── Load active centres ────────────────────────────────────────────────
-  useEffect(() => {
-    async function load() {
-      try {
-        const q = query(
-          collection(db, 'centres'),
-          where('active', '==', true),
-          orderBy('name', 'asc'),
-        );
-        const snap = await getDocs(q);
-        setCentres(
-          snap.docs.map((d) => ({
-            id: d.id,
-            name: d.data().name ?? '',
-            city: d.data().city ?? '',
-            centreCode: d.data().centreCode ?? null,
-          })),
-        );
-      } catch (err) {
-        console.error('Failed to load centres', err);
-      } finally {
-        setCentresLoading(false);
-      }
-    }
-    load();
-  }, []);
+  // Effective amount to charge (rupees)
+  const effectiveAmount = selectedStudent && selectedStudent.monthlyFeeRupees > 0
+    ? selectedStudent.monthlyFeeRupees
+    : Number(amountInput) || 0;
 
   // ── Handlers ───────────────────────────────────────────────────────────
 
@@ -158,27 +157,44 @@ export default function FeesPortal() {
     setStep('lookup');
   }
 
-  async function handleLookup() {
-    if (!selectedCentre?.centreCode || phone.length < 10) return;
-    setLookupLoading(true);
-    setLookupError('');
-    try {
-      const results = await lookupStudentByPhone(selectedCentre.centreCode, phone);
-      setStudents(results);
-      if (results.length === 1) {
-        setSelectedStudent(results[0]);
-        setStep('form');
-      }
-    } catch (err: any) {
-      setLookupError(err.message || 'Student not found');
-    } finally {
-      setLookupLoading(false);
-    }
+  function handleStudentSelect(s: StudentSearchResult) {
+    setSelectedStudent(s);
+    setAmountInput(s.monthlyFeeRupees > 0 ? String(s.monthlyFeeRupees) : '');
+    setStep('form');
   }
 
-  function handleStudentSelect(s: StudentLookupResult) {
-    setSelectedStudent(s);
-    setStep('form');
+  async function handleRegister() {
+    if (!selectedCentre?.centreCode) return;
+    if (regName.trim().length < 2 || regPhone.length !== 10 || regGuardian.trim().length < 2) {
+      setRegisterError('Please fill name, 10-digit phone, and guardian name.');
+      return;
+    }
+    setRegistering(true);
+    setRegisterError('');
+    try {
+      const res = await registerStudent({
+        centreCode: selectedCentre.centreCode,
+        name: regName.trim(),
+        phone: regPhone,
+        guardianName: regGuardian.trim(),
+      });
+      // New students have no enrollment yet — amount is entered manually on the form.
+      handleStudentSelect({
+        studentId: res.studentId,
+        name: res.name,
+        maskedPhone: res.maskedPhone,
+        externalStudentId: null,
+        batchName: '',
+        monthlyFeeRupees: 0,
+        daysPerWeek: 0,
+      });
+      // refresh the cached student list so the new student appears next time
+      studentsQuery.refetch();
+    } catch (err: any) {
+      setRegisterError(err.message || 'Registration failed');
+    } finally {
+      setRegistering(false);
+    }
   }
 
   function handleScreenshotChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -191,7 +207,7 @@ export default function FeesPortal() {
   }
 
   async function handleSubmit() {
-    if (!selectedCentre?.centreCode || !selectedStudent) return;
+    if (!selectedCentre?.centreCode || !selectedStudent || effectiveAmount <= 0) return;
     setSubmitting(true);
     setSubmitError('');
 
@@ -207,10 +223,10 @@ export default function FeesPortal() {
 
       const res = await submitFeePayment({
         centreCode: selectedCentre.centreCode,
-        phone,
+        studentId: selectedStudent.studentId,
         externalStudentId: selectedStudent.externalStudentId ?? undefined,
         month,
-        amountRupees: selectedStudent.monthlyFeeRupees,
+        amountRupees: effectiveAmount,
         method,
         screenshotUrl,
       });
@@ -227,16 +243,26 @@ export default function FeesPortal() {
   function handleReset() {
     setStep('centre');
     setSelectedCentre(null);
-    setPhone('');
-    setStudents([]);
+    setNameQuery('');
     setSelectedStudent(null);
+    setShowRegister(false);
+    setRegName('');
+    setRegPhone('');
+    setRegGuardian('');
+    setRegisterError('');
     setMonth(getDefaultMonth());
     setMethod('UPI');
+    setAmountInput('');
     setScreenshotFile(null);
     setScreenshotPreview(null);
     setSubmitError('');
     setResult(null);
     setUpiCopied(false);
+  }
+
+  function backToLookup() {
+    setStep('lookup');
+    setSelectedStudent(null);
   }
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -316,11 +342,11 @@ export default function FeesPortal() {
           </div>
         )}
 
-        {/* ── Phone lookup ─────────────────────────────────────────── */}
+        {/* ── Name autocomplete ────────────────────────────────────── */}
         {step === 'lookup' && (
           <div className="space-y-4">
             <button
-              onClick={() => setStep('centre')}
+              onClick={() => { setStep('centre'); setNameQuery(''); setShowRegister(false); }}
               className="flex items-center gap-1 text-sm text-gray-400 hover:text-white"
             >
               <ChevronLeft size={16} /> Back
@@ -331,63 +357,147 @@ export default function FeesPortal() {
               <p className="text-white">{selectedCentre?.name}</p>
             </div>
 
-            <h2 className="text-lg font-semibold text-white">Find Your Student Profile</h2>
-            <p className="text-sm text-gray-400">
-              Enter the phone number registered with the academy.
-            </p>
+            {!showRegister && (
+              <>
+                <h2 className="text-lg font-semibold text-white">Find Your Student</h2>
+                <p className="text-sm text-gray-400">
+                  Start typing the student&apos;s name as registered with the academy.
+                </p>
 
-            <div className="relative">
-              <Phone size={18} className="absolute left-3 top-3 text-gray-500" />
-              <input
-                type="tel"
-                placeholder="Phone number"
-                value={phone}
-                onChange={(e) => {
-                  setPhone(e.target.value.replace(/\D/g, '').slice(0, 10));
-                  setLookupError('');
-                }}
-                className="w-full rounded-xl border border-gray-700 bg-gray-800 py-3 pl-10 pr-4 text-white placeholder-gray-500 focus:border-brand-primary focus:outline-none"
-              />
-            </div>
+                <div className="relative">
+                  <Search size={18} className="absolute left-3 top-3 text-gray-500" />
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Student name"
+                    value={nameQuery}
+                    onChange={(e) => setNameQuery(e.target.value)}
+                    className="w-full rounded-xl border border-gray-700 bg-gray-800 py-3 pl-10 pr-4 text-white placeholder-gray-500 focus:border-brand-primary focus:outline-none"
+                  />
+                </div>
 
-            {lookupError && (
-              <div className="flex items-center gap-2 rounded-lg bg-red-900/30 p-3 text-sm text-red-300">
-                <AlertCircle size={16} />
-                {lookupError}
-              </div>
+                {/* Loading the centre roster */}
+                {studentsQuery.isLoading && (
+                  <div className="flex items-center gap-2 text-sm text-gray-400">
+                    <Loader2 size={16} className="animate-spin" /> Loading students…
+                  </div>
+                )}
+
+                {studentsQuery.isError && (
+                  <div className="flex items-center gap-2 rounded-lg bg-red-900/30 p-3 text-sm text-red-300">
+                    <AlertCircle size={16} />
+                    Could not load students. Please try again.
+                  </div>
+                )}
+
+                {/* Results */}
+                {!studentsQuery.isLoading && nameQuery.trim().length >= 2 && (
+                  <div className="space-y-2">
+                    {filteredStudents.map((s) => (
+                      <button
+                        key={s.studentId}
+                        onClick={() => handleStudentSelect(s)}
+                        className="flex w-full items-center justify-between rounded-xl border border-gray-700 bg-gray-800/50 p-3 text-left transition hover:border-brand-primary/50"
+                      >
+                        <div>
+                          <p className="font-medium text-white">{s.name}</p>
+                          <p className="text-xs text-gray-400">
+                            {s.maskedPhone}
+                            {s.batchName && <> &middot; {s.batchName}</>}
+                          </p>
+                        </div>
+                        <ChevronRight size={16} className="text-gray-500" />
+                      </button>
+                    ))}
+
+                    {filteredStudents.length === 0 && (
+                      <p className="px-1 text-sm text-gray-400">
+                        No students match &ldquo;{nameQuery.trim()}&rdquo;.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {nameQuery.trim().length > 0 && nameQuery.trim().length < 2 && (
+                  <p className="px-1 text-xs text-gray-500">Type at least 2 characters.</p>
+                )}
+
+                {/* Register new student */}
+                <button
+                  onClick={() => { setShowRegister(true); setRegName(nameQuery.trim()); setRegisterError(''); }}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-gray-600 bg-gray-800/30 py-3 text-sm font-medium text-gray-300 transition hover:border-brand-primary/50 hover:text-white"
+                >
+                  <UserPlus size={16} />
+                  Can&apos;t find your name? Register a new student
+                </button>
+              </>
             )}
 
-            <button
-              onClick={handleLookup}
-              disabled={phone.length < 10 || lookupLoading}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 font-semibold text-white transition disabled:opacity-50"
-            >
-              {lookupLoading ? <Loader2 size={18} className="animate-spin" /> : <User size={18} />}
-              {lookupLoading ? 'Searching...' : 'Find Student'}
-            </button>
-
-            {/* Multiple matches */}
-            {students.length > 1 && (
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-gray-300">
-                  Multiple students found. Select one:
+            {/* Inline registration form */}
+            {showRegister && (
+              <>
+                <h2 className="text-lg font-semibold text-white">Register New Student</h2>
+                <p className="text-sm text-gray-400">
+                  We&apos;ll create a profile so you can pay. The academy will fill in the rest.
                 </p>
-                {students.map((s) => (
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-300">Student Name</label>
+                    <input
+                      type="text"
+                      placeholder="Full name"
+                      value={regName}
+                      onChange={(e) => { setRegName(e.target.value); setRegisterError(''); }}
+                      className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white placeholder-gray-500 focus:border-brand-primary focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-300">Phone Number</label>
+                    <input
+                      type="tel"
+                      placeholder="10-digit phone"
+                      value={regPhone}
+                      onChange={(e) => { setRegPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setRegisterError(''); }}
+                      className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white placeholder-gray-500 focus:border-brand-primary focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-300">Guardian Name</label>
+                    <input
+                      type="text"
+                      placeholder="Parent / guardian name"
+                      value={regGuardian}
+                      onChange={(e) => { setRegGuardian(e.target.value); setRegisterError(''); }}
+                      className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white placeholder-gray-500 focus:border-brand-primary focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {registerError && (
+                  <div className="flex items-center gap-2 rounded-lg bg-red-900/30 p-3 text-sm text-red-300">
+                    <AlertCircle size={16} />
+                    {registerError}
+                  </div>
+                )}
+
+                <div className="flex gap-2">
                   <button
-                    key={s.studentId}
-                    onClick={() => handleStudentSelect(s)}
-                    className="flex w-full items-center justify-between rounded-xl border border-gray-700 bg-gray-800/50 p-3 text-left transition hover:border-brand-primary/50"
+                    onClick={() => { setShowRegister(false); setRegisterError(''); }}
+                    className="flex-1 rounded-xl border border-gray-700 bg-gray-800 py-3 text-sm font-semibold text-gray-300 transition hover:text-white"
                   >
-                    <div>
-                      <p className="font-medium text-white">{s.name}</p>
-                      <p className="text-xs text-gray-400">
-                        {s.batchName} &middot; {s.daysPerWeek} days/week
-                      </p>
-                    </div>
-                    <ChevronRight size={16} className="text-gray-500" />
+                    Cancel
                   </button>
-                ))}
-              </div>
+                  <button
+                    onClick={handleRegister}
+                    disabled={registering}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 text-sm font-semibold text-white transition disabled:opacity-50"
+                  >
+                    {registering ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={16} />}
+                    {registering ? 'Registering…' : 'Register & Continue'}
+                  </button>
+                </div>
+              </>
             )}
           </div>
         )}
@@ -396,7 +506,7 @@ export default function FeesPortal() {
         {step === 'form' && selectedStudent && (
           <div className="space-y-4">
             <button
-              onClick={() => { setStep('lookup'); setSelectedStudent(null); setStudents([]); }}
+              onClick={backToLookup}
               className="flex items-center gap-1 text-sm text-gray-400 hover:text-white"
             >
               <ChevronLeft size={16} /> Back
@@ -411,7 +521,9 @@ export default function FeesPortal() {
                 <div>
                   <p className="font-semibold text-white">{selectedStudent.name}</p>
                   <p className="text-xs text-gray-400">
-                    {selectedStudent.batchName} &middot; {selectedStudent.daysPerWeek} days/week
+                    {selectedStudent.batchName
+                      ? <>{selectedStudent.batchName} &middot; {selectedStudent.daysPerWeek} days/week</>
+                      : 'New registration'}
                     {selectedStudent.externalStudentId && (
                       <> &middot; ID: {selectedStudent.externalStudentId}</>
                     )}
@@ -440,15 +552,36 @@ export default function FeesPortal() {
             </div>
 
             {/* Amount */}
-            <div className="rounded-xl border border-gray-700 bg-gray-800/50 p-4">
-              <p className="mb-1 text-sm text-gray-400">Amount to Pay</p>
-              <p className="text-2xl font-bold text-white">
-                {formatINR(selectedStudent.monthlyFeeRupees * 100, { withDecimals: false })}
-              </p>
-              <p className="mt-0.5 text-xs text-gray-500">
-                {selectedStudent.daysPerWeek} days/week plan
-              </p>
-            </div>
+            {selectedStudent.monthlyFeeRupees > 0 ? (
+              <div className="rounded-xl border border-gray-700 bg-gray-800/50 p-4">
+                <p className="mb-1 text-sm text-gray-400">Amount to Pay</p>
+                <p className="text-2xl font-bold text-white">
+                  {formatINR(selectedStudent.monthlyFeeRupees * 100, { withDecimals: false })}
+                </p>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  {selectedStudent.daysPerWeek} days/week plan
+                </p>
+              </div>
+            ) : (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-300">
+                  <BadgeIndianRupee size={14} className="mr-1 inline" />
+                  Amount to Pay (₹)
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  placeholder="Enter fee amount"
+                  value={amountInput}
+                  onChange={(e) => setAmountInput(e.target.value.replace(/\D/g, ''))}
+                  className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white placeholder-gray-500 focus:border-brand-primary focus:outline-none"
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  No saved plan for this student — please confirm the amount with your coach.
+                </p>
+              </div>
+            )}
 
             {/* Method */}
             <div>
@@ -473,7 +606,8 @@ export default function FeesPortal() {
 
             <button
               onClick={() => setStep('payment')}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 font-semibold text-white transition hover:bg-brand-primary/90"
+              disabled={effectiveAmount <= 0}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 font-semibold text-white transition hover:bg-brand-primary/90 disabled:opacity-50"
             >
               Continue to Payment
               <ChevronRight size={18} />
@@ -531,7 +665,7 @@ export default function FeesPortal() {
                 </div>
 
                 <div className="rounded-lg bg-blue-900/20 p-3 text-xs text-blue-300">
-                  Pay exactly {formatINR(selectedStudent.monthlyFeeRupees * 100, { withDecimals: false })} to the UPI ID above,
+                  Pay exactly {formatINR(effectiveAmount * 100, { withDecimals: false })} to the UPI ID above,
                   then upload a screenshot below (optional).
                 </div>
               </>
@@ -611,7 +745,7 @@ export default function FeesPortal() {
                 <div className="mt-2 flex justify-between border-t border-gray-700 pt-2">
                   <span className="font-medium text-white">Total</span>
                   <span className="text-lg font-bold text-brand-primary">
-                    {formatINR(selectedStudent.monthlyFeeRupees * 100, { withDecimals: false })}
+                    {formatINR(effectiveAmount * 100, { withDecimals: false })}
                   </span>
                 </div>
               </div>
@@ -667,9 +801,7 @@ export default function FeesPortal() {
                 <div className="flex justify-between">
                   <span className="text-gray-400">Amount</span>
                   <span className="font-semibold text-white">
-                    {selectedStudent
-                      ? formatINR(selectedStudent.monthlyFeeRupees * 100, { withDecimals: false })
-                      : ''}
+                    {formatINR(effectiveAmount * 100, { withDecimals: false })}
                   </span>
                 </div>
               </div>

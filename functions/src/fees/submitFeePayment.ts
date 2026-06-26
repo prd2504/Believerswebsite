@@ -89,7 +89,11 @@ export const submitFeePayment = onRequest(
 
       let student: typeof students[number] | undefined;
 
-      if (input.externalStudentId) {
+      if (input.studentId) {
+        student = students.find((s) => s.id === input.studentId);
+      }
+
+      if (!student && input.externalStudentId) {
         student = students.find((s) => s.externalStudentId === input.externalStudentId);
       }
 

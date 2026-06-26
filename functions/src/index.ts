@@ -28,5 +28,13 @@ export { onPayrollPaid } from './payroll/onPayrollPaid.js';
 export { submitFeePayment } from './fees/submitFeePayment.js';
 export { lookupStudent } from './fees/lookupStudent.js';
 
+// --- Public /fees page support (centres, name search, self-registration) -----------------
+export { listCentres } from './fees/listCentres.js';
+export { searchStudents } from './fees/searchStudents.js';
+export { registerStudent } from './fees/registerStudent.js';
+
+// --- Temporary: student data-integrity audit (remove after backfill decision) -------------
+export { auditStudents } from './fees/auditStudents.js';
+
 // --- Fee invoice email (on payment marked PAID with paymentSource) -----------------------
 export { onFeePaymentCreated } from './fees/onFeePaymentCreated.js';
