@@ -32,6 +32,8 @@ export interface StudentSearchResult {
   batchName: string;
   monthlyFeeRupees: number;
   daysPerWeek: number;
+  /** Available frequency plans from the student's batch (empty for new registrations). */
+  frequencyPlans: Array<{ daysPerWeek: number; monthlyFeePaise: number }>;
 }
 
 export interface RegisterStudentResult {

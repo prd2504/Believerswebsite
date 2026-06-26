@@ -7,7 +7,7 @@ import { checkRateLimit } from './rateLimiter.js';
 /**
  * Returns all ACTIVE / ON_HOLD students for a centre so the /fees page can do
  * client-side name autocomplete. Phone numbers are masked. Enriched with batch
- * name + monthly fee from the active enrollment.
+ * name, monthly fee, and full frequencyPlans from the active enrollment.
  *
  *   GET /searchStudents?centreCode=DAD
  */
@@ -76,6 +76,7 @@ export const searchStudents = onRequest(
           let batchName = '';
           let monthlyFeeRupees = 0;
           let daysPerWeek = 0;
+          let frequencyPlans: Array<{ daysPerWeek: number; monthlyFeePaise: number }> = [];
 
           if (!enrollSnap.empty) {
             const enroll = enrollSnap.docs[0].data();
@@ -84,7 +85,12 @@ export const searchStudents = onRequest(
 
             const batchDoc = await db.collection('batches').doc(enroll.batchId).get();
             if (batchDoc.exists) {
-              batchName = batchDoc.data()?.name ?? '';
+              const batchData = batchDoc.data()!;
+              batchName = batchData.name ?? '';
+              frequencyPlans = (batchData.frequencyPlans ?? []).map((p: any) => ({
+                daysPerWeek: Number(p.daysPerWeek),
+                monthlyFeePaise: Number(p.monthlyFeePaise),
+              }));
             }
           }
 
@@ -96,11 +102,11 @@ export const searchStudents = onRequest(
             batchName,
             monthlyFeeRupees,
             daysPerWeek,
+            frequencyPlans,
           };
         }),
       );
 
-      // Sort by name for a stable, predictable list.
       results.sort((a, b) => a.name.localeCompare(b.name));
 
       logger.info('[searchStudents] returned', { centreCode: parsed.data.centreCode, count: results.length });
