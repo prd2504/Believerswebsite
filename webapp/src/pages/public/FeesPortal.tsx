@@ -177,7 +177,7 @@ export default function FeesPortal() {
       return plan ? Math.round(plan.amountPaise / 100) : 0;
     }
     if (!isRuia && selectedFreqDays != null && selectedStudent) {
-      const match = selectedStudent.frequencyPlans.find((p) => p.daysPerWeek === selectedFreqDays);
+      const match = (selectedStudent.frequencyPlans ?? []).find((p) => p.daysPerWeek === selectedFreqDays);
       if (match) return Math.round(match.monthlyFeePaise / 100);
     }
     return selectedStudent?.monthlyFeeRupees ?? 0;
@@ -610,11 +610,11 @@ export default function FeesPortal() {
             )}
 
             {/* Plan selector — other centres (frequencyPlans) */}
-            {!isRuia && selectedStudent.frequencyPlans.length > 0 && (
+            {!isRuia && (selectedStudent.frequencyPlans?.length ?? 0) > 0 && (
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-gray-300">Select Plan</label>
-                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(selectedStudent.frequencyPlans.length, 3)}, 1fr)` }}>
-                  {selectedStudent.frequencyPlans
+                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min((selectedStudent.frequencyPlans ?? []).length, 3)}, 1fr)` }}>
+                  {(selectedStudent.frequencyPlans ?? [])
                     .slice()
                     .sort((a, b) => a.daysPerWeek - b.daysPerWeek)
                     .map((plan) => (
