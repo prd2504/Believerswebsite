@@ -113,12 +113,58 @@ export const submitFeePayment = onRequest(
       }
 
       if (!student) {
-        res.status(404).json({
-          ok: false,
-          error: 'Student not found',
-          hint: 'Check the name, phone, or external ID',
-        });
-        return;
+        // SHEETS_FORM only: externalStudentId is authoritative — create the Firestore doc
+        if (isSheets && input.externalStudentId && input.studentName) {
+          const nowStr = new Date().toISOString();
+          const today  = nowStr.slice(0, 10);
+          const newStudentData = {
+            name:              input.studentName,
+            dateOfBirth:       '2010-01-01',
+            gender:            'UNDISCLOSED',
+            photoPath:         null,
+            guardianName:      null,
+            guardianUserId:    null,
+            phone:             input.phone ?? null,
+            email:             input.email ?? null,
+            address:           '',
+            city:              centreData.city    ?? '',
+            pincode:           centreData.pincode ?? '',
+            bloodGroup:        'UNKNOWN',
+            emergencyContact:  { name: input.studentName, relationship: 'self', phone: input.phone ?? null },
+            primaryCentreId:   centreId,
+            externalStudentId: input.externalStudentId,
+            batchIds:          [],
+            level:             'BEGINNER',
+            status:            'ACTIVE',
+            statusHistory:     [],
+            joinedDate:        today,
+            medicalNotes:      null,
+            createdAt:         nowStr,
+            updatedAt:         nowStr,
+            createdBy:         'SHEETS_FORM',
+            updatedBy:         'SHEETS_FORM',
+          };
+          const newRef = await db.collection('students').add(newStudentData);
+          logger.info('[submitFeePayment] auto-created student from Sheets', {
+            studentId: newRef.id,
+            externalStudentId: input.externalStudentId,
+            centreCode: input.centreCode,
+          });
+          student = {
+            id:                newRef.id,
+            name:              input.studentName,
+            phone:             input.phone ?? null,
+            externalStudentId: input.externalStudentId,
+            batchIds:          [],
+          };
+        } else {
+          res.status(404).json({
+            ok: false,
+            error: 'Student not found',
+            hint: 'Check the name, phone, or external ID',
+          });
+          return;
+        }
       }
 
       // --- Auto-assign externalStudentId if missing ---

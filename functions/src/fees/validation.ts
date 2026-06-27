@@ -6,6 +6,7 @@ export const submitFeePaymentSchema = z.object({
   studentName: z.string().min(1).optional(),
   externalStudentId: z.string().optional(),
   phone: z.string().optional(),
+  email: z.string().email().optional().nullable(),
   month: z.string().regex(/^\d{4}-\d{2}$/, 'Use YYYY-MM format'),
   amountRupees: z.number().positive('Amount must be positive'),
   method: z.enum(['UPI', 'CASH', 'BANK_TRANSFER']),
