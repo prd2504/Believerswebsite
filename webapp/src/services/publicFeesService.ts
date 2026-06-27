@@ -65,7 +65,7 @@ export async function registerStudent(input: {
   centreCode: string;
   name: string;
   phone: string;
-  guardianName: string;
+  email?: string;
 }): Promise<RegisterStudentResult> {
   const res = await fetch(`${FUNCTIONS_BASE}/registerStudent`, {
     method: 'POST',

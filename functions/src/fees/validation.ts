@@ -36,7 +36,7 @@ export const registerStudentSchema = z.object({
   centreCode: z.string().min(2).max(5).transform((s) => s.trim().toUpperCase()),
   name: z.string().min(2, 'Name is required').max(80).transform((s) => s.trim()),
   phone: z.string().regex(/^\d{10}$/, 'Phone must be 10 digits'),
-  guardianName: z.string().min(2, 'Guardian name is required').max(80).transform((s) => s.trim()),
+  email: z.string().email('Invalid email').optional(),
 });
 
 export type RegisterStudentInput = z.infer<typeof registerStudentSchema>;

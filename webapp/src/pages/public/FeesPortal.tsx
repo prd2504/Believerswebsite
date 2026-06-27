@@ -130,7 +130,7 @@ export default function FeesPortal() {
   const [showRegister, setShowRegister] = useState(false);
   const [regName, setRegName] = useState('');
   const [regPhone, setRegPhone] = useState('');
-  const [regGuardian, setRegGuardian] = useState('');
+  const [regEmail, setRegEmail] = useState('');
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState('');
 
@@ -169,6 +169,22 @@ export default function FeesPortal() {
     return () => { unsub1(); unsub2(); };
   }, [isRuia, step, month]);
 
+  // ── Derived: fee plans available (own enrollment or centre-wide fallback for new students) ──
+  const availablePlans = useMemo(() => {
+    const own = selectedStudent?.frequencyPlans ?? [];
+    if (own.length > 0) return own;
+    // New registration: aggregate unique plans from all centre students
+    const seen = new Map<number, number>();
+    for (const s of studentsQuery.data ?? []) {
+      for (const p of s.frequencyPlans ?? []) {
+        if (!seen.has(p.daysPerWeek)) seen.set(p.daysPerWeek, p.monthlyFeePaise);
+      }
+    }
+    return Array.from(seen.entries())
+      .map(([daysPerWeek, monthlyFeePaise]) => ({ daysPerWeek, monthlyFeePaise }))
+      .sort((a, b) => a.daysPerWeek - b.daysPerWeek);
+  }, [selectedStudent, studentsQuery.data]);
+
   // ── Derived: effective amount ────────────────────────────────────────────
   const effectiveAmount = useMemo(() => {
     if (useManualAmount) return Number(manualAmount) || 0;
@@ -176,12 +192,12 @@ export default function FeesPortal() {
       const plan = SLOT_PLANS.find((p) => p.planType === selectedPlanType);
       return plan ? Math.round(plan.amountPaise / 100) : 0;
     }
-    if (!isRuia && selectedFreqDays != null && selectedStudent) {
-      const match = (selectedStudent.frequencyPlans ?? []).find((p) => p.daysPerWeek === selectedFreqDays);
+    if (!isRuia && selectedFreqDays != null) {
+      const match = availablePlans.find((p) => p.daysPerWeek === selectedFreqDays);
       if (match) return Math.round(match.monthlyFeePaise / 100);
     }
     return selectedStudent?.monthlyFeeRupees ?? 0;
-  }, [useManualAmount, manualAmount, isRuia, selectedPlanType, selectedFreqDays, selectedStudent]);
+  }, [useManualAmount, manualAmount, isRuia, selectedPlanType, selectedFreqDays, selectedStudent, availablePlans]);
 
   // ── Slot helpers ─────────────────────────────────────────────────────────
   function getSlotCount(slot: string): number {
@@ -234,8 +250,8 @@ export default function FeesPortal() {
 
   async function handleRegister() {
     if (!selectedCentre?.centreCode) return;
-    if (regName.trim().length < 2 || regPhone.length !== 10 || regGuardian.trim().length < 2) {
-      setRegisterError('Please fill name, 10-digit phone, and guardian name.');
+    if (regName.trim().length < 2 || regPhone.length !== 10) {
+      setRegisterError('Please fill in your full name and 10-digit phone number.');
       return;
     }
     setRegistering(true);
@@ -245,7 +261,7 @@ export default function FeesPortal() {
         centreCode: selectedCentre.centreCode,
         name: regName.trim(),
         phone: regPhone,
-        guardianName: regGuardian.trim(),
+        email: regEmail.trim() || undefined,
       });
       handleStudentSelect({
         studentId: res.studentId,
@@ -343,7 +359,7 @@ export default function FeesPortal() {
     setNameQuery('');
     setSelectedStudent(null);
     setShowRegister(false);
-    setRegName(''); setRegPhone(''); setRegGuardian(''); setRegisterError('');
+    setRegName(''); setRegPhone(''); setRegEmail(''); setRegisterError('');
     setMonth(getDefaultMonth());
     setSelectedPlanType(null);
     setSelectedFreqDays(null);
@@ -511,7 +527,7 @@ export default function FeesPortal() {
                   {[
                     { label: 'Student Name', value: regName, onChange: (v: string) => { setRegName(v); setRegisterError(''); }, type: 'text', placeholder: 'Full name' },
                     { label: 'Phone Number', value: regPhone, onChange: (v: string) => { setRegPhone(v.replace(/\D/g, '').slice(0, 10)); setRegisterError(''); }, type: 'tel', placeholder: '10-digit phone' },
-                    { label: 'Guardian Name', value: regGuardian, onChange: (v: string) => { setRegGuardian(v); setRegisterError(''); }, type: 'text', placeholder: 'Parent / guardian name' },
+                    { label: 'Email (for invoice)', value: regEmail, onChange: (v: string) => { setRegEmail(v); setRegisterError(''); }, type: 'email', placeholder: 'yourname@email.com (optional)' },
                   ].map(({ label, value, onChange, type, placeholder }) => (
                     <div key={label}>
                       <label className="mb-1 block text-sm font-medium text-gray-300">{label}</label>
@@ -610,11 +626,11 @@ export default function FeesPortal() {
             )}
 
             {/* Plan selector — other centres (frequencyPlans) */}
-            {!isRuia && (selectedStudent.frequencyPlans?.length ?? 0) > 0 && (
+            {!isRuia && availablePlans.length > 0 && (
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-gray-300">Select Plan</label>
-                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min((selectedStudent.frequencyPlans ?? []).length, 3)}, 1fr)` }}>
-                  {(selectedStudent.frequencyPlans ?? [])
+                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(availablePlans.length, 3)}, 1fr)` }}>
+                  {availablePlans
                     .slice()
                     .sort((a, b) => a.daysPerWeek - b.daysPerWeek)
                     .map((plan) => (
@@ -669,8 +685,8 @@ export default function FeesPortal() {
                   )}
                 </div>
                 <p className="mt-1 text-xs text-gray-500">
-                  {effectiveAmount === 0 && !useManualAmount
-                    ? 'No saved plan — please confirm the amount with your coach.'
+                  {availablePlans.length === 0
+                    ? 'No fee structure found — confirm the amount with your coach.'
                     : 'Confirm the exact fee amount with your coach.'}
                 </p>
               </div>

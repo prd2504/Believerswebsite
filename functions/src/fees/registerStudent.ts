@@ -10,7 +10,7 @@ import { checkRateLimit } from './rateLimiter.js';
  * placeholder values for required fields; an admin completes the profile later.
  *
  *   POST /registerStudent
- *   Body: { centreCode, name, phone, guardianName }
+ *   Body: { centreCode, name, phone, email? }
  */
 
 function maskPhone(local: string): string {
@@ -87,17 +87,17 @@ export const registerStudent = onRequest(
         dateOfBirth: '2010-01-01', // placeholder — admin to correct
         gender: 'UNDISCLOSED',
         photoPath: null,
-        guardianName: input.guardianName,
+        guardianName: null,
         guardianUserId: null,
         phone: input.phone,
-        email: null,
+        email: input.email ?? null,
         address: '',
         city: centreData.city ?? '',
         pincode: centreData.pincode ?? '',
         bloodGroup: 'UNKNOWN',
         emergencyContact: {
-          name: input.guardianName,
-          relationship: 'parent',
+          name: input.name,
+          relationship: 'self',
           phone: input.phone,
         },
         primaryCentreId: centreId,
