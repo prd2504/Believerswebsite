@@ -45,12 +45,12 @@ import {
 const RUIA_CENTRE_CODE = 'RUI';
 const RUIA_BOOKING_CENTRE_ID = 'ruia-college';
 
-interface CentreFeeConfig { centreCode: string; upiId: string; upiQrPath: string }
+interface CentreFeeConfig { centreCode: string; upiId: string }
 const CENTRE_FEE_CONFIG: Record<string, CentreFeeConfig> = {
-  DAD: { centreCode: 'DAD', upiId: '85287401@ubin', upiQrPath: '/Payment_QR.png' },
-  RBI: { centreCode: 'RBI', upiId: '85287401@ubin', upiQrPath: '/Payment_QR.png' },
-  RUI: { centreCode: 'RUI', upiId: '85287401@ubin', upiQrPath: '/Payment_QR.png' },
-  BAN: { centreCode: 'BAN', upiId: '85287401@ubin', upiQrPath: '/Payment_QR.png' },
+  DAD: { centreCode: 'DAD', upiId: '85287401@ubin' },
+  RBI: { centreCode: 'RBI', upiId: '85287401@ubin' },
+  RUI: { centreCode: 'RUI', upiId: '85287401@ubin' },
+  BAN: { centreCode: 'BAN', upiId: '85287401@ubin' },
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -196,6 +196,8 @@ export default function FeesPortal() {
       const match = availablePlans.find((p) => p.daysPerWeek === selectedFreqDays);
       if (match) return Math.round(match.monthlyFeePaise / 100);
     }
+    // No frequencyPlans data (CF not yet deployed or batch has none) — let manual input drive
+    if (!isRuia && availablePlans.length === 0) return Number(manualAmount) || 0;
     return selectedStudent?.monthlyFeeRupees ?? 0;
   }, [useManualAmount, manualAmount, isRuia, selectedPlanType, selectedFreqDays, selectedStudent, availablePlans]);
 
@@ -652,8 +654,8 @@ export default function FeesPortal() {
               </div>
             )}
 
-            {/* Amount display / manual override */}
-            {!useManualAmount && effectiveAmount > 0 && (
+            {/* Amount display — only when plan-derived amount is available */}
+            {!useManualAmount && effectiveAmount > 0 && (isRuia || availablePlans.length > 0) && (
               <div className="flex items-center justify-between rounded-xl border border-gray-700 bg-gray-800/50 p-4">
                 <div>
                   <p className="mb-0.5 text-sm text-gray-400">Amount to Pay</p>
@@ -668,7 +670,8 @@ export default function FeesPortal() {
               </div>
             )}
 
-            {(useManualAmount || effectiveAmount === 0) && (
+            {/* Manual input — always shown when no plans, or when user clicked Edit */}
+            {(useManualAmount || effectiveAmount === 0 || (!isRuia && availablePlans.length === 0)) && (
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-gray-300">
                   <BadgeIndianRupee size={14} className="mr-1 inline" /> Amount to Pay (₹)
@@ -677,7 +680,7 @@ export default function FeesPortal() {
                   <input type="number" inputMode="numeric" min={1} placeholder="Enter fee amount"
                     value={manualAmount} onChange={(e) => setManualAmount(e.target.value.replace(/\D/g, ''))}
                     className="flex-1 rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white placeholder-gray-500 focus:border-brand-primary focus:outline-none" />
-                  {useManualAmount && (
+                  {useManualAmount && availablePlans.length > 0 && (
                     <button onClick={() => setUseManualAmount(false)}
                       className="rounded-xl border border-gray-600 bg-gray-700 px-3 text-xs text-gray-400 transition hover:text-white">
                       Cancel
@@ -686,7 +689,7 @@ export default function FeesPortal() {
                 </div>
                 <p className="mt-1 text-xs text-gray-500">
                   {availablePlans.length === 0
-                    ? 'No fee structure found — confirm the amount with your coach.'
+                    ? 'Enter the amount agreed with your coach.'
                     : 'Confirm the exact fee amount with your coach.'}
                 </p>
               </div>
@@ -870,15 +873,23 @@ export default function FeesPortal() {
             {method === 'UPI' && (
               <>
                 <h2 className="text-lg font-semibold text-white">Pay via UPI</h2>
-                <div className="flex flex-col items-center rounded-xl border border-gray-700 bg-white p-4">
-                  <img src={feeConfig.upiQrPath} alt="UPI QR Code"
-                    className="mb-3 h-48 w-48 rounded-lg"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                  <p className="text-sm text-gray-600">Scan with any UPI app</p>
-                </div>
+
+                {/* UPI deep link — opens GPay / PhonePe / Paytm etc. */}
+                <a
+                  href={`upi://pay?pa=${encodeURIComponent(feeConfig.upiId)}&pn=${encodeURIComponent('BBA Sports')}&am=${effectiveAmount}&cu=INR&tn=${encodeURIComponent('BBA Fee Payment')}`}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-4 text-base font-bold text-white shadow-lg shadow-green-900/30 transition hover:bg-green-500 active:scale-95"
+                >
+                  <BadgeIndianRupee size={20} />
+                  Pay {formatINR(effectiveAmount * 100, { withDecimals: false })} — Open UPI App
+                </a>
+                <p className="text-center text-xs text-gray-500">
+                  Opens GPay, PhonePe, Paytm or any UPI app on your device
+                </p>
+
+                {/* UPI ID for manual entry or desktop scanning */}
                 <div className="flex items-center justify-between rounded-xl border border-gray-700 bg-gray-800/50 p-3">
                   <div>
-                    <p className="text-xs text-gray-400">UPI ID</p>
+                    <p className="text-xs text-gray-400">UPI ID (manual / desktop)</p>
                     <p className="font-mono text-sm text-white">{feeConfig.upiId}</p>
                   </div>
                   <button onClick={async () => { await copyToClipboard(feeConfig.upiId); setUpiCopied(true); setTimeout(() => setUpiCopied(false), 2000); }}
@@ -887,8 +898,7 @@ export default function FeesPortal() {
                   </button>
                 </div>
                 <div className="rounded-lg bg-blue-900/20 p-3 text-xs text-blue-300">
-                  Pay exactly {formatINR(effectiveAmount * 100, { withDecimals: false })} to the UPI ID above,
-                  then upload a screenshot below (optional).
+                  After paying, upload a screenshot below — it helps us verify your payment faster.
                 </div>
               </>
             )}
