@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { submitFeePaymentSchema } from './validation.js';
 import { checkRateLimit } from './rateLimiter.js';
 import { assignExternalStudentId, generateExternalInvoiceNo } from './invoiceCounter.js';
+import { appendPaymentToSheets } from './sheetsSync.js';
 
 function normalize(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -261,6 +262,37 @@ export const submitFeePayment = onRequest(
         externalInvoiceNo,
         source: paymentSource,
       });
+
+      // --- Best-effort Sheets sync (PUBLIC_FEES_PAGE only — SHEETS_FORM writes its own rows) ---
+      if (paymentSource === 'PUBLIC_FEES_PAGE') {
+        try {
+          let batchName = '';
+          if (batchId) {
+            const batchDoc = await db.collection('batches').doc(batchId).get();
+            if (batchDoc.exists) batchName = (batchDoc.data()!.name as string) ?? '';
+          }
+          await appendPaymentToSheets({
+            externalInvoiceNo,
+            now,
+            externalStudentId: externalStudentId ?? null,
+            studentName: student.name,
+            centreName: (centreData.name as string) ?? input.centreCode,
+            centreCode: input.centreCode,
+            month: input.month,
+            batchName,
+            amountRupees: input.amountRupees,
+            method: input.method,
+            coachName: input.coachName ?? null,
+            screenshotUrl: input.screenshotUrl ?? null,
+          });
+          logger.info('[submitFeePayment] Sheets sync complete', { externalInvoiceNo });
+        } catch (sheetsErr: any) {
+          logger.warn('[submitFeePayment] Sheets sync failed — non-fatal', {
+            error: sheetsErr?.message,
+            externalInvoiceNo,
+          });
+        }
+      }
 
       res.status(201).json({
         ok: true,
