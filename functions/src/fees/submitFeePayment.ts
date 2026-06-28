@@ -84,6 +84,7 @@ export const submitFeePayment = onRequest(
         id: string;
         name: string;
         phone: string | null;
+        email: string | null;
         externalStudentId: string | null;
         batchIds: string[];
       }>;
@@ -155,6 +156,7 @@ export const submitFeePayment = onRequest(
             id:                newRef.id,
             name:              input.studentName,
             phone:             input.phone ?? null,
+            email:             input.email ?? null,
             externalStudentId: input.externalStudentId,
             batchIds:          [],
           };
@@ -172,6 +174,16 @@ export const submitFeePayment = onRequest(
       let externalStudentId = student.externalStudentId;
       if (!externalStudentId) {
         externalStudentId = await assignExternalStudentId(centreId, input.centreCode, student.id);
+      }
+
+      // --- Persist payer email onto the student so the invoice trigger has a recipient ---
+      // Only fill when the student has no email yet — never overwrite an existing one.
+      if (input.email && !student.email) {
+        await db.collection('students').doc(student.id).update({
+          email: input.email,
+          updatedAt: new Date().toISOString(),
+        });
+        student.email = input.email;
       }
 
       // --- Look up active enrollment for batchId ---

@@ -97,6 +97,7 @@ export async function submitFeePayment(input: {
   studentId?: string;
   phone?: string;
   externalStudentId?: string;
+  email?: string;
   month: string;
   amountRupees: number;
   method: 'UPI' | 'CASH' | 'BANK_TRANSFER';

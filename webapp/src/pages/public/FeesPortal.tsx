@@ -136,6 +136,7 @@ export default function FeesPortal() {
 
   // Form — plan selection
   const [month, setMonth] = useState(getDefaultMonth());
+  const [payerEmail, setPayerEmail] = useState('');
   const [selectedPlanType, setSelectedPlanType] = useState<string | null>(null); // Ruia
   const [selectedFreqDays, setSelectedFreqDays] = useState<number | null>(null); // other centres
   const [manualAmount, setManualAmount] = useState('');
@@ -265,6 +266,7 @@ export default function FeesPortal() {
         phone: regPhone,
         email: regEmail.trim() || undefined,
       });
+      if (regEmail.trim()) setPayerEmail(regEmail.trim());
       handleStudentSelect({
         studentId: res.studentId,
         name: res.name,
@@ -320,6 +322,7 @@ export default function FeesPortal() {
         centreCode: selectedCentre.centreCode,
         studentId: selectedStudent.studentId,
         externalStudentId: selectedStudent.externalStudentId ?? undefined,
+        email: payerEmail.trim() || undefined,
         month,
         amountRupees: effectiveAmount,
         method,
@@ -363,6 +366,7 @@ export default function FeesPortal() {
     setShowRegister(false);
     setRegName(''); setRegPhone(''); setRegEmail(''); setRegisterError('');
     setMonth(getDefaultMonth());
+    setPayerEmail('');
     setSelectedPlanType(null);
     setSelectedFreqDays(null);
     setManualAmount('');
@@ -597,6 +601,15 @@ export default function FeesPortal() {
                 className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white focus:border-brand-primary focus:outline-none">
                 {getMonthOptions().map((m) => <option key={m} value={m}>{formatMonth(m)}</option>)}
               </select>
+            </div>
+
+            {/* Email — invoice receipt goes here */}
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-300">Email for Invoice</label>
+              <input type="email" inputMode="email" placeholder="yourname@email.com"
+                value={payerEmail} onChange={(e) => setPayerEmail(e.target.value)}
+                className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white placeholder-gray-500 focus:border-brand-primary focus:outline-none" />
+              <p className="mt-1 text-xs text-gray-500">Your payment receipt / invoice will be sent here.</p>
             </div>
 
             {/* Plan selector — Ruia */}
