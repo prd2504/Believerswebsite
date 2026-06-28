@@ -1,4 +1,4 @@
-import { google } from 'googleapis';
+import { sheets as sheetsApi, auth as sheetsAuth } from '@googleapis/sheets';
 import { logger } from 'firebase-functions';
 
 const SPREADSHEET_ID = '10CHOa1P_NfP9KBdO7p3zxFk6BMTJTSEfCTbAppUqHuQ';
@@ -25,7 +25,7 @@ function formatMonth(ym: string): string {
 function getAuth() {
   const json = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
   if (!json) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON not set');
-  return new google.auth.GoogleAuth({
+  return new sheetsAuth.GoogleAuth({
     credentials: JSON.parse(json),
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
@@ -48,7 +48,7 @@ export interface SheetsPaymentPayload {
 
 export async function appendPaymentToSheets(p: SheetsPaymentPayload): Promise<void> {
   const auth   = getAuth();
-  const sheets = google.sheets({ version: 'v4', auth });
+  const sheets = sheetsApi({ version: 'v4', auth });
   const dateStr  = formatDate(p.now);
   const monthStr = formatMonth(p.month);
 

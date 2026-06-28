@@ -311,10 +311,16 @@ export default function FeesPortal() {
     try {
       let screenshotUrl: string | null = null;
       if (screenshotFile) {
-        const path = `fee-screenshots/${selectedCentre.id}/${Date.now()}_${screenshotFile.name}`;
-        const storageRef = ref(storage, path);
-        await uploadBytes(storageRef, screenshotFile);
-        screenshotUrl = await getDownloadURL(storageRef);
+        try {
+          const safeName = screenshotFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const path = `fee-screenshots/${selectedCentre.id}/${Date.now()}_${safeName}`;
+          const storageRef = ref(storage, path);
+          await uploadBytes(storageRef, screenshotFile);
+          screenshotUrl = await getDownloadURL(storageRef);
+        } catch (uploadErr) {
+          // Screenshot is optional — don't block the payment if upload fails.
+          console.warn('[FeesPortal] screenshot upload failed, continuing without it', uploadErr);
+        }
       }
 
       // Always create the fee payment record
