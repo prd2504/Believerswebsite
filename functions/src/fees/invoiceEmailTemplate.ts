@@ -69,7 +69,8 @@ export function buildInvoiceHtml(p: InvoiceEmailParams): string {
 <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
 
   <!-- Header -->
-  <div style="background:#0D1B2A;padding:20px 24px;text-align:center">
+  <div style="background:#0D1B2A;padding:24px 24px 20px;text-align:center">
+    <img src="https://bbashuttle.com/logo.png" alt="BBA Sports" width="120" style="display:block;margin:0 auto 12px;max-width:120px;height:auto" />
     <h2 style="margin:0;font-size:18px;font-weight:700;color:#ffffff;letter-spacing:0.5px">BBA Sports Private Limited</h2>
     <p style="margin:4px 0 0;font-size:11px;color:#94a3b8">hello@bbashuttle.com</p>
   </div>
