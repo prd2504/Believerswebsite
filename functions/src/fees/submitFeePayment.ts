@@ -5,7 +5,9 @@ import { config } from '../config.js';
 import { submitFeePaymentSchema } from './validation.js';
 import { checkRateLimit } from './rateLimiter.js';
 import { assignExternalStudentId, generateExternalInvoiceNo } from './invoiceCounter.js';
-import { appendPaymentToSheets } from './sheetsSync.js';
+import { syncPublicFeePayment } from './sheetsSync.js';
+import { sendMail } from './mailer.js';
+import { buildWelcomeHtml } from './welcomeEmailTemplate.js';
 
 function normalize(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -275,7 +277,7 @@ export const submitFeePayment = onRequest(
         source: paymentSource,
       });
 
-      // --- Best-effort Sheets sync (PUBLIC_FEES_PAGE only — SHEETS_FORM writes its own rows) ---
+      // --- Apps Script parity for PUBLIC_FEES_PAGE (SHEETS_FORM untouched) ---
       if (paymentSource === 'PUBLIC_FEES_PAGE') {
         try {
           let batchName = '';
@@ -283,11 +285,13 @@ export const submitFeePayment = onRequest(
             const batchDoc = await db.collection('batches').doc(batchId).get();
             if (batchDoc.exists) batchName = (batchDoc.data()!.name as string) ?? '';
           }
-          await appendPaymentToSheets({
+          const { isNewStudent } = await syncPublicFeePayment({
             externalInvoiceNo,
-            now,
+            nowIso: now,
             externalStudentId: externalStudentId ?? null,
             studentName: student.name,
+            phone: student.phone ?? input.phone ?? null,
+            email: student.email ?? input.email ?? null,
             centreName: (centreData.name as string) ?? input.centreCode,
             centreCode: input.centreCode,
             month: input.month,
@@ -297,7 +301,29 @@ export const submitFeePayment = onRequest(
             coachName: input.coachName ?? null,
             screenshotUrl: input.screenshotUrl ?? null,
           });
-          logger.info('[submitFeePayment] Sheets sync complete', { externalInvoiceNo });
+          logger.info('[submitFeePayment] Sheets sync complete', { externalInvoiceNo, isNewStudent });
+
+          // Welcome email — new students only (best-effort; invoice email is sent by onFeePaymentCreated)
+          if (isNewStudent) {
+            const welcomeTo = student.email ?? input.email ?? null;
+            if (welcomeTo) {
+              try {
+                await sendMail({
+                  to: welcomeTo,
+                  subject: 'Welcome to BBA Sports! 🏸',
+                  html: buildWelcomeHtml({
+                    studentName: student.name,
+                    externalStudentId: externalStudentId ?? null,
+                    centreName: (centreData.name as string) ?? input.centreCode,
+                    batchName,
+                  }),
+                });
+                logger.info('[submitFeePayment] welcome email sent', { externalInvoiceNo });
+              } catch (welErr: any) {
+                logger.warn('[submitFeePayment] welcome email failed — non-fatal', { error: welErr?.message });
+              }
+            }
+          }
         } catch (sheetsErr: any) {
           logger.warn('[submitFeePayment] Sheets sync failed — non-fatal', {
             error: sheetsErr?.message,

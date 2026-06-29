@@ -68,15 +68,15 @@ export function buildInvoiceHtml(p: InvoiceEmailParams): string {
 <body style="margin:0;padding:20px;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
 <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
 
-  <!-- Header -->
-  <div style="background:#0D1B2A;padding:24px 24px 20px;text-align:center">
+  <!-- Header (orange) -->
+  <div style="background:#E84C1E;padding:24px 24px 20px;text-align:center">
     <img src="https://bbashuttle.com/logo.png" alt="BBA Sports" width="120" style="display:block;margin:0 auto 12px;max-width:120px;height:auto" />
     <h2 style="margin:0;font-size:18px;font-weight:700;color:#ffffff;letter-spacing:0.5px">BBA Sports Private Limited</h2>
-    <p style="margin:4px 0 0;font-size:11px;color:#94a3b8">hello@bbashuttle.com</p>
+    <p style="margin:4px 0 0;font-size:11px;color:#fde4dc">hello@bbashuttle.com</p>
   </div>
 
-  <!-- Doc type bar -->
-  <div style="background:#D94F2A;padding:10px 24px;text-align:center">
+  <!-- Doc type bar (dark) -->
+  <div style="background:#0D1B2A;padding:10px 24px;text-align:center">
     <span style="color:#ffffff;font-size:12px;font-weight:700;letter-spacing:1px">FEE RECEIPT &mdash; ${monthLabel(p.month).toUpperCase()}</span>
   </div>
 
@@ -120,7 +120,7 @@ export function buildInvoiceHtml(p: InvoiceEmailParams): string {
     </div>
 
     <!-- Amount breakdown -->
-    <h3 style="margin:0 0 12px;font-size:14px;font-weight:600;color:#0f172a;border-left:3px solid #D94F2A;padding-left:10px">Fee Breakdown</h3>
+    <h3 style="margin:0 0 12px;font-size:14px;font-weight:600;color:#0f172a;border-left:3px solid #E84C1E;padding-left:10px">Fee Breakdown</h3>
     <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
       <tr>
         <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155">Coaching Fee</td>

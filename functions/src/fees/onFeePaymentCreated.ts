@@ -23,6 +23,10 @@ export const onFeePaymentCreated = onDocumentWritten(
     // Only fire for payments with paymentSource (skip legacy admin-created payments)
     if (!after.paymentSource) return;
 
+    // Invoice email is owned by this trigger ONLY for the public /fees page.
+    // SHEETS_FORM payments get their invoice email from the Apps Script — don't duplicate.
+    if (after.paymentSource !== 'PUBLIC_FEES_PAGE') return;
+
     // Only fire when status becomes PAID
     if (after.status !== 'PAID') return;
 
