@@ -13,6 +13,18 @@ const CENTRE_TAB: Record<string, string> = {
 const INVOICE_LOG_TAB = 'Invoice_Log';
 const PLAYER_DIRECTORY_TAB = 'Player_Directory';
 const ADMIN_LOGS_TAB = 'admin_logs';
+const CENTRE_CONFIG_TAB = 'Centre_Config';
+
+/** 0-based column index → A1 column letter (0→A, 25→Z, 26→AA). */
+function colLetter(idx: number): string {
+  let s = '';
+  let n = idx;
+  while (n >= 0) {
+    s = String.fromCharCode((n % 26) + 65) + s;
+    n = Math.floor(n / 26) - 1;
+  }
+  return s;
+}
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -73,6 +85,9 @@ export interface PublicFeeSyncPayload {
   method: string;
   coachName: string | null;
   screenshotUrl: string | null;
+  /** Latest Firestore counters to mirror into Centre_Config (null = skip). */
+  lastInvoiceNo: number | null;
+  lastStudentNo: number | null;
 }
 
 // ── individual writes (each thrown error is caught by the orchestrator) ──
@@ -154,6 +169,63 @@ async function findOrCreatePlayerDirectory(sheets: Sheets, p: PublicFeeSyncPaylo
   return true; // new student
 }
 
+/**
+ * Mirror the latest Firestore counters into the Centre_Config sheet so it stays
+ * in sync with /fees activity. Firestore is the single source of truth (the
+ * Google Form is retired); this is a one-way write for visibility/back-compat.
+ * Columns are detected by header name, and the centre row is matched by code or
+ * name, so it tolerates differing Centre_Config layouts.
+ */
+async function mirrorCentreConfigCounters(
+  sheets: Sheets, centreCode: string, centreName: string,
+  lastInvoiceNo: number | null, lastStudentNo: number | null,
+): Promise<void> {
+  if (lastInvoiceNo == null && lastStudentNo == null) return;
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `${CENTRE_CONFIG_TAB}!A:Z`,
+  });
+  const rows = res.data.values ?? [];
+  if (rows.length < 2) throw new Error('Centre_Config has no data rows');
+
+  const headers = (rows[0] ?? []).map((h) => String(h ?? '').trim().toLowerCase());
+  const findCol = (pred: (h: string) => boolean) => headers.findIndex(pred);
+
+  // Centre key column: prefer code/id, then name, then any "centre".
+  let centreCol = findCol((h) => h.includes('centre') && (h.includes('code') || h.includes('id')));
+  if (centreCol < 0) centreCol = findCol((h) => h.includes('centre') && h.includes('name'));
+  if (centreCol < 0) centreCol = findCol((h) => h.includes('centre'));
+  if (centreCol < 0) throw new Error('Centre_Config: no centre column found');
+
+  const invoiceCol = findCol((h) => h.includes('invoice'));
+  const studentCol = findCol((h) => h.includes('student'));
+
+  const wantCode = centreCode.trim().toLowerCase();
+  const wantName = centreName.trim().toLowerCase();
+  let rowIdx = -1;
+  for (let i = 1; i < rows.length; i++) {
+    const cell = String(rows[i]?.[centreCol] ?? '').trim().toLowerCase();
+    if (cell && (cell === wantCode || cell === wantName)) { rowIdx = i; break; }
+  }
+  if (rowIdx < 0) throw new Error(`Centre_Config: no row matching centre "${centreCode}"`);
+
+  const sheetRow = rowIdx + 1;
+  const data: { range: string; values: (number | string)[][] }[] = [];
+  if (lastInvoiceNo != null && invoiceCol >= 0) {
+    data.push({ range: `${CENTRE_CONFIG_TAB}!${colLetter(invoiceCol)}${sheetRow}`, values: [[lastInvoiceNo]] });
+  }
+  if (lastStudentNo != null && studentCol >= 0) {
+    data.push({ range: `${CENTRE_CONFIG_TAB}!${colLetter(studentCol)}${sheetRow}`, values: [[lastStudentNo]] });
+  }
+  if (!data.length) throw new Error('Centre_Config: no invoice/student counter columns found');
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: { valueInputOption: 'USER_ENTERED', data },
+  });
+}
+
 async function appendAdminLog(
   sheets: Sheets, ts: string, action: string, studentName: string, centreName: string, notes: string,
 ) {
@@ -185,6 +257,9 @@ export async function syncPublicFeePayment(p: PublicFeeSyncPayload): Promise<{ i
 
   try { await appendPaymentsTab(sheets, p, ts, monthStr); }
   catch (e: any) { errors.push(`Payments: ${e?.message}`); logger.warn('[sheetsSync] Payments tab failed', { error: e?.message }); }
+
+  try { await mirrorCentreConfigCounters(sheets, p.centreCode, p.centreName, p.lastInvoiceNo, p.lastStudentNo); }
+  catch (e: any) { errors.push(`Centre_Config: ${e?.message}`); logger.warn('[sheetsSync] Centre_Config mirror failed', { error: e?.message }); }
 
   if (isNew) {
     try { await appendAdminLog(sheets, ts, 'New student auto-created', p.studentName, p.centreName, `ID: ${p.externalStudentId ?? ''} | Batch: ${p.batchName ?? ''}`); }

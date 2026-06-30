@@ -285,6 +285,10 @@ export const submitFeePayment = onRequest(
             const batchDoc = await db.collection('batches').doc(batchId).get();
             if (batchDoc.exists) batchName = (batchDoc.data()!.name as string) ?? '';
           }
+          // Fresh centre counters (post-increment) to mirror into Centre_Config.
+          const freshCentreSnap = await db.collection('centres').doc(centreId).get();
+          const lastInvoiceNo = (freshCentreSnap.data()?.lastInvoiceNo as number) ?? null;
+          const lastStudentNo = (freshCentreSnap.data()?.lastStudentNo as number) ?? null;
           const { isNewStudent } = await syncPublicFeePayment({
             externalInvoiceNo,
             nowIso: now,
@@ -300,6 +304,8 @@ export const submitFeePayment = onRequest(
             method: input.method,
             coachName: input.coachName ?? null,
             screenshotUrl: input.screenshotUrl ?? null,
+            lastInvoiceNo,
+            lastStudentNo,
           });
           logger.info('[submitFeePayment] Sheets sync complete', { externalInvoiceNo, isNewStudent });
 
