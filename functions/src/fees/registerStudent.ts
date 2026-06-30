@@ -108,6 +108,9 @@ export const registerStudent = onRequest(
         statusHistory: [],
         joinedDate: today,
         medicalNotes: null,
+        // Self-registered via the public /fees page → gets a welcome email on
+        // first payment. Cleared by onFeePaymentCreated once sent.
+        welcomeEmailPending: true,
         createdAt: now,
         updatedAt: now,
         createdBy: 'PUBLIC_FEES_PAGE',

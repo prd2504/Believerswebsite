@@ -129,8 +129,11 @@ export const onFeePaymentCreated = onDocumentWritten(
       logger.error('[onFeePaymentCreated] Failed to send invoice email', { error: err?.message });
     }
 
-    // ── Welcome email (newly auto-created students only) ──
-    if (isNewStudent) {
+    // ── Welcome email — ONLY for students who self-registered via the public
+    // /fees page (welcomeEmailPending flag set by registerStudent). Students
+    // found via name autocomplete are existing and get the invoice only. Cleared
+    // after sending so it never repeats on later payments. ──
+    if (student.welcomeEmailPending === true) {
       try {
         await sendMail({
           to: recipientEmail,
@@ -142,6 +145,7 @@ export const onFeePaymentCreated = onDocumentWritten(
             batchName,
           }),
         });
+        await db.doc(`students/${studentId}`).update({ welcomeEmailPending: false });
         logger.info('[onFeePaymentCreated] Welcome email sent', { to: recipientEmail });
       } catch (err: any) {
         logger.warn('[onFeePaymentCreated] Welcome email failed', { error: err?.message });

@@ -70,6 +70,32 @@ function getSheets() {
 
 type Sheets = ReturnType<typeof getSheets>;
 
+/**
+ * Retry transient Sheets API failures (429 rate-limit, 5xx) with exponential
+ * backoff. Matters when several /fees payments fan out to Sheets at once and
+ * brush against the per-minute write quota.
+ */
+async function withRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
+  let lastErr: any;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastErr = e;
+      const code = e?.code ?? e?.response?.status;
+      const retriable = code === 429 || (typeof code === 'number' && code >= 500);
+      if (!retriable || i === attempts - 1) throw e;
+      await new Promise((r) => setTimeout(r, 700 * Math.pow(2, i)));
+    }
+  }
+  throw lastErr;
+}
+
+const svcAppend = (sheets: Sheets, params: any) => withRetry(() => sheets.spreadsheets.values.append(params));
+const svcGet = (sheets: Sheets, params: any) => withRetry(() => sheets.spreadsheets.values.get(params));
+const svcUpdate = (sheets: Sheets, params: any) => withRetry(() => sheets.spreadsheets.values.update(params));
+const svcBatchUpdate = (sheets: Sheets, params: any) => withRetry(() => sheets.spreadsheets.values.batchUpdate(params));
+
 export interface PublicFeeSyncPayload {
   externalInvoiceNo: string;
   nowIso: string;
@@ -93,7 +119,7 @@ export interface PublicFeeSyncPayload {
 // ── individual writes (each thrown error is caught by the orchestrator) ──
 
 async function appendInvoiceLog(sheets: Sheets, p: PublicFeeSyncPayload, ts: string, monthStr: string) {
-  await sheets.spreadsheets.values.append({
+  await svcAppend(sheets, {
     spreadsheetId: SPREADSHEET_ID,
     range: `${INVOICE_LOG_TAB}!A:M`,
     valueInputOption: 'USER_ENTERED',
@@ -113,7 +139,7 @@ async function appendPaymentsTab(sheets: Sheets, p: PublicFeeSyncPayload, ts: st
     logger.warn('[sheetsSync] no per-centre tab for centreCode', { centreCode: p.centreCode });
     return;
   }
-  await sheets.spreadsheets.values.append({
+  await svcAppend(sheets, {
     spreadsheetId: SPREADSHEET_ID,
     range: `${tab}!A:J`,
     valueInputOption: 'USER_ENTERED',
@@ -129,7 +155,7 @@ async function appendPaymentsTab(sheets: Sheets, p: PublicFeeSyncPayload, ts: st
 
 /** Player_Directory: find by Mobile+Name (case-insensitive). Update Batch if changed; else append. Returns isNew. */
 async function findOrCreatePlayerDirectory(sheets: Sheets, p: PublicFeeSyncPayload): Promise<boolean> {
-  const res = await sheets.spreadsheets.values.get({
+  const res = await svcGet(sheets, {
     spreadsheetId: SPREADSHEET_ID,
     range: `${PLAYER_DIRECTORY_TAB}!A:I`,
   });
@@ -144,7 +170,7 @@ async function findOrCreatePlayerDirectory(sheets: Sheets, p: PublicFeeSyncPaylo
     if (targetPhone && rowPhone === targetPhone && normName(r[1]) === targetName) {
       const currentBatch = (r[5] ?? '').toString();
       if (p.batchName && currentBatch !== p.batchName) {
-        await sheets.spreadsheets.values.update({
+        await svcUpdate(sheets, {
           spreadsheetId: SPREADSHEET_ID,
           range: `${PLAYER_DIRECTORY_TAB}!F${i + 1}`,
           valueInputOption: 'USER_ENTERED',
@@ -155,7 +181,7 @@ async function findOrCreatePlayerDirectory(sheets: Sheets, p: PublicFeeSyncPaylo
     }
   }
 
-  await sheets.spreadsheets.values.append({
+  await svcAppend(sheets, {
     spreadsheetId: SPREADSHEET_ID,
     range: `${PLAYER_DIRECTORY_TAB}!A:I`,
     valueInputOption: 'USER_ENTERED',
@@ -183,7 +209,7 @@ async function mirrorCentreConfigCounters(
 ): Promise<void> {
   if (lastInvoiceNo == null && lastStudentNo == null) return;
 
-  const res = await sheets.spreadsheets.values.get({
+  const res = await svcGet(sheets, {
     spreadsheetId: SPREADSHEET_ID,
     range: `${CENTRE_CONFIG_TAB}!A:Z`,
   });
@@ -220,7 +246,7 @@ async function mirrorCentreConfigCounters(
   }
   if (!data.length) throw new Error('Centre_Config: no invoice/student counter columns found');
 
-  await sheets.spreadsheets.values.batchUpdate({
+  await svcBatchUpdate(sheets, {
     spreadsheetId: SPREADSHEET_ID,
     requestBody: { valueInputOption: 'USER_ENTERED', data },
   });
@@ -229,7 +255,7 @@ async function mirrorCentreConfigCounters(
 async function appendAdminLog(
   sheets: Sheets, ts: string, action: string, studentName: string, centreName: string, notes: string,
 ) {
-  await sheets.spreadsheets.values.append({
+  await svcAppend(sheets, {
     spreadsheetId: SPREADSHEET_ID,
     range: `${ADMIN_LOGS_TAB}!A:E`,
     valueInputOption: 'USER_ENTERED',
