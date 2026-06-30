@@ -5,9 +5,6 @@ import { config } from '../config.js';
 import { submitFeePaymentSchema } from './validation.js';
 import { checkRateLimit } from './rateLimiter.js';
 import { assignExternalStudentId, generateExternalInvoiceNo } from './invoiceCounter.js';
-import { syncPublicFeePayment } from './sheetsSync.js';
-import { sendMail } from './mailer.js';
-import { buildWelcomeHtml } from './welcomeEmailTemplate.js';
 
 function normalize(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -277,66 +274,11 @@ export const submitFeePayment = onRequest(
         source: paymentSource,
       });
 
-      // --- Apps Script parity for PUBLIC_FEES_PAGE (SHEETS_FORM untouched) ---
-      if (paymentSource === 'PUBLIC_FEES_PAGE') {
-        try {
-          let batchName = '';
-          if (batchId) {
-            const batchDoc = await db.collection('batches').doc(batchId).get();
-            if (batchDoc.exists) batchName = (batchDoc.data()!.name as string) ?? '';
-          }
-          // Fresh centre counters (post-increment) to mirror into Centre_Config.
-          const freshCentreSnap = await db.collection('centres').doc(centreId).get();
-          const lastInvoiceNo = (freshCentreSnap.data()?.lastInvoiceNo as number) ?? null;
-          const lastStudentNo = (freshCentreSnap.data()?.lastStudentNo as number) ?? null;
-          const { isNewStudent } = await syncPublicFeePayment({
-            externalInvoiceNo,
-            nowIso: now,
-            externalStudentId: externalStudentId ?? null,
-            studentName: student.name,
-            phone: student.phone ?? input.phone ?? null,
-            email: student.email ?? input.email ?? null,
-            centreName: (centreData.name as string) ?? input.centreCode,
-            centreCode: input.centreCode,
-            month: input.month,
-            batchName,
-            amountRupees: input.amountRupees,
-            method: input.method,
-            coachName: input.coachName ?? null,
-            screenshotUrl: input.screenshotUrl ?? null,
-            lastInvoiceNo,
-            lastStudentNo,
-          });
-          logger.info('[submitFeePayment] Sheets sync complete', { externalInvoiceNo, isNewStudent });
-
-          // Welcome email — new students only (best-effort; invoice email is sent by onFeePaymentCreated)
-          if (isNewStudent) {
-            const welcomeTo = student.email ?? input.email ?? null;
-            if (welcomeTo) {
-              try {
-                await sendMail({
-                  to: welcomeTo,
-                  subject: 'Welcome to BBA Sports! 🏸',
-                  html: buildWelcomeHtml({
-                    studentName: student.name,
-                    externalStudentId: externalStudentId ?? null,
-                    centreName: (centreData.name as string) ?? input.centreCode,
-                    batchName,
-                  }),
-                });
-                logger.info('[submitFeePayment] welcome email sent', { externalInvoiceNo });
-              } catch (welErr: any) {
-                logger.warn('[submitFeePayment] welcome email failed — non-fatal', { error: welErr?.message });
-              }
-            }
-          }
-        } catch (sheetsErr: any) {
-          logger.warn('[submitFeePayment] Sheets sync failed — non-fatal', {
-            error: sheetsErr?.message,
-            externalInvoiceNo,
-          });
-        }
-      }
+      // Google Sheets sync (Player_Directory, Invoice_Log, Payments_<centre>,
+      // Centre_Config mirror, admin_logs) + invoice/welcome emails are handled
+      // asynchronously by the onFeePaymentCreated Firestore trigger, so the
+      // public page gets a fast response instead of waiting on ~6 Sheets API
+      // calls + SMTP. See onFeePaymentCreated.ts.
 
       res.status(201).json({
         ok: true,
