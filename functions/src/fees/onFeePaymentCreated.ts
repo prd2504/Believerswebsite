@@ -65,6 +65,29 @@ export const onFeePaymentCreated = onDocumentWritten(
       if (batchDoc.exists) batchName = (batchDoc.data()!.name as string) ?? '';
     }
 
+    // ── Idempotency claim ──
+    // Eventarc delivers at-least-once, so this trigger can fire more than once
+    // for the same payment (transient platform retries, redelivery under load).
+    // Without a guard, a redelivery would append a second Invoice_Log /
+    // Payments_<centre> row and send a second invoice email — corrupting the
+    // CA's records and confusing the payer. Claim the side-effects atomically so
+    // they run exactly once. Placed after the lookups above so a transient read
+    // failure there still lets the platform retry the whole trigger cleanly.
+    const paymentRef = db.doc(`payments/${event.params.paymentId}`);
+    const claimed = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(paymentRef);
+      if (!snap.exists) return false;
+      if (snap.data()!.sideEffectsCompletedAt) return false; // already handled
+      tx.update(paymentRef, { sideEffectsCompletedAt: new Date().toISOString() });
+      return true;
+    });
+    if (!claimed) {
+      logger.info('[onFeePaymentCreated] Side-effects already done — skipping duplicate delivery', {
+        paymentId: event.params.paymentId,
+      });
+      return;
+    }
+
     // ── Google Sheets sync (best-effort; never throws) ──
     let isNewStudent = false;
     try {

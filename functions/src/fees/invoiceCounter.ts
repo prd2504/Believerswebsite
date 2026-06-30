@@ -4,6 +4,16 @@ function pad3(n: number): string {
   return String(n).padStart(3, '0');
 }
 
+// Sequential invoice/student numbers must be gap-free for the CA, so they come
+// from a single counter on the centre doc — an unavoidable serialization point.
+// When several parents in one centre's WhatsApp group pay within the same second
+// or two, their transactions contend on that one doc. Firestore retries
+// contended transactions automatically; we raise the attempt budget well above
+// the SDK default (5) so even a tight burst serializes cleanly instead of
+// surfacing an error to a payer. Each attempt is a tiny read+increment, so the
+// extra attempts cost only milliseconds.
+const COUNTER_TX_OPTS = { maxAttempts: 25 } as const;
+
 export async function assignExternalStudentId(
   centreId: string,
   centreCode: string,
@@ -22,7 +32,7 @@ export async function assignExternalStudentId(
     tx.update(studentRef, { externalStudentId: externalId });
 
     return externalId;
-  });
+  }, COUNTER_TX_OPTS);
 }
 
 export async function generateExternalInvoiceNo(
@@ -40,5 +50,5 @@ export async function generateExternalInvoiceNo(
     tx.update(centreRef, { lastInvoiceNo: next });
 
     return invoiceNo;
-  });
+  }, COUNTER_TX_OPTS);
 }
