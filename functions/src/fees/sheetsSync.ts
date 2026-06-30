@@ -115,12 +115,13 @@ async function appendPaymentsTab(sheets: Sheets, p: PublicFeeSyncPayload, ts: st
   }
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${tab}!A:I`,
+    range: `${tab}!A:J`,
     valueInputOption: 'USER_ENTERED',
     requestBody: {
       values: [[
         ts, p.externalInvoiceNo, p.externalStudentId ?? '', p.studentName,
         p.batchName, p.amountRupees, monthStr, p.method, 'Pending Verification',
+        p.screenshotUrl ?? '',
       ]],
     },
   });
