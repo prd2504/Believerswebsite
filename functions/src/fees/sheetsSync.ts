@@ -191,25 +191,24 @@ async function mirrorCentreConfigCounters(
   if (rows.length < 2) throw new Error('Centre_Config has no data rows');
 
   const headers = (rows[0] ?? []).map((h) => String(h ?? '').trim().toLowerCase());
-  const findCol = (pred: (h: string) => boolean) => headers.findIndex(pred);
+  const invoiceCol = headers.findIndex((h) => h.includes('invoice'));
+  const studentCol = headers.findIndex((h) => h.includes('student'));
 
-  // Centre key column: prefer code/id, then name, then any "centre".
-  let centreCol = findCol((h) => h.includes('centre') && (h.includes('code') || h.includes('id')));
-  if (centreCol < 0) centreCol = findCol((h) => h.includes('centre') && h.includes('name'));
-  if (centreCol < 0) centreCol = findCol((h) => h.includes('centre'));
-  if (centreCol < 0) throw new Error('Centre_Config: no centre column found');
-
-  const invoiceCol = findCol((h) => h.includes('invoice'));
-  const studentCol = findCol((h) => h.includes('student'));
-
-  const wantCode = centreCode.trim().toLowerCase();
-  const wantName = centreName.trim().toLowerCase();
+  // Match the centre row by scanning all cells, so it works whether the sheet
+  // keys on the prefix ("BBA-DAD"), the bare code ("DAD"), or the centre name.
+  const candidates = new Set(
+    [
+      centreCode.trim().toLowerCase(),
+      `bba-${centreCode.trim().toLowerCase()}`,
+      centreName.trim().toLowerCase(),
+    ].filter(Boolean),
+  );
   let rowIdx = -1;
   for (let i = 1; i < rows.length; i++) {
-    const cell = String(rows[i]?.[centreCol] ?? '').trim().toLowerCase();
-    if (cell && (cell === wantCode || cell === wantName)) { rowIdx = i; break; }
+    const row = rows[i] ?? [];
+    if (row.some((c) => candidates.has(String(c ?? '').trim().toLowerCase()))) { rowIdx = i; break; }
   }
-  if (rowIdx < 0) throw new Error(`Centre_Config: no row matching centre "${centreCode}"`);
+  if (rowIdx < 0) throw new Error(`Centre_Config: no row matching "${centreCode}" / "${centreName}"`);
 
   const sheetRow = rowIdx + 1;
   const data: { range: string; values: (number | string)[][] }[] = [];
