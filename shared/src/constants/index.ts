@@ -76,8 +76,8 @@ export const PAYMENT = {
   gracePeriodDays: 0,
   /** Days after due date when a firm overdue reminder is sent. */
   overdueReminderDaysAfterDue: 3,
-  /** Default GST rate for coaching services in India (can be overridden per centre). */
-  defaultGstRatePercent: 18,
+  /** GST not charged — BBA Sports has no GST compliance yet. Fees are billed as-is. */
+  defaultGstRatePercent: 0,
   /** Receipt number prefix. */
   receiptNumberPrefix: 'BBA',
 } as const;

@@ -124,12 +124,8 @@ export function buildInvoiceHtml(p: InvoiceEmailParams): string {
     <table style="width:100%;border-collapse:collapse;margin-bottom:16px">
       <tr>
         <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155">Coaching Fee</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;text-align:right;color:#334155">${fmtINR(p.baseAmountPaise)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;text-align:right;color:#334155">${fmtINR(p.totalAmountPaise)}</td>
       </tr>
-      ${p.gstAmountPaise > 0 ? `<tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155">GST (${p.gstRatePercent}%)</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;text-align:right;color:#334155">${fmtINR(p.gstAmountPaise)}</td>
-      </tr>` : ''}
     </table>
 
     <!-- Total -->

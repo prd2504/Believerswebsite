@@ -72,7 +72,9 @@ export const submitFeePayment = onRequest(
       const centreDoc = centreSnap.docs[0];
       const centreId = centreDoc.id;
       const centreData = centreDoc.data();
-      const gstRate = centreData.gstRatePercent ?? 0;
+      // GST is not charged — BBA Sports has no GST compliance yet. The amount
+      // paid is the full fee with no tax split (e.g. ₹2000 = ₹2000).
+      const gstRate = 0;
 
       // --- Look up student ---
       const studentsSnap = await db.collection('students')

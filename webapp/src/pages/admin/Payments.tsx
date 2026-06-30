@@ -207,10 +207,6 @@ function DetailRow({
               <p className="font-medium text-gray-700">{formatINR(p.baseAmountPaise, { withDecimals: false })}</p>
             </div>
             <div>
-              <span className="text-gray-400">GST ({p.gstRatePercentSnapshot}%)</span>
-              <p className="font-medium text-gray-700">{formatINR(p.gstAmountPaise, { withDecimals: false })}</p>
-            </div>
-            <div>
               <span className="text-gray-400">Method</span>
               <p className="font-medium text-gray-700">{p.method === 'NONE' ? '—' : p.method.replace('_', ' ')}</p>
             </div>
@@ -1394,9 +1390,6 @@ export default function PaymentsPage() {
                     <th className="px-4 py-3 text-right">
                       <SortButton field="total" label="Total" current={sortField} dir={sortDir} onSort={handleSort} />
                     </th>
-                    <th className="px-4 py-3 hidden lg:table-cell">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Base + GST</span>
-                    </th>
                     <th className="px-4 py-3">
                       <SortButton field="dueDate" label="Due" current={sortField} dir={sortDir} onSort={handleSort} />
                     </th>
@@ -1421,9 +1414,6 @@ export default function PaymentsPage() {
                       <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{fmtMonth(p.month)}</td>
                       <td className="px-4 py-2.5 text-right font-semibold text-brand-secondary whitespace-nowrap">
                         {formatINR(p.totalAmountPaise, { withDecimals: false })}
-                      </td>
-                      <td className="px-4 py-2.5 text-gray-400 whitespace-nowrap hidden lg:table-cell">
-                        {formatINR(p.baseAmountPaise, { withDecimals: false })} + {formatINR(p.gstAmountPaise, { withDecimals: false })}
                       </td>
                       <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{fmtDate(p.dueDate)}</td>
                       <td className="px-4 py-2.5">

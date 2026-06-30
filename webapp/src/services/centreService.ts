@@ -42,7 +42,7 @@ function fromFirestore(id: string, data: DocumentData): CentreDocument {
     courtCount: data.courtCount ?? 0,
     sportTypes: Array.isArray(data.sportTypes) ? data.sportTypes : [],
     operatingHours: Array.isArray(data.operatingHours) ? data.operatingHours : [],
-    gstRatePercent: data.gstRatePercent ?? 18,
+    gstRatePercent: data.gstRatePercent ?? 0,
     active: data.active ?? true,
     contactPhone: data.contactPhone ?? null,
     contactEmail: data.contactEmail ?? null,

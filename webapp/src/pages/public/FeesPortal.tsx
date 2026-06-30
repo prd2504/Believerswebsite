@@ -96,6 +96,39 @@ async function copyToClipboard(text: string) {
   }
 }
 
+/**
+ * Downscale + re-encode a screenshot to a small JPEG before upload so the
+ * upload is fast on mobile data. Falls back to the original file on any failure
+ * or if compression doesn't actually shrink it.
+ */
+async function compressImage(file: File, maxDim = 1280, quality = 0.7): Promise<Blob> {
+  try {
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as string);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+    const img: HTMLImageElement = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = dataUrl;
+    });
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    return blob && blob.size < file.size ? blob : file;
+  } catch {
+    return file;
+  }
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 type Step = 'centre' | 'lookup' | 'form' | 'slot' | 'payment' | 'success';
@@ -343,10 +376,11 @@ export default function FeesPortal() {
       let screenshotUrl: string | null = null;
       if (screenshotFile) {
         try {
+          const compressed = await compressImage(screenshotFile);
           const safeName = screenshotFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
           const path = `fee-screenshots/${selectedCentre.id}/${Date.now()}_${safeName}`;
           const storageRef = ref(storage, path);
-          await uploadBytes(storageRef, screenshotFile);
+          await uploadBytes(storageRef, compressed, { contentType: (compressed as Blob).type || 'image/jpeg' });
           screenshotUrl = await getDownloadURL(storageRef);
         } catch (uploadErr) {
           // Screenshot is optional — don't block the payment if upload fails.

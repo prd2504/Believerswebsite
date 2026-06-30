@@ -49,7 +49,7 @@ export function defaultCentreFormValues(): CentreFormValues {
     courtCount: 2,
     sportTypes: ['BADMINTON'],
     operatingHours: defaultOperatingHours(),
-    gstRatePercent: 18,
+    gstRatePercent: 0,
     active: true,
     contactPhone: '',
     contactEmail: '',

@@ -29,7 +29,7 @@ export function defaultPaymentFormValues(centreId?: string, gstRate?: number): P
     centreId: centreId ?? '',
     month,
     baseAmountRupees: 0,
-    gstRatePercent: gstRate ?? 18,
+    gstRatePercent: gstRate ?? 0,
     method: 'CASH',
     status: 'PENDING',
     dueDate: '',

@@ -94,12 +94,6 @@ export function PaymentCard({
         </div>
       </div>
 
-      {/* Breakdown */}
-      <div className="mt-2 flex gap-3 text-[11px] text-gray-400">
-        <span>Base: {formatINR(payment.baseAmountPaise, { withDecimals: false })}</span>
-        <span>GST ({payment.gstRatePercentSnapshot}%): {formatINR(payment.gstAmountPaise, { withDecimals: false })}</span>
-      </div>
-
       {/* Notes */}
       {payment.notes && (
         <p className="mt-2 text-xs italic text-gray-400">{payment.notes}</p>

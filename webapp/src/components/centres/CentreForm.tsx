@@ -150,12 +150,8 @@ export function CentreForm({ initialValues, onSubmit, onCancel, busy }: CentreFo
         </div>
       </div>
 
-      {/* GST & contact */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div>
-          <label className="label">GST rate (%)</label>
-          <input {...register('gstRatePercent', { valueAsNumber: true })} type="number" min={0} max={100} className="input" disabled={busy} />
-        </div>
+      {/* Contact */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className="label">Contact phone (optional)</label>
           <input {...register('contactPhone')} className="input" placeholder="+91 98765 43210" disabled={busy} />

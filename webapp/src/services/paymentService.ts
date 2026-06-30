@@ -89,9 +89,10 @@ export async function getPaymentsByStudent(studentId: string): Promise<PaymentDo
 }
 
 function toFirestoreData(values: PaymentFormValues, userId: string) {
+  // GST not charged — amount is billed as-is, no tax split.
   const basePaise = rupeesToPaise(values.baseAmountRupees);
-  const gstPaise = Math.round((basePaise * values.gstRatePercent) / 100);
-  const totalPaise = basePaise + gstPaise;
+  const gstPaise = 0;
+  const totalPaise = basePaise;
 
   return {
     studentId: values.studentId,
@@ -101,7 +102,7 @@ function toFirestoreData(values: PaymentFormValues, userId: string) {
     baseAmountPaise: basePaise,
     gstAmountPaise: gstPaise,
     totalAmountPaise: totalPaise,
-    gstRatePercentSnapshot: values.gstRatePercent,
+    gstRatePercentSnapshot: 0,
     status: values.status as PaymentStatus,
     method: values.method as PaymentMethod,
     dueDate: values.dueDate || null,

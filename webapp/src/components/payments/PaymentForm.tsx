@@ -50,10 +50,9 @@ export function PaymentForm({
   const selectedBatchId = watch('batchId');
   const batchStudents = students.filter((s) => s.batchIds.includes(selectedBatchId));
 
+  // GST not charged — total equals the amount entered.
   const baseRupees = watch('baseAmountRupees') ?? 0;
-  const gstRate = watch('gstRatePercent') ?? 0;
-  const gstAmount = Math.round(baseRupees * gstRate) / 100;
-  const total = baseRupees + gstAmount;
+  const total = baseRupees;
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
@@ -105,15 +104,11 @@ export function PaymentForm({
       </div>
 
       {/* Amounts */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
-          <label className="label">Base amount (₹)</label>
+          <label className="label">Amount (₹)</label>
           <input {...register('baseAmountRupees', { valueAsNumber: true })} type="number" min={0} step={1} className="input" disabled={busy} />
           {errors.baseAmountRupees && <p className="mt-1 text-xs text-red-600">{errors.baseAmountRupees.message}</p>}
-        </div>
-        <div>
-          <label className="label">GST rate (%)</label>
-          <input {...register('gstRatePercent', { valueAsNumber: true })} type="number" min={0} max={100} className="input" disabled={busy} />
         </div>
         <div>
           <label className="label">Total (auto)</label>
