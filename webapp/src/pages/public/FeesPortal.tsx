@@ -99,22 +99,38 @@ async function copyToClipboard(text: string) {
 
 type Step = 'centre' | 'lookup' | 'form' | 'slot' | 'payment' | 'success';
 
+// ── Wizard state persistence ─────────────────────────────────────────────────
+// Survives the round-trip to a UPI app (which can reload / evict this page on
+// return). Scoped to the browser-tab session so a fresh visit always starts clean.
+const PERSIST_KEY = 'bba_fees_wizard_v1';
+function loadPersistedState(): Record<string, any> {
+  try {
+    const raw = sessionStorage.getItem(PERSIST_KEY);
+    if (!raw) return {};
+    const data = JSON.parse(raw);
+    // Never resume into the terminal success screen (its `result` isn't persisted).
+    if (!data || data.step === 'success') return {};
+    return data;
+  } catch { return {}; }
+}
+
 // ── Main component ─────────────────────────────────────────────────────────
 
 export default function FeesPortal() {
-  const [step, setStep] = useState<Step>('centre');
+  const [persisted] = useState(loadPersistedState);
+  const [step, setStep] = useState<Step>(persisted.step ?? 'centre');
 
   // Centre
   const { data: centres = [], isLoading: centresLoading } = useQuery({
     queryKey: ['activeCentres'],
     queryFn: fetchActiveCentres,
   });
-  const [selectedCentre, setSelectedCentre] = useState<CentreOption | null>(null);
+  const [selectedCentre, setSelectedCentre] = useState<CentreOption | null>(persisted.selectedCentre ?? null);
   const isRuia = selectedCentre?.centreCode === RUIA_CENTRE_CODE;
 
   // Lookup / autocomplete
   const [nameQuery, setNameQuery] = useState('');
-  const [selectedStudent, setSelectedStudent] = useState<StudentSearchResult | null>(null);
+  const [selectedStudent, setSelectedStudent] = useState<StudentSearchResult | null>(persisted.selectedStudent ?? null);
   const studentsQuery = useQuery({
     queryKey: ['centreStudents', selectedCentre?.centreCode],
     queryFn: () => searchStudentsByCentre(selectedCentre!.centreCode!),
@@ -135,17 +151,17 @@ export default function FeesPortal() {
   const [registerError, setRegisterError] = useState('');
 
   // Form — plan selection
-  const [month, setMonth] = useState(getDefaultMonth());
-  const [payerEmail, setPayerEmail] = useState('');
-  const [selectedPlanType, setSelectedPlanType] = useState<string | null>(null); // Ruia
-  const [selectedFreqDays, setSelectedFreqDays] = useState<number | null>(null); // other centres
-  const [manualAmount, setManualAmount] = useState('');
-  const [useManualAmount, setUseManualAmount] = useState(false);
-  const [method, setMethod] = useState<'UPI' | 'CASH' | 'BANK_TRANSFER'>('UPI');
+  const [month, setMonth] = useState(persisted.month ?? getDefaultMonth());
+  const [payerEmail, setPayerEmail] = useState(persisted.payerEmail ?? '');
+  const [selectedPlanType, setSelectedPlanType] = useState<string | null>(persisted.selectedPlanType ?? null); // Ruia
+  const [selectedFreqDays, setSelectedFreqDays] = useState<number | null>(persisted.selectedFreqDays ?? null); // other centres
+  const [manualAmount, setManualAmount] = useState(persisted.manualAmount ?? '');
+  const [useManualAmount, setUseManualAmount] = useState(persisted.useManualAmount ?? false);
+  const [method, setMethod] = useState<'UPI' | 'CASH' | 'BANK_TRANSFER'>(persisted.method ?? 'UPI');
 
   // Slot step (Ruia only)
-  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string | null>(null);
-  const [slotPhone, setSlotPhone] = useState('');
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string | null>(persisted.selectedTimeSlot ?? null);
+  const [slotPhone, setSlotPhone] = useState(persisted.slotPhone ?? '');
   const [slotError, setSlotError] = useState('');
   const [slotBookings, setSlotBookings] = useState<SlotBookingDocument[]>([]);
   const [slotConfig, setSlotConfig] = useState({ weekdayCapacity: 9, saturdayCapacity: 15 });
@@ -169,6 +185,19 @@ export default function FeesPortal() {
     });
     return () => { unsub1(); unsub2(); };
   }, [isRuia, step, month]);
+
+  // ── Persist wizard state (survives the UPI-app round-trip / page reload) ───
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(PERSIST_KEY, JSON.stringify({
+        step, selectedCentre, selectedStudent, month, payerEmail,
+        selectedPlanType, selectedFreqDays, manualAmount, useManualAmount,
+        method, selectedTimeSlot, slotPhone,
+      }));
+    } catch { /* private mode / quota — non-fatal */ }
+  }, [step, selectedCentre, selectedStudent, month, payerEmail,
+      selectedPlanType, selectedFreqDays, manualAmount, useManualAmount,
+      method, selectedTimeSlot, slotPhone]);
 
   // ── Derived: fee plans available (own enrollment or centre-wide fallback for new students) ──
   const availablePlans = useMemo(() => {
@@ -365,6 +394,7 @@ export default function FeesPortal() {
   }
 
   function handleReset() {
+    try { sessionStorage.removeItem(PERSIST_KEY); } catch { /* ignore */ }
     setStep('centre');
     setSelectedCentre(null);
     setNameQuery('');

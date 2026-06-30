@@ -120,7 +120,6 @@ export const onFeePaymentCreated = onDocumentWritten(
       await transporter.sendMail({
         from: emailFrom,
         to: recipientEmail,
-        cc: 'hello@bbashuttle.com',
         subject,
         html,
       });
