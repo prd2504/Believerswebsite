@@ -24,6 +24,7 @@ import {
   SlotPlanType,
   SlotBookingStatus,
   DEFAULT_SLOT_CONFIG,
+  TUE_THU_SLOT,
   type SlotBookingDocument,
   type SlotPlanConfig,
   type SlotBookingConfig,
@@ -62,6 +63,7 @@ const TIME_SLOT_LABELS: Record<string, string> = {
   '07:00-08:00': '7:00 – 8:00 AM',
   '08:00-09:00': '8:00 – 9:00 AM',
   '07:00-09:00': '7:00 – 9:00 AM',
+  [TUE_THU_SLOT]: '6:00 – 7:00 AM (Tue/Thu)',
 };
 
 function getBookingMonth(): string {
@@ -95,6 +97,7 @@ function getSlotCount(bookings: SlotBookingDocument[], timeSlot: string): number
       b.timeSlot === timeSlot &&
       (b.planType === SlotPlanType.TWO_DAY ||
         b.planType === SlotPlanType.THREE_DAY ||
+        b.planType === SlotPlanType.FOUR_DAY ||
         b.planType === SlotPlanType.COMPLETE_BUNDLE),
   ).length;
 }
@@ -160,6 +163,7 @@ function LiveSlotDisplay({
           b.timeSlot === timeSlot &&
           (b.planType === SlotPlanType.TWO_DAY ||
             b.planType === SlotPlanType.THREE_DAY ||
+            b.planType === SlotPlanType.FOUR_DAY ||
             b.planType === SlotPlanType.COMPLETE_BUNDLE),
       );
 
@@ -697,7 +701,7 @@ export default function BookingPortal() {
               <StepCard
                 num={1}
                 title="Select your plan below"
-                desc="Choose from 2-day, 3-day, Games Day (Sat), or Complete Bundle"
+                desc="Choose from 2-day, 3-day, 4-day, Games Day (Sat), or Complete Bundle"
               />
               <StepCard
                 num={2}
@@ -745,6 +749,17 @@ export default function BookingPortal() {
                 isClosed={closedSlots.includes(slot)}
               />
             ))}
+
+            <h3 className="mt-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+              Tue · Thu
+            </h3>
+            <LiveSlotDisplay
+              bookings={bookings}
+              timeSlot={TUE_THU_SLOT}
+              label={TIME_SLOT_LABELS[TUE_THU_SLOT]}
+              capacity={weekdayCapacity}
+              isClosed={closedSlots.includes(TUE_THU_SLOT)}
+            />
 
             <h3 className="mt-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
               Saturday — Games Day

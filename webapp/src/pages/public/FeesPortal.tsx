@@ -21,7 +21,7 @@ import {
   Pencil,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { formatINR, COMPANY, SLOT_PLANS, type SlotPlanType, type SlotBookingDocument } from '@bba/shared';
+import { formatINR, COMPANY, SLOT_PLANS, TUE_THU_SLOT, isTueThuSlot, type SlotPlanType, type SlotBookingDocument } from '@bba/shared';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '@/lib/firebase';
 import {
@@ -77,6 +77,7 @@ function getMonthOptions(): string[] {
 }
 
 function formatTimeSlot(slot: string): string {
+  if (isTueThuSlot(slot)) return '6 – 7 AM · Tue/Thu';
   return slot.split('-').map((t) => {
     const [h, m] = t.split(':').map(Number);
     const ampm = h < 12 ? 'AM' : 'PM';
@@ -237,7 +238,7 @@ export default function FeesPortal() {
       return slotBookings.filter((b) => b.planType === 'COMPLETE_BUNDLE' || b.planType === 'GAMES_DAY').length;
     }
     return slotBookings.filter((b) => b.timeSlot === slot &&
-      (b.planType === 'TWO_DAY' || b.planType === 'THREE_DAY' || b.planType === 'COMPLETE_BUNDLE')).length;
+      (b.planType === 'TWO_DAY' || b.planType === 'THREE_DAY' || b.planType === 'FOUR_DAY' || b.planType === 'COMPLETE_BUNDLE')).length;
   }
   function getSlotCapacity(slot: string) {
     return isSaturdaySlot(slot) ? slotConfig.saturdayCapacity : slotConfig.weekdayCapacity;
@@ -246,7 +247,7 @@ export default function FeesPortal() {
     const bookings = isSaturdaySlot(slot)
       ? slotBookings.filter((b) => b.planType === 'COMPLETE_BUNDLE' || b.planType === 'GAMES_DAY')
       : slotBookings.filter((b) => b.timeSlot === slot &&
-          (b.planType === 'TWO_DAY' || b.planType === 'THREE_DAY' || b.planType === 'COMPLETE_BUNDLE'));
+          (b.planType === 'TWO_DAY' || b.planType === 'THREE_DAY' || b.planType === 'FOUR_DAY' || b.planType === 'COMPLETE_BUNDLE'));
     return bookings.map((b) => b.participantName);
   }
 
@@ -272,6 +273,7 @@ export default function FeesPortal() {
       // Map enrollment days to Ruia plan
       if (s.daysPerWeek === 2) setSelectedPlanType('TWO_DAY');
       else if (s.daysPerWeek === 3) setSelectedPlanType('THREE_DAY');
+      else if (s.daysPerWeek === 4) setSelectedPlanType('FOUR_DAY');
       else setSelectedPlanType(null);
     } else {
       setSelectedFreqDays(s.daysPerWeek > 0 ? s.daysPerWeek : null);

@@ -12,10 +12,20 @@ export type SlotBookingStatus = (typeof SlotBookingStatus)[keyof typeof SlotBook
 export const SlotPlanType = {
   TWO_DAY: 'TWO_DAY',
   THREE_DAY: 'THREE_DAY',
+  FOUR_DAY: 'FOUR_DAY',
   GAMES_DAY: 'GAMES_DAY',
   COMPLETE_BUNDLE: 'COMPLETE_BUNDLE',
 } as const;
 export type SlotPlanType = (typeof SlotPlanType)[keyof typeof SlotPlanType];
+
+/**
+ * Tue & Thu run only the 6–7 AM session, tracked as its own bookable slot with
+ * its own capacity (distinct from the Mon/Wed/Fri 6–7 AM band).
+ */
+export const TUE_THU_SLOT = '06:00-07:00-tt';
+export function isTueThuSlot(slot: string): boolean {
+  return slot === TUE_THU_SLOT;
+}
 
 export interface SlotBookingDocument {
   id: string;
@@ -87,6 +97,17 @@ export const SLOT_PLANS: SlotPlanConfig[] = [
     amountPaise: 400_000,
     days: 'Mon, Wed, Fri',
     timeSlots: ['06:00-07:00', '07:00-08:00', '08:00-09:00'],
+    includesWeekday: true,
+    includesSaturday: false,
+  },
+  {
+    planType: SlotPlanType.FOUR_DAY,
+    label: '4 Days / Week',
+    description: 'Any 4 mornings, Mon–Fri',
+    amountPaise: 450_000,
+    days: 'Any 4 of Mon–Fri',
+    // Mon/Wed/Fri run 6–9 AM; Tue/Thu run only 6–7 AM (its own slot).
+    timeSlots: ['06:00-07:00', '07:00-08:00', '08:00-09:00', TUE_THU_SLOT],
     includesWeekday: true,
     includesSaturday: false,
   },
