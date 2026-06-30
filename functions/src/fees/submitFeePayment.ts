@@ -49,7 +49,14 @@ export const submitFeePayment = onRequest(
         return;
       }
     } else {
-      const rateKey = input.phone ?? input.studentName ?? 'anon';
+      // studentId is what the current /fees autocomplete flow actually sends —
+      // phone/studentName are leftovers from the old phone-lookup flow and are
+      // usually absent now. Falling all the way back to a constant 'anon' key
+      // would bucket every visitor's payment together, so one burst of 5
+      // legitimate submissions across different students/centres would lock
+      // out everyone else on the page for 10 minutes.
+      const ip = req.ip ?? req.header('x-forwarded-for') ?? 'anon';
+      const rateKey = input.studentId ?? input.phone ?? input.studentName ?? ip;
       if (!checkRateLimit(`fee:${rateKey}`, 5, 10 * 60 * 1000)) {
         res.status(429).json({ ok: false, error: 'Too many requests. Try again in a few minutes.' });
         return;

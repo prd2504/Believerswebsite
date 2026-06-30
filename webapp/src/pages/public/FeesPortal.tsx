@@ -959,18 +959,6 @@ export default function FeesPortal() {
               <>
                 <h2 className="text-lg font-semibold text-white">Pay via UPI</h2>
 
-                {/* UPI deep link — opens GPay / PhonePe / Paytm etc. */}
-                <a
-                  href={`upi://pay?pa=${encodeURIComponent(feeConfig.upiId)}&pn=${encodeURIComponent('BBA Sports')}&am=${effectiveAmount}&cu=INR&tn=${encodeURIComponent('BBA Fee Payment')}`}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-4 text-base font-bold text-white shadow-lg shadow-green-900/30 transition hover:bg-green-500 active:scale-95"
-                >
-                  <BadgeIndianRupee size={20} />
-                  Pay {formatINR(effectiveAmount * 100, { withDecimals: false })} — Open UPI App
-                </a>
-                <p className="text-center text-xs text-gray-500">
-                  Opens GPay, PhonePe, Paytm or any UPI app on your device
-                </p>
-
                 {/* UPI ID for manual entry or desktop scanning */}
                 <div className="flex items-center justify-between rounded-xl border border-gray-700 bg-gray-800/50 p-3">
                   <div>
@@ -983,7 +971,7 @@ export default function FeesPortal() {
                   </button>
                 </div>
                 <div className="rounded-lg bg-blue-900/20 p-3 text-xs text-blue-300">
-                  After paying, upload a screenshot below — it helps us verify your payment faster.
+                  Tap "Open UPI App" below to pay, then upload a screenshot — it helps us verify your payment faster.
                 </div>
               </>
             )}
@@ -1055,10 +1043,28 @@ export default function FeesPortal() {
               </div>
             </div>
 
+            {method === 'UPI' && (
+              <>
+                {/* UPI deep link — opens GPay / PhonePe / Paytm etc. Placed right above
+                    Submit so it's the last thing people see/tap before confirming,
+                    instead of sitting above the fold where it gets missed. */}
+                <a
+                  href={`upi://pay?pa=${encodeURIComponent(feeConfig.upiId)}&pn=${encodeURIComponent('BBA Sports')}&am=${effectiveAmount}&cu=INR&tn=${encodeURIComponent('BBA Fee Payment')}`}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-4 text-base font-bold text-white shadow-lg shadow-blue-900/30 transition hover:bg-blue-500 active:scale-95"
+                >
+                  <BadgeIndianRupee size={20} />
+                  Step 1: Pay {formatINR(effectiveAmount * 100, { withDecimals: false })} — Open UPI App
+                </a>
+                <p className="text-center text-xs text-gray-500">
+                  Opens GPay, PhonePe, Paytm or any UPI app on your device
+                </p>
+              </>
+            )}
+
             <button onClick={handleSubmit} disabled={submitting || !canSubmit}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3 font-semibold text-white transition hover:bg-green-500 disabled:opacity-50">
               {submitting ? <Loader2 size={18} className="animate-spin" /> : <Receipt size={18} />}
-              {submitting ? 'Submitting...' : 'Submit Payment'}
+              {submitting ? 'Submitting...' : method === 'UPI' ? 'Step 2: Submit Payment' : 'Submit Payment'}
             </button>
           </div>
         )}
