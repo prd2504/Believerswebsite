@@ -373,6 +373,18 @@ export default function FeesPortal() {
     setSubmitting(true);
     setSubmitError('');
     try {
+      // Ruia only: verify this phone hasn't already booked this plan/month
+      // BEFORE taking payment. Doing it first means a duplicate is caught while
+      // nothing has been charged — never a paid-but-rejected booking.
+      if (isRuia && selectedPlanType && selectedTimeSlot && slotPhone.length === 10) {
+        const isDup = await checkDuplicatePhone(slotPhone, RUIA_BOOKING_CENTRE_ID, month, selectedPlanType as SlotPlanType);
+        if (isDup) {
+          setSubmitError(`A booking for ${selectedPlanType.replace('_', ' ')} in ${formatMonth(month)} already exists for this phone number.`);
+          setSubmitting(false);
+          return;
+        }
+      }
+
       let screenshotUrl: string | null = null;
       if (screenshotFile) {
         try {
@@ -388,7 +400,7 @@ export default function FeesPortal() {
         }
       }
 
-      // Always create the fee payment record
+      // The money-of-record write. Once this succeeds the payment is captured.
       const paymentResult = await submitFeePayment({
         centreCode: selectedCentre.centreCode,
         studentId: selectedStudent.studentId,
@@ -400,24 +412,25 @@ export default function FeesPortal() {
         screenshotUrl,
       });
 
-      // For Ruia: also create the slot booking
+      // Ruia: create the slot booking. This runs AFTER the payment is recorded,
+      // so we must NOT surface a resubmittable error if it fails — that would
+      // invite the parent to submit again and be charged twice. If the booking
+      // write fails, log it and still land on success; the payment is safe and
+      // the coordinator reconciles the slot from the Payments sheet.
       if (isRuia && selectedPlanType && selectedTimeSlot && slotPhone.length === 10) {
-        // Duplicate check
-        const isDup = await checkDuplicatePhone(slotPhone, RUIA_BOOKING_CENTRE_ID, month, selectedPlanType as SlotPlanType);
-        if (isDup) {
-          setSubmitError(`A booking for ${selectedPlanType.replace('_', ' ')} in ${formatMonth(month)} already exists for this phone number.`);
-          setSubmitting(false);
-          return;
+        try {
+          await createBooking({
+            centreId: RUIA_BOOKING_CENTRE_ID,
+            month,
+            participantName: selectedStudent.name,
+            participantPhone: slotPhone,
+            planType: selectedPlanType as SlotPlanType,
+            timeSlot: selectedTimeSlot,
+            amountPaise: effectiveAmount * 100,
+          });
+        } catch (bookingErr) {
+          console.error('[FeesPortal] payment recorded but slot booking failed — coordinator to reconcile', bookingErr);
         }
-        await createBooking({
-          centreId: RUIA_BOOKING_CENTRE_ID,
-          month,
-          participantName: selectedStudent.name,
-          participantPhone: slotPhone,
-          planType: selectedPlanType as SlotPlanType,
-          timeSlot: selectedTimeSlot,
-          amountPaise: effectiveAmount * 100,
-        });
       }
 
       setResult(paymentResult);
@@ -462,9 +475,16 @@ export default function FeesPortal() {
     ? ['centre', 'lookup', 'form', 'slot', 'payment', 'success']
     : ['centre', 'lookup', 'form', 'payment', 'success'];
 
-  const canContinueForm = isRuia
-    ? !!selectedPlanType && (useManualAmount ? effectiveAmount > 0 : true)
-    : effectiveAmount > 0;
+  // A valid email is required — it's the only channel the invoice/receipt is
+  // delivered on, and the record every parent needs. Cheap client-side shape
+  // check; the Cloud Function validates it properly too.
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail.trim());
+
+  const canContinueForm =
+    emailValid &&
+    (isRuia
+      ? !!selectedPlanType && (useManualAmount ? effectiveAmount > 0 : true)
+      : effectiveAmount > 0);
 
   const canSubmit = isRuia
     ? slotPhone.length === 10 && !!selectedTimeSlot
@@ -675,13 +695,24 @@ export default function FeesPortal() {
               </select>
             </div>
 
-            {/* Email — invoice receipt goes here */}
+            {/* Email — invoice receipt goes here (required) */}
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-300">Email for Invoice</label>
+              <label className="mb-1.5 block text-sm font-medium text-gray-300">
+                Email for Invoice <span className="text-brand-primary">*</span>
+              </label>
               <input type="email" inputMode="email" placeholder="yourname@email.com"
                 value={payerEmail} onChange={(e) => setPayerEmail(e.target.value)}
-                className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white placeholder-gray-500 focus:border-brand-primary focus:outline-none" />
-              <p className="mt-1 text-xs text-gray-500">Your payment receipt / invoice will be sent here.</p>
+                className={cn(
+                  'w-full rounded-xl border bg-gray-800 px-4 py-3 text-white placeholder-gray-500 focus:outline-none',
+                  payerEmail.trim() && !emailValid
+                    ? 'border-red-500/60 focus:border-red-500'
+                    : 'border-gray-700 focus:border-brand-primary',
+                )} />
+              {payerEmail.trim() && !emailValid ? (
+                <p className="mt-1 text-xs text-red-400">Please enter a valid email address.</p>
+              ) : (
+                <p className="mt-1 text-xs text-gray-500">Your payment receipt / invoice will be sent here.</p>
+              )}
             </div>
 
             {/* Plan selector — Ruia */}
