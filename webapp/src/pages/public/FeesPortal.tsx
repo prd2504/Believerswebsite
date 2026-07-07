@@ -32,6 +32,7 @@ import {
   type CentreOption,
   type StudentSearchResult,
   type FeeSubmissionResult,
+  type ExistingPlayer,
 } from '@/services/publicFeesService';
 import {
   subscribeToBookings,
@@ -183,6 +184,9 @@ export default function FeesPortal() {
   const [regEmail, setRegEmail] = useState('');
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState('');
+  // Players already registered on the entered phone (siblings) — shown so the
+  // parent can pick themselves instead of creating a duplicate.
+  const [existingPlayers, setExistingPlayers] = useState<ExistingPlayer[]>([]);
 
   // Form — plan selection
   const [month, setMonth] = useState(persisted.month ?? getDefaultMonth());
@@ -315,7 +319,18 @@ export default function FeesPortal() {
     setStep('form');
   }
 
-  async function handleRegister() {
+  // Select a student already known to this centre by id — prefers the fully
+  // enriched record from the loaded list (fee/plan/batch) and falls back to a
+  // minimal record when it isn't in the cached list.
+  function selectStudentById(studentId: string, name: string, maskedPhone: string) {
+    const full = (studentsQuery.data ?? []).find((s) => s.studentId === studentId);
+    handleStudentSelect(full ?? {
+      studentId, name, maskedPhone,
+      externalStudentId: null, batchName: '', monthlyFeeRupees: 0, daysPerWeek: 0, frequencyPlans: [],
+    });
+  }
+
+  async function handleRegister(confirmNew = false) {
     if (!selectedCentre?.centreCode) return;
     if (regName.trim().length < 2 || regPhone.length !== 10) {
       setRegisterError('Please fill in your full name and 10-digit phone number.');
@@ -324,23 +339,25 @@ export default function FeesPortal() {
     setRegistering(true);
     setRegisterError('');
     try {
-      const res = await registerStudent({
+      const outcome = await registerStudent({
         centreCode: selectedCentre.centreCode,
         name: regName.trim(),
         phone: regPhone,
         email: regEmail.trim() || undefined,
+        confirmNew,
       });
+
+      if (outcome.kind === 'phoneHasPlayers') {
+        // This phone already has player(s). Let the parent pick themselves
+        // rather than silently creating a duplicate.
+        setExistingPlayers(outcome.existingPlayers);
+        return;
+      }
+
+      // A real student to use (created, or an exact match that was reused).
       if (regEmail.trim()) setPayerEmail(regEmail.trim());
-      handleStudentSelect({
-        studentId: res.studentId,
-        name: res.name,
-        maskedPhone: res.maskedPhone,
-        externalStudentId: null,
-        batchName: '',
-        monthlyFeeRupees: 0,
-        daysPerWeek: 0,
-        frequencyPlans: [],
-      });
+      setExistingPlayers([]);
+      selectStudentById(outcome.student.studentId, outcome.student.name, outcome.student.maskedPhone);
       studentsQuery.refetch();
     } catch (err: any) {
       setRegisterError(err.message || 'Registration failed');
@@ -449,7 +466,7 @@ export default function FeesPortal() {
     setNameQuery('');
     setSelectedStudent(null);
     setShowRegister(false);
-    setRegName(''); setRegPhone(''); setRegEmail(''); setRegisterError('');
+    setRegName(''); setRegPhone(''); setRegEmail(''); setRegisterError(''); setExistingPlayers([]);
     setMonth(getDefaultMonth());
     setPayerEmail('');
     setSelectedPlanType(null);
@@ -610,7 +627,7 @@ export default function FeesPortal() {
                   <p className="px-1 text-xs text-gray-500">Type at least 2 characters.</p>
                 )}
 
-                <button onClick={() => { setShowRegister(true); setRegName(nameQuery.trim()); setRegisterError(''); }}
+                <button onClick={() => { setShowRegister(true); setRegName(nameQuery.trim()); setRegisterError(''); setExistingPlayers([]); }}
                   className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-gray-600 bg-gray-800/30 py-3 text-sm font-medium text-gray-300 transition hover:border-brand-primary/50 hover:text-white">
                   <UserPlus size={16} /> Can&apos;t find your name? Register a new student
                 </button>
@@ -624,7 +641,7 @@ export default function FeesPortal() {
                 <div className="space-y-3">
                   {[
                     { label: 'Student Name', value: regName, onChange: (v: string) => { setRegName(v); setRegisterError(''); }, type: 'text', placeholder: 'Full name' },
-                    { label: 'Phone Number', value: regPhone, onChange: (v: string) => { setRegPhone(v.replace(/\D/g, '').slice(0, 10)); setRegisterError(''); }, type: 'tel', placeholder: '10-digit phone' },
+                    { label: 'Phone Number', value: regPhone, onChange: (v: string) => { setRegPhone(v.replace(/\D/g, '').slice(0, 10)); setRegisterError(''); setExistingPlayers([]); }, type: 'tel', placeholder: '10-digit phone' },
                     { label: 'Email (for invoice)', value: regEmail, onChange: (v: string) => { setRegEmail(v); setRegisterError(''); }, type: 'email', placeholder: 'yourname@email.com (optional)' },
                   ].map(({ label, value, onChange, type, placeholder }) => (
                     <div key={label}>
@@ -635,20 +652,51 @@ export default function FeesPortal() {
                     </div>
                   ))}
                 </div>
+
+                {/* Phone already has player(s) — let the parent pick themselves
+                    instead of creating a duplicate. */}
+                {existingPlayers.length > 0 && (
+                  <div className="rounded-xl border border-amber-500/40 bg-amber-900/15 p-3">
+                    <p className="text-sm font-medium text-amber-200">
+                      This number is already registered to {existingPlayers.length === 1 ? 'a player' : 'these players'}:
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {existingPlayers.map((pl) => (
+                        <button key={pl.studentId}
+                          onClick={() => { setExistingPlayers([]); if (regEmail.trim()) setPayerEmail(regEmail.trim()); selectStudentById(pl.studentId, pl.name, pl.maskedPhone); }}
+                          className="flex w-full items-center justify-between rounded-lg border border-gray-700 bg-gray-800/70 p-3 text-left transition hover:border-brand-primary/60">
+                          <div>
+                            <p className="font-medium text-white">{pl.name}</p>
+                            <p className="text-xs text-gray-400">{pl.maskedPhone}</p>
+                          </div>
+                          <ChevronRight size={16} className="text-gray-500" />
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-amber-200/80">
+                      Not you? If this is a different player on the same phone (e.g. a sibling), add them below.
+                    </p>
+                  </div>
+                )}
+
                 {registerError && (
                   <div className="flex items-center gap-2 rounded-lg bg-red-900/30 p-3 text-sm text-red-300">
                     <AlertCircle size={16} /> {registerError}
                   </div>
                 )}
                 <div className="flex gap-2">
-                  <button onClick={() => { setShowRegister(false); setRegisterError(''); }}
+                  <button onClick={() => { setShowRegister(false); setRegisterError(''); setExistingPlayers([]); }}
                     className="flex-1 rounded-xl border border-gray-700 bg-gray-800 py-3 text-sm font-semibold text-gray-300 transition hover:text-white">
                     Cancel
                   </button>
-                  <button onClick={handleRegister} disabled={registering}
+                  <button onClick={() => handleRegister(existingPlayers.length > 0)} disabled={registering}
                     className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 text-sm font-semibold text-white transition disabled:opacity-50">
                     {registering ? <Loader2 size={16} className="animate-spin" /> : <UserPlus size={16} />}
-                    {registering ? 'Registering…' : 'Register & Continue'}
+                    {registering
+                      ? 'Registering…'
+                      : existingPlayers.length > 0
+                        ? `Add ${regName.trim() || 'new player'} anyway`
+                        : 'Register & Continue'}
                   </button>
                 </div>
               </>

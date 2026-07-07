@@ -160,14 +160,22 @@ async function findOrCreatePlayerDirectory(sheets: Sheets, p: PublicFeeSyncPaylo
     range: `${PLAYER_DIRECTORY_TAB}!A:I`,
   });
   const rows = res.data.values ?? [];
+  const targetId = (p.externalStudentId ?? '').trim();
   const targetPhone = normPhone(p.phone);
   const targetName = normName(p.studentName);
 
-  // row 0 is the header; data starts at index 1 (sheet row = index + 1)
+  // row 0 is the header; data starts at index 1 (sheet row = index + 1).
+  // Match priority: the Student_ID column (A) is the reliable key — it's the
+  // same stable external ID Firestore assigned, so it can't drift with a name
+  // or phone typo. Fall back to canonical phone + name for legacy rows that
+  // predate the ID being populated.
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
+    const rowId = (r[0] ?? '').toString().trim();
     const rowPhone = normPhone(r[2]);
-    if (targetPhone && rowPhone === targetPhone && normName(r[1]) === targetName) {
+    const idMatch = !!targetId && rowId === targetId;
+    const contactMatch = !!targetPhone && rowPhone === targetPhone && normName(r[1]) === targetName;
+    if (idMatch || contactMatch) {
       const currentBatch = (r[5] ?? '').toString();
       if (p.batchName && currentBatch !== p.batchName) {
         await svcUpdate(sheets, {
@@ -175,6 +183,16 @@ async function findOrCreatePlayerDirectory(sheets: Sheets, p: PublicFeeSyncPaylo
           range: `${PLAYER_DIRECTORY_TAB}!F${i + 1}`,
           valueInputOption: 'USER_ENTERED',
           requestBody: { values: [[p.batchName]] },
+        });
+      }
+      // Backfill Student_ID on a legacy row matched only by phone+name, so
+      // future syncs match on the reliable key.
+      if (!idMatch && targetId && !rowId) {
+        await svcUpdate(sheets, {
+          spreadsheetId: SPREADSHEET_ID,
+          range: `${PLAYER_DIRECTORY_TAB}!A${i + 1}`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values: [[targetId]] },
         });
       }
       return false; // existing student

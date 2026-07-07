@@ -62,7 +62,20 @@ export interface RegisterStudentResult {
   studentId: string;
   name: string;
   maskedPhone: string;
+  /** True when an existing matching student was reused rather than created. */
+  reused?: boolean;
 }
+
+export interface ExistingPlayer {
+  studentId: string;
+  name: string;
+  maskedPhone: string;
+}
+
+/** Discriminated result: either a student to use, or a set of players already on that phone. */
+export type RegisterOutcome =
+  | { kind: 'student'; student: RegisterStudentResult }
+  | { kind: 'phoneHasPlayers'; existingPlayers: ExistingPlayer[] };
 
 /** Active centres for the /fees page — plain HTTP GET (faster cold load than the Firestore SDK). */
 export async function fetchActiveCentres(): Promise<CentreOption[]> {
@@ -80,20 +93,33 @@ export async function searchStudentsByCentre(centreCode: string): Promise<Studen
   return data.students;
 }
 
-/** Register a new student from the public page when their name isn't found. */
+/**
+ * Register a new student from the public page when their name isn't found.
+ * Returns a discriminated outcome: either a usable student (created or an
+ * existing exact match that was reused), or — when the phone already belongs to
+ * other player(s) — the list of those players so the parent can pick themselves.
+ * Pass `confirmNew: true` to create anyway (a genuine new sibling on that phone).
+ */
 export async function registerStudent(input: {
   centreCode: string;
   name: string;
   phone: string;
   email?: string;
-}): Promise<RegisterStudentResult> {
+  confirmNew?: boolean;
+}): Promise<RegisterOutcome> {
   const res = await fetch(`${FUNCTIONS_BASE}/registerStudent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
-  const data = await parseJsonResponse(res, 'Registration failed');
-  return data;
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+
+  if (res.status === 409 && data?.code === 'PHONE_HAS_PLAYERS') {
+    return { kind: 'phoneHasPlayers', existingPlayers: data.existingPlayers ?? [] };
+  }
+  if (!res.ok) throw new Error(data?.error || `Registration failed (HTTP ${res.status})`);
+  return { kind: 'student', student: data };
 }
 
 export async function lookupStudentByPhone(

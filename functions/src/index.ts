@@ -35,6 +35,7 @@ export { registerStudent } from './fees/registerStudent.js';
 
 // --- Temporary: student data-integrity audit (remove after backfill decision) -------------
 export { auditStudents } from './fees/auditStudents.js';
+export { findDuplicateStudents } from './fees/findDuplicateStudents.js';
 
 // --- Fee invoice email (on payment marked PAID with paymentSource) -----------------------
 export { onFeePaymentCreated } from './fees/onFeePaymentCreated.js';

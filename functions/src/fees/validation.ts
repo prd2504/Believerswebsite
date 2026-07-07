@@ -38,6 +38,9 @@ export const registerStudentSchema = z.object({
   name: z.string().min(2, 'Name is required').max(80).transform((s) => s.trim()),
   phone: z.string().regex(/^\d{10}$/, 'Phone must be 10 digits'),
   email: z.string().email('Invalid email').optional(),
+  // Set true to bypass the "phone already has a player" guard when the parent
+  // has confirmed this really is a new player (e.g. a sibling on the same number).
+  confirmNew: z.boolean().optional(),
 });
 
 export type RegisterStudentInput = z.infer<typeof registerStudentSchema>;

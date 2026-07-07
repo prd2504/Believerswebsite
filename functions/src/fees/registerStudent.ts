@@ -3,6 +3,7 @@ import { logger } from 'firebase-functions';
 import { db } from '../admin.js';
 import { registerStudentSchema } from './validation.js';
 import { checkRateLimit } from './rateLimiter.js';
+import { canonicalPhone, normalizeName } from './phone.js';
 
 /**
  * Lets a parent register a new student from the public /fees page when their
@@ -10,15 +11,22 @@ import { checkRateLimit } from './rateLimiter.js';
  * placeholder values for required fields; an admin completes the profile later.
  *
  *   POST /registerStudent
- *   Body: { centreCode, name, phone, email? }
+ *   Body: { centreCode, name, phone, email?, confirmNew? }
+ *
+ * Identity guard (the reason duplicate students used to appear): a returning
+ * parent whose stored name spelling or phone format differs slightly would
+ * fail the old exact-match dedup and mint a brand-new student — and therefore a
+ * new external student number that tracked the invoice counter. Now:
+ *   • same canonical phone + same name  → REUSE that student (never duplicate)
+ *   • same canonical phone, other name  → 409 with the existing player(s) so the
+ *                                          parent can pick themselves, or resend
+ *                                          with confirmNew:true for a real sibling
+ *   • no phone match                    → create as before
  */
 
-function maskPhone(local: string): string {
-  return `${local.slice(0, 2)}****${local.slice(-4)}`;
-}
-
-function normalize(s: string): string {
-  return s.trim().toLowerCase().replace(/\s+/g, ' ');
+function maskLocal(local: string): string {
+  const d = canonicalPhone(local);
+  return d.length >= 6 ? `${d.slice(0, 2)}****${d.slice(-4)}` : '—';
 }
 
 export const registerStudent = onRequest(
@@ -62,19 +70,48 @@ export const registerStudent = onRequest(
       const centreId = centreDoc.id;
       const centreData = centreDoc.data();
 
-      // --- Duplicate check: same name + phone at this centre ---
-      const existingSnap = await db
+      // --- Identity resolution across the whole centre (phones may be stored in
+      // mixed formats, so match on the canonical form in memory rather than a
+      // format-sensitive `where phone ==` query). ---
+      const centreStudentsSnap = await db
         .collection('students')
         .where('primaryCentreId', '==', centreId)
-        .where('phone', '==', input.phone)
         .get();
 
-      const dup = existingSnap.docs.find((d) => normalize(d.data().name ?? '') === normalize(input.name));
-      if (dup) {
+      const inputPhone = canonicalPhone(input.phone);
+      const inputName = normalizeName(input.name);
+      const samePhone = centreStudentsSnap.docs.filter(
+        (d) => canonicalPhone(d.data().phone) === inputPhone,
+      );
+
+      // Same person (phone + name) → reuse the existing record. This is the fix
+      // that stops re-registration from creating a duplicate + a stray ID.
+      const samePerson = samePhone.find((d) => normalizeName(d.data().name ?? '') === inputName);
+      if (samePerson) {
+        logger.info('[registerStudent] reused existing student', { studentId: samePerson.id });
+        res.status(200).json({
+          ok: true,
+          reused: true,
+          studentId: samePerson.id,
+          name: samePerson.data().name,
+          maskedPhone: maskLocal(input.phone),
+        });
+        return;
+      }
+
+      // Phone belongs to a different name already (usually a sibling on the same
+      // parent number). Don't silently create — surface them so the parent can
+      // pick themselves, or explicitly confirm this is a new player.
+      if (samePhone.length > 0 && !input.confirmNew) {
         res.status(409).json({
           ok: false,
-          error: 'A student with this name and phone already exists at this centre',
-          studentId: dup.id,
+          code: 'PHONE_HAS_PLAYERS',
+          error: 'This phone number is already registered to another player.',
+          existingPlayers: samePhone.map((d) => ({
+            studentId: d.id,
+            name: d.data().name,
+            maskedPhone: maskLocal(d.data().phone),
+          })),
         });
         return;
       }
@@ -89,7 +126,8 @@ export const registerStudent = onRequest(
         photoPath: null,
         guardianName: null,
         guardianUserId: null,
-        phone: input.phone,
+        // Store the canonical 10-digit form so future matching is exact.
+        phone: inputPhone,
         email: input.email ?? null,
         address: '',
         city: centreData.city ?? '',
@@ -98,7 +136,7 @@ export const registerStudent = onRequest(
         emergencyContact: {
           name: input.name,
           relationship: 'self',
-          phone: input.phone,
+          phone: inputPhone,
         },
         primaryCentreId: centreId,
         externalStudentId: null,
@@ -125,7 +163,7 @@ export const registerStudent = onRequest(
         ok: true,
         studentId: ref.id,
         name: input.name,
-        maskedPhone: maskPhone(input.phone),
+        maskedPhone: maskLocal(input.phone),
       });
     } catch (err) {
       logger.error('[registerStudent] error', { err });
