@@ -39,6 +39,7 @@ export { findDuplicateStudents } from './fees/findDuplicateStudents.js';
 export { mergeStudents } from './fees/mergeStudents.js';
 export { reconcileStudentIds } from './fees/reconcileStudentIds.js';
 export { backfillStudentIds } from './fees/backfillStudentIds.js';
+export { setStudentExternalId } from './fees/setStudentExternalId.js';
 
 // --- Fee invoice email (on payment marked PAID with paymentSource) -----------------------
 export { onFeePaymentCreated } from './fees/onFeePaymentCreated.js';

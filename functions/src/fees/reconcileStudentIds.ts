@@ -80,10 +80,11 @@ export const reconcileStudentIds = onRequest(
 
       // ── Classify each Firestore student ──
       const perCentre: Record<string, any> = {};
-      const backfillable: any[] = [];   // Firestore ID empty, sheet has exactly one confident match
-      const conflicts: any[] = [];      // Firestore ID present but differs from the sheet's ID
-      const ambiguous: any[] = [];      // empty Firestore ID, but 0 or >1 sheet matches → needs a human
-      const okAlready: any[] = [];      // Firestore ID present and matches the sheet (or no sheet row)
+      const backfillable: any[] = [];       // Firestore ID empty, sheet has exactly one confident match
+      const conflicts: any[] = [];          // Firestore ID present, single sheet match, and they differ
+      const ambiguous: any[] = [];          // empty Firestore ID, but 0 or >1 sheet matches → needs a human
+      const reviewNoSheetMatch: any[] = []; // Firestore ID present but NO sheet row matched → eyeball it
+      const okAlready: any[] = [];          // Firestore ID present and matches a sheet row
 
       // externalStudentId -> [{studentId, name}] per centre, to both find the
       // current max (for lastStudentNo) and catch two students accidentally
@@ -122,11 +123,19 @@ export const reconcileStudentIds = onRequest(
 
         if (fsId) {
           perCentre[cc].firestoreIdSet += 1;
-          if (uniqueIds.length === 1 && uniqueIds[0] !== fsId) {
+          if (uniqueIds.includes(fsId)) {
+            okAlready.push(base); // Firestore id matches a sheet row — genuinely fine
+          } else if (uniqueIds.length === 1) {
             perCentre[cc].conflicts += 1;
             conflicts.push({ ...base, sheetId: uniqueIds[0] });
           } else {
-            okAlready.push(base);
+            // Has an id, but no sheet row matched by name/phone (0 matches) or
+            // several none of which is the current id. "No match" is NOT "okay"
+            // — this is exactly where a minted id (Purva RBI-052, Ashvath
+            // RBI-054) hides when its real sheet row is spelled/numbered
+            // differently. Surface it for a human to check instead of burying it.
+            perCentre[cc].reviewNoSheetMatch = (perCentre[cc].reviewNoSheetMatch ?? 0) + 1;
+            reviewNoSheetMatch.push(base);
           }
         } else {
           perCentre[cc].firestoreIdEmpty += 1;
@@ -172,13 +181,18 @@ export const reconcileStudentIds = onRequest(
           backfillable: backfillable.length,
           conflicts: conflicts.length,
           ambiguous: ambiguous.length,
+          reviewNoSheetMatch: reviewNoSheetMatch.length,
           okAlready: okAlready.length,
           duplicateExternalIds: duplicateExternalIds.length,
         },
+        // suggestedLastStudentNo is only final once reviewNoSheetMatch is empty —
+        // those students may still hold high minted ids about to be reverted.
+        counterReady: reviewNoSheetMatch.length === 0 && conflicts.length === 0 && backfillable.length === 0,
         // The actionable lists (capped so the payload stays readable).
         backfillable: backfillable.slice(0, 200),
         conflicts: conflicts.slice(0, 200),
         ambiguous: ambiguous.slice(0, 200),
+        reviewNoSheetMatch: reviewNoSheetMatch.slice(0, 200),
         duplicateExternalIds,
       });
     } catch (err: any) {
