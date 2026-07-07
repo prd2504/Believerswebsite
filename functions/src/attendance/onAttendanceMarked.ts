@@ -27,6 +27,7 @@ const ATTENDANCE_CC = [
   'arifriyaaa00@gmail.com',
   'palkardarshak10@gmail.com',
   'manas7398.mg@gmail.com',
+  'jaydeepamte9623@gmail.com',
 ];
 
 export const onAttendanceDigest = onDocumentWritten(
