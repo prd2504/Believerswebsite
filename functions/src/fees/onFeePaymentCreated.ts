@@ -3,7 +3,7 @@ import { logger } from 'firebase-functions';
 import { db } from '../admin.js';
 import { buildInvoiceHtml } from './invoiceEmailTemplate.js';
 import { buildWelcomeHtml } from './welcomeEmailTemplate.js';
-import { syncPublicFeePayment } from './sheetsSync.js';
+import { syncPublicFeePayment, logAdminEvent } from './sheetsSync.js';
 import { sendMail } from './mailer.js';
 
 function monthLabel(ym: string): string {
@@ -123,17 +123,31 @@ export const onFeePaymentCreated = onDocumentWritten(
       const userDoc = await db.doc(`users/${student.guardianUserId}`).get();
       if (userDoc.exists) recipientEmail = (userDoc.data()!.email as string) ?? null;
     }
+    const nowIso = new Date().toISOString();
+    const studentName = (student.name as string) ?? '—';
+
     if (!recipientEmail) {
       logger.warn(`[onFeePaymentCreated] No email for ${student.name} — sheets done, emails skipped`);
+      // This is the case most likely to be silently lost — the payment and
+      // invoice are recorded, but nobody ever receives a receipt. Make it
+      // visible in the sheet, not just in Cloud Function logs.
+      await logAdminEvent(
+        'INVOICE_EMAIL_SKIPPED_NO_ADDRESS', studentName, centreName,
+        `${(after.externalInvoiceNo as string) ?? ''} · no email on file for student`, nowIso,
+      );
       return;
     }
 
     const month = monthLabel(after.month as string);
 
     // ── Invoice email ──
+    // The admin_logs row written here is the ONLY reliable delivery signal in
+    // the sheet — it fires from the real sendMail() outcome (SMTP
+    // accepted/rejected), unlike the "Invoice generated" row in sheetsSync.ts
+    // which just means an invoice number was logged, before this ever runs.
     try {
       const html = buildInvoiceHtml({
-        studentName: (student.name as string) ?? '—',
+        studentName,
         centreName,
         batchName: batchName || '—',
         month: after.month as string,
@@ -146,10 +160,19 @@ export const onFeePaymentCreated = onDocumentWritten(
         paymentMethod: after.method as string,
         paymentDate: after.paidAt as string | null,
       });
-      await sendMail({ to: recipientEmail, subject: `Fee Receipt — ${month} | BBA Sports`, html });
-      logger.info(`[onFeePaymentCreated] Invoice email sent to ${recipientEmail} — ${month}`);
+      const result = await sendMail({ to: recipientEmail, subject: `Fee Receipt — ${month} | BBA Sports`, html });
+      logger.info(`[onFeePaymentCreated] Invoice email sent to ${recipientEmail} — ${month}`, { result });
+      if (result) {
+        const status = result.rejected.length ? 'REJECTED' : 'accepted for delivery';
+        await logAdminEvent(
+          result.rejected.length ? 'INVOICE_EMAIL_REJECTED' : 'Invoice emailed',
+          studentName, centreName,
+          `to ${recipientEmail} · ${status} · SMTP: ${result.response.slice(0, 80)}`, nowIso,
+        );
+      }
     } catch (err: any) {
       logger.error('[onFeePaymentCreated] Failed to send invoice email', { error: err?.message });
+      await logAdminEvent('INVOICE_EMAIL_FAILED', studentName, centreName, `to ${recipientEmail} · ${String(err?.message).slice(0, 200)}`, nowIso);
     }
 
     // ── Welcome email — ONLY for students who self-registered via the public

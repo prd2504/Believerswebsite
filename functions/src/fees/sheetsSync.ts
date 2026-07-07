@@ -310,7 +310,12 @@ export async function syncPublicFeePayment(p: PublicFeeSyncPayload): Promise<{ i
     catch (e: any) { errors.push(`admin_logs(new): ${e?.message}`); }
   }
 
-  try { await appendAdminLog(sheets, ts, 'Invoice sent', p.studentName, p.centreName, `${p.externalInvoiceNo} · Rs.${p.amountRupees} · ${monthStr}`); }
+  // NOTE: this fires when the invoice NUMBER is logged, before the email is
+  // even attempted — it is not proof of delivery. "Invoice generated" (not
+  // "sent") to stop it being read as an email-delivery confirmation. The
+  // actual send outcome is logged separately by logAdminEvent() below, called
+  // from onFeePaymentCreated after the real sendMail() attempt.
+  try { await appendAdminLog(sheets, ts, 'Invoice generated', p.studentName, p.centreName, `${p.externalInvoiceNo} · Rs.${p.amountRupees} · ${monthStr}`); }
   catch (e: any) { errors.push(`admin_logs(invoice): ${e?.message}`); }
 
   if (errors.length) {
@@ -319,4 +324,20 @@ export async function syncPublicFeePayment(p: PublicFeeSyncPayload): Promise<{ i
   }
 
   return { isNewStudent: isNew };
+}
+
+/**
+ * Standalone admin_logs writer for events outside syncPublicFeePayment's
+ * pipeline — specifically the REAL outcome of an email send attempt, which
+ * happens after the Sheets sync above completes. Best-effort; never throws.
+ */
+export async function logAdminEvent(
+  action: string, studentName: string, centreName: string, notes: string, nowIso: string,
+): Promise<void> {
+  try {
+    const sheets = getSheets();
+    await appendAdminLog(sheets, formatISTDateTime(nowIso), action, studentName, centreName, notes);
+  } catch (e: any) {
+    logger.warn('[sheetsSync] logAdminEvent failed', { action, error: e?.message });
+  }
 }
