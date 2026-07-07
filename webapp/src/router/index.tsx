@@ -117,11 +117,19 @@ const routes: RouteObject[] = [
               { path: '/admin/progress', element: <Lazy><AdminProgress /></Lazy> },
               { path: '/admin/session-logs', element: <Lazy><AdminSessionLogs /></Lazy> },
               { path: '/admin/parent-feedback', element: <Lazy><AdminParentFeedback /></Lazy> },
-              { path: '/admin/financials', element: <Lazy><AdminFinancials /></Lazy> },
               { path: '/admin/issues', element: <Lazy><AdminIssues /></Lazy> },
               { path: '/admin/notifications', element: <Lazy><AdminNotifications /></Lazy> },
-              { path: '/admin/payroll', element: <Lazy><AdminPayroll /></Lazy> },
               { path: '/admin/settings', element: <Lazy><AdminSettings /></Lazy> },
+              // Financials & Payroll expose salaries, expenses, partner payouts
+              // and profit — SUPER_ADMIN only, never CENTRE_MANAGER. Nested guard
+              // so a manager can't reach them by typing the URL directly.
+              {
+                element: <RoleRoute allowed={[UserRole.SUPER_ADMIN]} />,
+                children: [
+                  { path: '/admin/financials', element: <Lazy><AdminFinancials /></Lazy> },
+                  { path: '/admin/payroll', element: <Lazy><AdminPayroll /></Lazy> },
+                ],
+              },
             ],
           },
         ],

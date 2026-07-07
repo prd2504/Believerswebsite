@@ -188,10 +188,14 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
-    // ── /centreExpenses/{expenseId} ──────────────────────────────────────────────────────
+    // ── /centreExpenses/{expenseId} — SUPER_ADMIN ONLY ───────────────────────────────────
+    // Expenses include COACH_SALARY rows (booked automatically when payroll is
+    // paid) and drive the profit view. This is finance data a CENTRE_MANAGER
+    // must never see or edit — read/write is SUPER_ADMIN only, matching
+    // partnerPayouts and the payroll collections.
     match /centreExpenses/{expenseId} {
-      allow read: if isAdminLike();
-      allow create, update: if isAdminLike();
+      allow read: if isSuperAdmin();
+      allow create, update: if isSuperAdmin();
       allow delete: if isSuperAdmin();
     }
 
