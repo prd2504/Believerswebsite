@@ -37,6 +37,7 @@ export { registerStudent } from './fees/registerStudent.js';
 export { auditStudents } from './fees/auditStudents.js';
 export { findDuplicateStudents } from './fees/findDuplicateStudents.js';
 export { mergeStudents } from './fees/mergeStudents.js';
+export { reconcileStudentIds } from './fees/reconcileStudentIds.js';
 
 // --- Fee invoice email (on payment marked PAID with paymentSource) -----------------------
 export { onFeePaymentCreated } from './fees/onFeePaymentCreated.js';
