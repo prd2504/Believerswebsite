@@ -141,14 +141,71 @@ export const findDuplicateStudents = onRequest(
         likelyDuplicates: clusters.filter((c) => c.likelyDuplicate).length,
       });
 
+      // ── Second pass: same near-identical name at the same centre, but a
+      // DIFFERENT phone number entirely (e.g. mother's number this time vs
+      // father's number on the old roster record). The phone-clustering pass
+      // above can't see this at all since it groups by phone first — this is
+      // the "different mobile number" half of what duplicates actually look
+      // like, so it needs its own scan. Excludes anyone already covered by a
+      // phone-based cluster above to avoid double-reporting the same pair. ──
+      const phoneClusteredIds = new Set(clusters.flatMap((c) => c.students.map((s: any) => s.studentId)));
+      const byCentre = new Map<string, any[]>();
+      studentsSnap.docs.forEach((d) => {
+        const s = d.data();
+        const centreId = s.primaryCentreId as string | undefined;
+        if (!centreId) return;
+        const centre = centreById.get(centreId);
+        if (!centre) return;
+        if (centreCodeFilter && centre.code?.toUpperCase() !== centreCodeFilter) return;
+        if (phoneClusteredIds.has(d.id)) return;
+        const arr = byCentre.get(centreId) ?? [];
+        arr.push({
+          studentId: d.id,
+          name: s.name ?? '',
+          externalStudentId: s.externalStudentId ?? null,
+          phone: canonicalPhone(s.phone),
+          createdBy: s.createdBy ?? null,
+          createdAt: s.createdAt ?? null,
+          payments: payCount.get(d.id) ?? 0,
+          centreCode: centre.code,
+          centreName: centre.name,
+        });
+        byCentre.set(centreId, arr);
+      });
+
+      const crossPhoneDuplicatePairs: any[] = [];
+      for (const arr of byCentre.values()) {
+        for (let i = 0; i < arr.length; i++) {
+          for (let j = i + 1; j < arr.length; j++) {
+            const na = normalizeName(arr[i].name);
+            const nb = normalizeName(arr[j].name);
+            if (!na || !nb || !namesAreNear(na, nb)) continue;
+            if (arr[i].phone && arr[i].phone === arr[j].phone) continue; // same phone → already in pass 1
+            const [keep, dup] = [arr[i], arr[j]].sort(
+              (x, y) => (y.payments - x.payments) || (Number(!!y.externalStudentId) - Number(!!x.externalStudentId)),
+            );
+            crossPhoneDuplicatePairs.push({
+              centreCode: keep.centreCode,
+              centreName: keep.centreName,
+              keep: { studentId: keep.studentId, name: keep.name, phone: keep.phone, externalStudentId: keep.externalStudentId, payments: keep.payments },
+              duplicate: { studentId: dup.studentId, name: dup.name, phone: dup.phone, externalStudentId: dup.externalStudentId, payments: dup.payments },
+              editDistance: editDistance(na, nb),
+              note: 'Same/near-identical name at this centre but DIFFERENT phone numbers — verify manually before merging (could be same person with a new number, or two unrelated people who happen to share a name).',
+            });
+          }
+        }
+      }
+
       res.status(200).json({
         ok: true,
         totalStudents: studentsSnap.size,
         clusters,
+        crossPhoneDuplicatePairs,
         summary: {
           clustersSharingPhone: clusters.length,
           likelyDuplicateClusters: clusters.filter((c) => c.likelyDuplicate).length,
           likelySiblingClusters: clusters.filter((c) => !c.likelyDuplicate).length,
+          crossPhoneSuspects: crossPhoneDuplicatePairs.length,
         },
       });
     } catch (err: any) {
