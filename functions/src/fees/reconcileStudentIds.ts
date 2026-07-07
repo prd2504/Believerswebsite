@@ -28,6 +28,15 @@ function getSheets() {
   return sheetsApi({ version: 'v4', auth });
 }
 
+/** "RBI-047" -> 47. Used to find the current highest-in-use number per centre,
+ * so lastStudentNo can be set to the true max (there's no sort-by-external-ID
+ * view in the admin UI). */
+function parseIdNumber(externalId: string | null | undefined): number | null {
+  if (!externalId) return null;
+  const m = String(externalId).match(/-(\d+)$/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
 export const reconcileStudentIds = onRequest(
   { region: 'asia-south1', cors: true, timeoutSeconds: 120 },
   async (req, res): Promise<void> => {
@@ -76,6 +85,11 @@ export const reconcileStudentIds = onRequest(
       const ambiguous: any[] = [];      // empty Firestore ID, but 0 or >1 sheet matches → needs a human
       const okAlready: any[] = [];      // Firestore ID present and matches the sheet (or no sheet row)
 
+      // externalStudentId -> [{studentId, name}] per centre, to both find the
+      // current max (for lastStudentNo) and catch two students accidentally
+      // sharing one ID (e.g. after a manual rename in the admin UI).
+      const idHolders: Record<string, Map<string, { studentId: string; name: string }[]>> = {};
+
       studentsSnap.docs.forEach((d) => {
         const s = d.data();
         const centreId = s.primaryCentreId as string | undefined;
@@ -91,6 +105,13 @@ export const reconcileStudentIds = onRequest(
         const fsId = String(s.externalStudentId ?? '').trim();
         const phone = canonicalPhone(s.phone);
         const nameKey = normalizeName(s.name);
+
+        if (fsId) {
+          const holders = idHolders[cc] ??= new Map();
+          const arr = holders.get(fsId) ?? [];
+          arr.push({ studentId: d.id, name: s.name ?? '' });
+          holders.set(fsId, arr);
+        }
 
         // Prefer a phone match (more specific), fall back to name match.
         const phoneMatches = (byPhone.get(phone) ?? []).filter((m) => normalizeName(m.name) === nameKey);
@@ -119,8 +140,29 @@ export const reconcileStudentIds = onRequest(
         }
       });
 
+      // Highest number currently in use per centre (→ what lastStudentNo should
+      // be, since the admin UI has no sort-by-external-ID view), and any ID
+      // held by more than one student (a real collision — should be zero).
+      const duplicateExternalIds: any[] = [];
+      Object.entries(idHolders).forEach(([cc, holders]) => {
+        let highestNumber: number | null = null;
+        let highestId: string | null = null;
+        holders.forEach((studentsForId, id) => {
+          const n = parseIdNumber(id);
+          if (n != null && (highestNumber == null || n > highestNumber)) { highestNumber = n; highestId = id; }
+          if (studentsForId.length > 1) {
+            duplicateExternalIds.push({ centreCode: cc, externalStudentId: id, students: studentsForId });
+          }
+        });
+        perCentre[cc] ??= {};
+        perCentre[cc].highestExternalId = highestId;
+        perCentre[cc].highestExternalNumber = highestNumber;
+        perCentre[cc].suggestedLastStudentNo = highestNumber; // set centres/{id}.lastStudentNo to this
+      });
+
       logger.info('[reconcileStudentIds] done', {
         backfillable: backfillable.length, conflicts: conflicts.length, ambiguous: ambiguous.length,
+        duplicateExternalIds: duplicateExternalIds.length,
       });
 
       res.status(200).json({
@@ -131,11 +173,13 @@ export const reconcileStudentIds = onRequest(
           conflicts: conflicts.length,
           ambiguous: ambiguous.length,
           okAlready: okAlready.length,
+          duplicateExternalIds: duplicateExternalIds.length,
         },
         // The actionable lists (capped so the payload stays readable).
         backfillable: backfillable.slice(0, 200),
         conflicts: conflicts.slice(0, 200),
         ambiguous: ambiguous.slice(0, 200),
+        duplicateExternalIds,
       });
     } catch (err: any) {
       logger.error('[reconcileStudentIds] error', { error: err?.message });
