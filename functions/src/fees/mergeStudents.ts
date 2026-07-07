@@ -72,13 +72,23 @@ export const mergeStudents = onRequest(
       ]);
 
       const copyExternalId = !keep.externalStudentId && !!dup.externalStudentId;
+      // A duplicate created via the public /fees page often carries the ONLY
+      // real email/phone on file — that flow requires an email before
+      // payment. Deleting it without copying that contact info to the
+      // survivor would silently break future invoice delivery for a family
+      // we just went to the trouble of de-duplicating. Only fill gaps, never
+      // overwrite something the kept record already has.
+      const copyEmail = !keep.email && !!dup.email;
+      const copyPhone = !keep.phone && !!dup.phone;
 
       const plan = {
-        keep: { studentId: keepId, name: keep.name, externalStudentId: keep.externalStudentId ?? null },
-        duplicate: { studentId: dupId, name: dup.name, externalStudentId: dup.externalStudentId ?? null },
+        keep: { studentId: keepId, name: keep.name, externalStudentId: keep.externalStudentId ?? null, email: keep.email ?? null },
+        duplicate: { studentId: dupId, name: dup.name, externalStudentId: dup.externalStudentId ?? null, email: dup.email ?? null },
         willReassignPayments: payments.size,
         willReassignEnrollments: enrollments.size,
         willCopyExternalIdToKeep: copyExternalId ? dup.externalStudentId : null,
+        willCopyEmailToKeep: copyEmail ? dup.email : null,
+        willCopyPhoneToKeep: copyPhone ? dup.phone : null,
         willDeleteDuplicate: true,
       };
 
@@ -90,8 +100,14 @@ export const mergeStudents = onRequest(
       const batch = db.batch();
       payments.docs.forEach((d) => batch.update(d.ref, { studentId: keepId, updatedAt: new Date().toISOString() }));
       enrollments.docs.forEach((d) => batch.update(d.ref, { studentId: keepId, updatedAt: new Date().toISOString() }));
-      if (copyExternalId) {
-        batch.update(keepSnap.ref, { externalStudentId: dup.externalStudentId, updatedAt: new Date().toISOString() });
+      // Single combined update to the kept doc — a Firestore batch must not
+      // write to the same document twice.
+      if (copyExternalId || copyEmail || copyPhone) {
+        const fill: Record<string, string> = { updatedAt: new Date().toISOString() };
+        if (copyExternalId) fill.externalStudentId = dup.externalStudentId;
+        if (copyEmail) fill.email = dup.email;
+        if (copyPhone) fill.phone = canonicalPhone(dup.phone);
+        batch.update(keepSnap.ref, fill);
       }
       batch.delete(dupSnap.ref);
       await batch.commit();
