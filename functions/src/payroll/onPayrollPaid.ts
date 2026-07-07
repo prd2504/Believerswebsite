@@ -219,16 +219,73 @@ export const onPayrollPaid = onDocumentWritten(
   async (event) => {
     if (!event.data) return;
 
+    const runId = event.params.runId as string;
     const afterSnap = event.data.after;
+    const beforeSnap = event.data.before;
+    const afterStatus = afterSnap.exists ? afterSnap.data()!.status : null;
+    const beforeStatus = beforeSnap.exists ? beforeSnap.data()!.status : null;
+
+    // Reverse the booked salary expense if a previously-PAID run is un-paid or
+    // deleted, so the monthly P&L doesn't keep counting a payment that was
+    // rolled back. (Idempotent: deleting an already-absent doc is a no-op.)
+    if (beforeStatus === 'PAID' && afterStatus !== 'PAID') {
+      try {
+        await db.doc(`centreExpenses/payroll_${runId}`).delete();
+        console.log(`[onPayrollPaid] Reversed salary expense payroll_${runId} (run no longer PAID)`);
+      } catch (err) {
+        console.error('[onPayrollPaid] Failed to reverse salary expense', err);
+      }
+    }
+
     if (!afterSnap.exists) return;
     const after = afterSnap.data()!;
 
     if (after.status !== 'PAID') return;
 
-    const beforeSnap = event.data.before;
-    if (beforeSnap.exists) {
-      const before = beforeSnap.data()!;
-      if (before.status === 'PAID') return;
+    // Fire once — skip if it was already PAID before this write.
+    if (beforeStatus === 'PAID') return;
+
+    // ── Book the salary as a COACH_SALARY expense for the month, so the monthly
+    // P&L / profit report picks it up automatically (the Financials page already
+    // sums every expense category into totalExpenses and netProfit). Done here,
+    // before any email early-return, so a coach with no email on file still gets
+    // the cost recorded.
+    //
+    // Amount = GROSS pay: that's the true cost of employment. TDS / professional
+    // tax withheld from the coach are part of that cost and are remitted to
+    // government separately, so booking gross once is complete and avoids the
+    // double-count you'd get from booking net PLUS the tax payment.
+    //
+    // Idempotent: the expense doc id is derived from the payroll run id, so
+    // Eventarc redelivery or a re-mark-as-paid updates the same row instead of
+    // creating a duplicate expense. Multi-centre coaches are booked to their
+    // first centre (company-wide totals are unaffected).
+    try {
+      const centreId = ((after.centreIds as string[]) ?? [])[0] ?? null;
+      const grossPaise = (after.grossPayPaise as number) ?? (after.netPayPaise as number) ?? 0;
+      if (centreId && grossPaise > 0) {
+        const nowIso = new Date().toISOString();
+        await db.doc(`centreExpenses/payroll_${runId}`).set({
+          centreId,
+          category: 'COACH_SALARY',
+          description: `Salary (gross) — ${after.staffName ?? after.staffId ?? '—'} · ${monthLabel(after.month as string)}`,
+          amountPaise: grossPaise,
+          expenseDate: (after.paidAt as string | null)?.slice(0, 10) ?? nowIso.slice(0, 10),
+          yearMonth: after.month as string,
+          receiptPath: null,
+          approvedBy: after.approvedBy ?? null,
+          sourcePayrollRunId: runId,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          createdBy: 'onPayrollPaid',
+          updatedBy: 'onPayrollPaid',
+        }, { merge: true });
+        console.log(`[onPayrollPaid] Booked COACH_SALARY expense payroll_${runId} — ${formatINR(grossPaise)} · ${after.month}`);
+      } else {
+        console.warn(`[onPayrollPaid] Expense skipped — centreId=${centreId} grossPaise=${grossPaise} (run ${event.params.runId})`);
+      }
+    } catch (err) {
+      console.error('[onPayrollPaid] Failed to book salary expense', err);
     }
 
     const staffId = after.staffId as string;
