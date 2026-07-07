@@ -3,6 +3,36 @@ import { logger } from 'firebase-functions';
 import { db } from '../admin.js';
 import { canonicalPhone, normalizeName } from './phone.js';
 
+/** Levenshtein edit distance — used to tell a spelling-variant duplicate
+ * ("Shinjini" vs "Shinijini", distance 1) from a genuine sibling (entirely
+ * different first name, large distance) within a shared-phone cluster. */
+function editDistance(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    let diag = prev[0];
+    prev[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = prev[j];
+      prev[j] = a[i - 1] === b[j - 1]
+        ? diag
+        : 1 + Math.min(prev[j], prev[j - 1], diag);
+      diag = tmp;
+    }
+  }
+  return prev[n];
+}
+
+/** Two names are "near" (likely the same person mis-spelled) when their edit
+ * distance is tiny in absolute and relative terms. Siblings fail both tests. */
+function namesAreNear(a: string, b: string): boolean {
+  const d = editDistance(a, b);
+  const maxLen = Math.max(a.length, b.length);
+  return d <= 2 || (d <= 4 && d / maxLen <= 0.25);
+}
+
 /**
  * Read-only cleanup aid. Groups students by centre + canonical phone and reports
  * clusters with more than one student, so duplicates created before the identity
@@ -72,15 +102,34 @@ export const findDuplicateStudents = onRequest(
       const clusters = [...groups.values()]
         .filter((arr) => arr.length > 1)
         .map((arr) => {
-          const names = new Set(arr.map((e) => normalizeName(e.name)));
-          // One normalized name across the cluster → almost certainly the same
-          // person registered twice. Multiple names → probably siblings.
-          const likelyDuplicate = names.size === 1;
+          // Find pairs whose names are near-identical — those are the real
+          // "same kid, different spelling" duplicates. Distinct names on a
+          // shared phone are siblings and are left alone.
+          const suspectedDuplicatePairs: any[] = [];
+          for (let i = 0; i < arr.length; i++) {
+            for (let j = i + 1; j < arr.length; j++) {
+              const na = normalizeName(arr[i].name);
+              const nb = normalizeName(arr[j].name);
+              if (namesAreNear(na, nb)) {
+                // Recommend keeping the record that carries payment history /
+                // an external ID; the other is the merge/delete candidate.
+                const [keep, dup] = [arr[i], arr[j]].sort(
+                  (x, y) => (y.payments - x.payments) || (Number(!!y.externalStudentId) - Number(!!x.externalStudentId)),
+                );
+                suspectedDuplicatePairs.push({
+                  keep: { studentId: keep.studentId, name: keep.name, externalStudentId: keep.externalStudentId, payments: keep.payments },
+                  duplicate: { studentId: dup.studentId, name: dup.name, externalStudentId: dup.externalStudentId, payments: dup.payments },
+                  editDistance: editDistance(na, nb),
+                });
+              }
+            }
+          }
           return {
             centreCode: arr[0].centreCode,
             centreName: arr[0].centreName,
             phone: arr[0].phone,
-            likelyDuplicate,
+            likelyDuplicate: suspectedDuplicatePairs.length > 0,
+            suspectedDuplicatePairs,
             count: arr.length,
             students: arr.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))),
           };
