@@ -94,6 +94,7 @@ export const backfillStudentIds = onRequest(
 
       const planned: any[] = [];   // { studentId, name, from, to, kind, invoices }
       const skipped: any[] = [];   // ambiguous / no match
+      const contested: any[] = []; // two+ different students both proposing the same target id
 
       studentsSnap.docs.forEach((d) => {
         const s = d.data();
@@ -126,6 +127,23 @@ export const backfillStudentIds = onRequest(
         // fsId === sheetId → already correct, nothing to do
       });
 
+      // Safety net: if two or more DIFFERENT students both resolve to the same
+      // target id (e.g. two placeholder-phone same-name students both matching
+      // the one sheet row — seen in practice with "Swayam" appearing twice at
+      // Dadar), writing them all would silently create a duplicateExternalIds
+      // collision. Pull every contested id OUT of planned entirely — none of
+      // them get written, even the "right" one — since we can't tell which
+      // (if any) is actually correct without a human looking. Re-run
+      // setStudentExternalId by hand once you know which student it really is.
+      const targetCounts = new Map<string, number>();
+      planned.forEach((p) => targetCounts.set(p.to, (targetCounts.get(p.to) ?? 0) + 1));
+      const contestedIds = new Set([...targetCounts.entries()].filter(([, n]) => n > 1).map(([id]) => id));
+      if (contestedIds.size) {
+        for (let i = planned.length - 1; i >= 0; i--) {
+          if (contestedIds.has(planned[i].to)) contested.push(...planned.splice(i, 1));
+        }
+      }
+
       if (execute) {
         // Firestore batches cap at 500 writes.
         for (let i = 0; i < planned.length; i += 400) {
@@ -148,11 +166,13 @@ export const backfillStudentIds = onRequest(
           backfills: planned.filter((p) => p.kind === 'backfill').length,
           conflictOverwrites: planned.filter((p) => p.kind === 'conflict-overwrite').length,
           skipped: skipped.length,
+          contested: contested.length,
           includeConflicts,
         },
         planned: planned.slice(0, 300),
         skipped: skipped.slice(0, 100),
-        note: execute ? 'Applied.' : 'Dry run — add &execute=true to apply. Then correct the Student_ID column in the Sheet rows for the listed invoices, and reset each centre\'s lastStudentNo counter to its true max.',
+        contested: contested.slice(0, 100),
+        note: execute ? 'Applied.' : 'Dry run — add &execute=true to apply. Then correct the Student_ID column in the Sheet rows for the listed invoices, and reset each centre\'s lastStudentNo counter to its true max. Check "contested" — those need a human call via setStudentExternalId, not this bulk tool.',
       });
     } catch (err: any) {
       logger.error('[backfillStudentIds] error', { error: err?.message });
