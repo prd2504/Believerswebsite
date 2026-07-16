@@ -267,6 +267,9 @@ export const submitFeePayment = onRequest(
         externalInvoiceNo,
         screenshotUrl: input.screenshotUrl ?? null,
         coachName: input.coachName ?? null,
+        // Carried through so the onFeePaymentCreated trigger can auto-enrol a
+        // student who has no batch link yet — see that file.
+        daysPerWeek: input.daysPerWeek ?? null,
         paymentSource,
         createdAt: now,
         updatedAt: now,

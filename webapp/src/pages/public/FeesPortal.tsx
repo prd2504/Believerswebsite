@@ -427,6 +427,10 @@ export default function FeesPortal() {
         amountRupees: effectiveAmount,
         method,
         screenshotUrl,
+        // Ruia tracks attendance via slotBookings, not batch enrollments — omit
+        // there. Elsewhere this lets the backend auto-enrol a student with no
+        // batch link yet (harmless no-op for an already-enrolled student).
+        daysPerWeek: isRuia ? undefined : (selectedFreqDays ?? undefined),
       });
 
       // Ruia: create the slot booking. This runs AFTER the payment is recorded,

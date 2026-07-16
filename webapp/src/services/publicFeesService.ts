@@ -147,6 +147,10 @@ export async function submitFeePayment(input: {
   method: 'UPI' | 'CASH' | 'BANK_TRANSFER';
   screenshotUrl?: string | null;
   notes?: string | null;
+  /** Days/week selected on this payment — lets the backend auto-enrol a student
+   * who has no batch link yet (e.g. just self-registered). Omit for Ruia, which
+   * tracks attendance via slotBookings instead of batch enrollments. */
+  daysPerWeek?: number;
 }): Promise<FeeSubmissionResult> {
   const res = await fetch(`${FUNCTIONS_BASE}/submitFeePayment`, {
     method: 'POST',

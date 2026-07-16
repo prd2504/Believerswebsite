@@ -1,6 +1,6 @@
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions';
-import { db } from '../admin.js';
+import { db, FieldValue } from '../admin.js';
 import { buildInvoiceHtml } from './invoiceEmailTemplate.js';
 import { buildWelcomeHtml } from './welcomeEmailTemplate.js';
 import { syncPublicFeePayment, logAdminEvent } from './sheetsSync.js';
@@ -9,6 +9,83 @@ import { sendMail } from './mailer.js';
 function monthLabel(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
   return new Date(y, m - 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+}
+
+/**
+ * Auto-enrols a student who has no batch link yet — the case for anyone who
+ * self-registered via "Can't find your name? Register a new student" on the
+ * public /fees page and then paid. registerStudent() creates the student doc
+ * with an empty batchIds and no enrollment; without this, that student is
+ * invisible on Roster and anywhere else that's enrollment-driven, even though
+ * their payment recorded fine (they'd only ever show up in Payments).
+ *
+ * Only acts when the choice is UNAMBIGUOUS: exactly one active batch at the
+ * centre offers a pricing plan for the requested daysPerWeek. Zero or
+ * multiple matches → do nothing, just log a warning. Guessing the wrong batch
+ * would be worse than leaving it for an admin to enrol manually via Roster —
+ * this only closes the common case automatically.
+ *
+ * selectedDays is a best-effort default (the first `daysPerWeek` of the
+ * batch's offeredDays, in order) since the public page only captures a day
+ * COUNT, not which specific days — noted in the enrollment so an admin knows
+ * to double-check it against what the family actually wants.
+ */
+async function autoEnrollIfMissing(
+  studentId: string, centreId: string, daysPerWeek: number,
+): Promise<{ batchId: string; batchName: string } | null> {
+  const batchesSnap = await db.collection('batches')
+    .where('centreId', '==', centreId)
+    .where('status', '==', 'ACTIVE')
+    .get();
+
+  const matches = batchesSnap.docs.filter((d) =>
+    ((d.data().frequencyPlans as { daysPerWeek: number }[]) ?? []).some((p) => p.daysPerWeek === daysPerWeek),
+  );
+
+  if (matches.length !== 1) {
+    logger.warn('[onFeePaymentCreated] auto-enrol skipped — ambiguous batch match', {
+      studentId, centreId, daysPerWeek, candidateCount: matches.length,
+    });
+    return null;
+  }
+
+  const batchDoc = matches[0];
+  const batch = batchDoc.data();
+  const plan = ((batch.frequencyPlans as { daysPerWeek: number; monthlyFeePaise: number }[]) ?? [])
+    .find((p) => p.daysPerWeek === daysPerWeek);
+  const offeredDays = [...((batch.offeredDays as number[]) ?? [])].sort((a, b) => a - b);
+  const selectedDays = offeredDays.slice(0, daysPerWeek);
+  const batchName = (batch.name as string) ?? '';
+
+  const enrollmentRef = db.doc(`enrollments/${studentId}_${batchDoc.id}`);
+  const existing = await enrollmentRef.get();
+  if (existing.exists && existing.data()?.status === 'ACTIVE') {
+    return { batchId: batchDoc.id, batchName }; // already enrolled — nothing to do
+  }
+
+  const now = new Date().toISOString();
+  const writeBatch = db.batch();
+  writeBatch.set(enrollmentRef, {
+    studentId, batchId: batchDoc.id, centreId,
+    daysPerWeek, monthlyFeePaise: plan?.monthlyFeePaise ?? 0,
+    selectedDays, startDate: now.slice(0, 10), endDate: null,
+    status: 'ACTIVE', timeSlotStartTime: (batch.startTime as string) ?? null,
+    pausedMonths: [],
+    notes: 'Auto-enrolled from a public /fees payment — verify the selected days match what the family actually attends.',
+    createdAt: now, updatedAt: now, createdBy: 'PUBLIC_FEES_PAGE', updatedBy: 'PUBLIC_FEES_PAGE',
+  });
+  writeBatch.update(batchDoc.ref, {
+    studentIds: FieldValue.arrayUnion(studentId),
+    currentEnrolment: FieldValue.increment(1),
+    updatedAt: now, updatedBy: 'PUBLIC_FEES_PAGE',
+  });
+  writeBatch.update(db.doc(`students/${studentId}`), {
+    batchIds: FieldValue.arrayUnion(batchDoc.id), updatedAt: now,
+  });
+  await writeBatch.commit();
+
+  logger.info('[onFeePaymentCreated] auto-enrolled', { studentId, batchId: batchDoc.id, daysPerWeek });
+  return { batchId: batchDoc.id, batchName };
 }
 
 /**
@@ -57,12 +134,23 @@ export const onFeePaymentCreated = onDocumentWritten(
     const centreName = (centreData.name as string) ?? centreId ?? '—';
     const centreCode = (centreData.centreCode as string) ?? '';
 
-    // Batch name.
-    const batchId = after.batchId as string;
+    // Batch name — and auto-enrol if this student has no batch link yet
+    // (self-registered via /fees, never enrolled). See autoEnrollIfMissing().
+    let batchId = after.batchId as string;
     let batchName = '';
     if (batchId) {
       const batchDoc = await db.doc(`batches/${batchId}`).get();
       if (batchDoc.exists) batchName = (batchDoc.data()!.name as string) ?? '';
+    } else if (centreId && typeof after.daysPerWeek === 'number') {
+      try {
+        const enrolled = await autoEnrollIfMissing(studentId, centreId, after.daysPerWeek as number);
+        if (enrolled) {
+          batchId = enrolled.batchId;
+          batchName = enrolled.batchName;
+        }
+      } catch (e: any) {
+        logger.warn('[onFeePaymentCreated] auto-enrol failed', { studentId, error: e?.message });
+      }
     }
 
     // ── Idempotency claim ──
@@ -78,7 +166,11 @@ export const onFeePaymentCreated = onDocumentWritten(
       const snap = await tx.get(paymentRef);
       if (!snap.exists) return false;
       if (snap.data()!.sideEffectsCompletedAt) return false; // already handled
-      tx.update(paymentRef, { sideEffectsCompletedAt: new Date().toISOString() });
+      const claim: Record<string, unknown> = { sideEffectsCompletedAt: new Date().toISOString() };
+      // Backfill the payment's own batchId too, so /admin/payments and any
+      // batch-joined report reflect the auto-enrollment, not just the sheet.
+      if (batchId && !after.batchId) claim.batchId = batchId;
+      tx.update(paymentRef, claim);
       return true;
     });
     if (!claimed) {

@@ -13,6 +13,10 @@ export const submitFeePaymentSchema = z.object({
   screenshotUrl: z.string().url().optional().nullable(),
   coachName: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
+  // Lets the backend auto-enrol a student with no batch link yet (e.g. just
+  // self-registered) into whichever batch at the centre offers this many
+  // days/week — see onFeePaymentCreated.ts.
+  daysPerWeek: z.number().int().min(1).max(7).optional(),
 }).refine(
   (d) => d.studentId || d.studentName || d.externalStudentId || d.phone,
   { message: 'At least one of studentId, studentName, externalStudentId, or phone is required' },
