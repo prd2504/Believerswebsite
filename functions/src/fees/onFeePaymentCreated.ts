@@ -29,8 +29,11 @@ function monthLabel(ym: string): string {
  * batch's offeredDays, in order) since the public page only captures a day
  * COUNT, not which specific days — noted in the enrollment so an admin knows
  * to double-check it against what the family actually wants.
+ *
+ * Exported so a one-time backfill (backfillEnrollments.ts) can reuse the exact
+ * same logic for students who self-registered before this function existed.
  */
-async function autoEnrollIfMissing(
+export async function autoEnrollIfMissing(
   studentId: string, centreId: string, daysPerWeek: number,
 ): Promise<{ batchId: string; batchName: string } | null> {
   const batchesSnap = await db.collection('batches')
