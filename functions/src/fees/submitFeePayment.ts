@@ -261,7 +261,12 @@ export const submitFeePayment = onRequest(
         razorpayOrderId: null,
         razorpayPaymentId: null,
         razorpaySignature: null,
-        notes: input.notes ?? null,
+        // For a cash payment the payer picks which coach received it — surface
+        // that as the payment note ("Paid to <coach>") so it's visible in the
+        // admin Payments view, not just the separate coachName field. An
+        // explicit note from the caller still wins if one was provided.
+        notes: input.notes
+          ?? (input.method === 'CASH' && input.coachName ? `Paid to ${input.coachName}` : null),
         receiptNumber: null,
         receiptPdfPath: null,
         externalInvoiceNo,

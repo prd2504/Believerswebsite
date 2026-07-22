@@ -77,6 +77,18 @@ export type RegisterOutcome =
   | { kind: 'student'; student: RegisterStudentResult }
   | { kind: 'phoneHasPlayers'; existingPlayers: ExistingPlayer[] };
 
+/** Coach/staff names at a centre — for the "which coach did you pay cash to?" picker. */
+export async function fetchCoaches(centreCode: string): Promise<string[]> {
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE}/listCoaches?centreCode=${encodeURIComponent(centreCode)}`);
+    const data = await parseJsonResponse(res, 'Failed to load coaches');
+    return (data.coaches ?? []).map((c: { name: string }) => c.name);
+  } catch {
+    // Non-critical — a failed coach list must never block a cash payment.
+    return [];
+  }
+}
+
 /** Active centres for the /fees page — plain HTTP GET (faster cold load than the Firestore SDK). */
 export async function fetchActiveCentres(): Promise<CentreOption[]> {
   const res = await fetch(`${FUNCTIONS_BASE}/listCentres`);
@@ -147,6 +159,9 @@ export async function submitFeePayment(input: {
   method: 'UPI' | 'CASH' | 'BANK_TRANSFER';
   screenshotUrl?: string | null;
   notes?: string | null;
+  /** For cash payments — the coach who received it. Backend writes it into the
+   * payment note as "Paid to <coach>". */
+  coachName?: string;
   /** Days/week selected on this payment — lets the backend auto-enrol a student
    * who has no batch link yet (e.g. just self-registered). Omit for Ruia, which
    * tracks attendance via slotBookings instead of batch enrollments. */

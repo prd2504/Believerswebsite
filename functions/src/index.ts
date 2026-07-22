@@ -30,6 +30,7 @@ export { lookupStudent } from './fees/lookupStudent.js';
 
 // --- Public /fees page support (centres, name search, self-registration) -----------------
 export { listCentres } from './fees/listCentres.js';
+export { listCoaches } from './fees/listCoaches.js';
 export { searchStudents } from './fees/searchStudents.js';
 export { registerStudent } from './fees/registerStudent.js';
 

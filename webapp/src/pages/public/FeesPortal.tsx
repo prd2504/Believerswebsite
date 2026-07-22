@@ -27,6 +27,7 @@ import { storage } from '@/lib/firebase';
 import {
   fetchActiveCentres,
   searchStudentsByCentre,
+  fetchCoaches,
   registerStudent,
   submitFeePayment,
   type CentreOption,
@@ -177,6 +178,14 @@ export default function FeesPortal() {
     return (studentsQuery.data ?? []).filter((s) => s.name.toLowerCase().includes(q)).slice(0, 8);
   }, [nameQuery, studentsQuery.data]);
 
+  // Coaches at this centre — for the "which coach did you pay cash to?" picker.
+  const coachesQuery = useQuery({
+    queryKey: ['centreCoaches', selectedCentre?.centreCode],
+    queryFn: () => fetchCoaches(selectedCentre!.centreCode!),
+    enabled: !!selectedCentre?.centreCode,
+  });
+  const coaches = coachesQuery.data ?? [];
+
   // Inline register form
   const [showRegister, setShowRegister] = useState(false);
   const [regName, setRegName] = useState('');
@@ -196,6 +205,7 @@ export default function FeesPortal() {
   const [manualAmount, setManualAmount] = useState(persisted.manualAmount ?? '');
   const [useManualAmount, setUseManualAmount] = useState(persisted.useManualAmount ?? false);
   const [method, setMethod] = useState<'UPI' | 'CASH' | 'BANK_TRANSFER'>(persisted.method ?? 'UPI');
+  const [selectedCoach, setSelectedCoach] = useState<string>(persisted.selectedCoach ?? ''); // cash → coach who received it
 
   // Slot step (Ruia only)
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string | null>(persisted.selectedTimeSlot ?? null);
@@ -230,12 +240,12 @@ export default function FeesPortal() {
       sessionStorage.setItem(PERSIST_KEY, JSON.stringify({
         step, selectedCentre, selectedStudent, month, payerEmail,
         selectedPlanType, selectedFreqDays, manualAmount, useManualAmount,
-        method, selectedTimeSlot, slotPhone,
+        method, selectedCoach, selectedTimeSlot, slotPhone,
       }));
     } catch { /* private mode / quota — non-fatal */ }
   }, [step, selectedCentre, selectedStudent, month, payerEmail,
       selectedPlanType, selectedFreqDays, manualAmount, useManualAmount,
-      method, selectedTimeSlot, slotPhone]);
+      method, selectedCoach, selectedTimeSlot, slotPhone]);
 
   // ── Derived: fee plans available (own enrollment or centre-wide fallback for new students) ──
   const availablePlans = useMemo(() => {
@@ -409,8 +419,17 @@ export default function FeesPortal() {
           const safeName = screenshotFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
           const path = `fee-screenshots/${selectedCentre.id}/${Date.now()}_${safeName}`;
           const storageRef = ref(storage, path);
-          await uploadBytes(storageRef, compressed, { contentType: (compressed as Blob).type || 'image/jpeg' });
-          screenshotUrl = await getDownloadURL(storageRef);
+          // The screenshot is optional, so it must never hold the payment
+          // hostage on a slow/flaky mobile connection. Cap the whole
+          // upload+URL step at 20s; if it doesn't finish, drop the screenshot
+          // and let the payment (the important part) go through immediately.
+          const uploadWithTimeout = (async () => {
+            await uploadBytes(storageRef, compressed, { contentType: (compressed as Blob).type || 'image/jpeg' });
+            return getDownloadURL(storageRef);
+          })();
+          const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000));
+          screenshotUrl = await Promise.race([uploadWithTimeout, timeout]);
+          if (!screenshotUrl) console.warn('[FeesPortal] screenshot upload timed out — continuing without it');
         } catch (uploadErr) {
           // Screenshot is optional — don't block the payment if upload fails.
           console.warn('[FeesPortal] screenshot upload failed, continuing without it', uploadErr);
@@ -427,6 +446,9 @@ export default function FeesPortal() {
         amountRupees: effectiveAmount,
         method,
         screenshotUrl,
+        // Cash → the coach the payer handed it to; backend writes "Paid to <coach>"
+        // into the payment note. Only meaningful for cash.
+        coachName: method === 'CASH' && selectedCoach ? selectedCoach : undefined,
         // Ruia tracks attendance via slotBookings, not batch enrollments — omit
         // there. Elsewhere this lets the backend auto-enrol a student with no
         // batch link yet (harmless no-op for an already-enrolled student).
@@ -478,6 +500,7 @@ export default function FeesPortal() {
     setManualAmount('');
     setUseManualAmount(false);
     setMethod('UPI');
+    setSelectedCoach('');
     setSelectedTimeSlot(null);
     setSlotPhone('');
     setSlotError('');
@@ -501,15 +524,21 @@ export default function FeesPortal() {
   // check; the Cloud Function validates it properly too.
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail.trim());
 
+  // Cash payers must pick which coach received the money — but only when there
+  // are coaches to pick from. If the list is empty or failed to load, never
+  // block the payment over it.
+  const cashCoachSatisfied = method !== 'CASH' || coaches.length === 0 || !!selectedCoach;
+
   const canContinueForm =
     emailValid &&
+    cashCoachSatisfied &&
     (isRuia
       ? !!selectedPlanType && (useManualAmount ? effectiveAmount > 0 : true)
       : effectiveAmount > 0);
 
-  const canSubmit = isRuia
+  const canSubmit = (isRuia
     ? slotPhone.length === 10 && !!selectedTimeSlot
-    : true;
+    : true) && cashCoachSatisfied;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-brand-secondary via-brand-secondary to-[#0D1B2E]">
@@ -881,6 +910,26 @@ export default function FeesPortal() {
               </div>
             </div>
 
+            {/* Cash → which coach received it. Written into the payment note as
+                "Paid to <coach>" for the academy's records. */}
+            {method === 'CASH' && coaches.length > 0 && (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-300">
+                  Which coach did you give the cash to? <span className="text-brand-primary">*</span>
+                </label>
+                <select
+                  value={selectedCoach}
+                  onChange={(e) => setSelectedCoach(e.target.value)}
+                  className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white focus:border-brand-primary focus:outline-none"
+                >
+                  <option value="">Select the coach…</option>
+                  {coaches.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <button onClick={handleContinueFromForm} disabled={!canContinueForm}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 font-semibold text-white transition hover:bg-brand-primary/90 disabled:opacity-50">
               {isRuia ? 'Choose Time Slot' : 'Continue to Payment'}
@@ -1117,6 +1166,9 @@ export default function FeesPortal() {
                   </>
                 )}
                 <div className="flex justify-between"><span>Method</span><span className="text-white">{method === 'BANK_TRANSFER' ? 'Bank Transfer' : method}</span></div>
+                {method === 'CASH' && selectedCoach && (
+                  <div className="flex justify-between"><span>Paid to</span><span className="text-white">{selectedCoach}</span></div>
+                )}
                 <div className="mt-2 flex justify-between border-t border-gray-700 pt-2">
                   <span className="font-medium text-white">Total</span>
                   <span className="text-lg font-bold text-brand-primary">
