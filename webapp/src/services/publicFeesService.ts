@@ -77,18 +77,6 @@ export type RegisterOutcome =
   | { kind: 'student'; student: RegisterStudentResult }
   | { kind: 'phoneHasPlayers'; existingPlayers: ExistingPlayer[] };
 
-/** Coach/staff names at a centre — for the "which coach did you pay cash to?" picker. */
-export async function fetchCoaches(centreCode: string): Promise<string[]> {
-  try {
-    const res = await fetch(`${FUNCTIONS_BASE}/listCoaches?centreCode=${encodeURIComponent(centreCode)}`);
-    const data = await parseJsonResponse(res, 'Failed to load coaches');
-    return (data.coaches ?? []).map((c: { name: string }) => c.name);
-  } catch {
-    // Non-critical — a failed coach list must never block a cash payment.
-    return [];
-  }
-}
-
 /** Active centres for the /fees page — plain HTTP GET (faster cold load than the Firestore SDK). */
 export async function fetchActiveCentres(): Promise<CentreOption[]> {
   const res = await fetch(`${FUNCTIONS_BASE}/listCentres`);

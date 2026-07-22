@@ -27,7 +27,6 @@ import { storage } from '@/lib/firebase';
 import {
   fetchActiveCentres,
   searchStudentsByCentre,
-  fetchCoaches,
   registerStudent,
   submitFeePayment,
   type CentreOption,
@@ -178,13 +177,6 @@ export default function FeesPortal() {
     return (studentsQuery.data ?? []).filter((s) => s.name.toLowerCase().includes(q)).slice(0, 8);
   }, [nameQuery, studentsQuery.data]);
 
-  // Coaches at this centre — for the "which coach did you pay cash to?" picker.
-  const coachesQuery = useQuery({
-    queryKey: ['centreCoaches', selectedCentre?.centreCode],
-    queryFn: () => fetchCoaches(selectedCentre!.centreCode!),
-    enabled: !!selectedCentre?.centreCode,
-  });
-  const coaches = coachesQuery.data ?? [];
 
   // Inline register form
   const [showRegister, setShowRegister] = useState(false);
@@ -524,10 +516,10 @@ export default function FeesPortal() {
   // check; the Cloud Function validates it properly too.
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail.trim());
 
-  // Cash payers must pick which coach received the money — but only when there
-  // are coaches to pick from. If the list is empty or failed to load, never
-  // block the payment over it.
-  const cashCoachSatisfied = method !== 'CASH' || coaches.length === 0 || !!selectedCoach;
+  // Cash payers must name which coach received the money — captured as a note
+  // of record ("Paid to <coach>"). Free text, since coaches aren't maintained
+  // as staff records in the app.
+  const cashCoachSatisfied = method !== 'CASH' || !!selectedCoach.trim();
 
   const canContinueForm =
     emailValid &&
@@ -912,21 +904,19 @@ export default function FeesPortal() {
 
             {/* Cash → which coach received it. Written into the payment note as
                 "Paid to <coach>" for the academy's records. */}
-            {method === 'CASH' && coaches.length > 0 && (
+            {method === 'CASH' && (
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-gray-300">
                   Which coach did you give the cash to? <span className="text-brand-primary">*</span>
                 </label>
-                <select
+                <input
+                  type="text"
                   value={selectedCoach}
                   onChange={(e) => setSelectedCoach(e.target.value)}
-                  className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white focus:border-brand-primary focus:outline-none"
-                >
-                  <option value="">Select the coach…</option>
-                  {coaches.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                  placeholder="Coach's name"
+                  className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white placeholder-gray-500 focus:border-brand-primary focus:outline-none"
+                />
+                <p className="mt-1 text-xs text-gray-500">Recorded on your payment for the academy's reference.</p>
               </div>
             )}
 
