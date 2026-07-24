@@ -11,7 +11,7 @@ export const COMPANY = {
   legalName: 'BBA Sports Private Limited',
   brandName: 'BBA Sports Academy',
   brandShortName: 'BBA',
-  supportEmail: 'support@bbasports.in',
+  supportEmail: 'hello@bbashuttle.com',
   defaultLocale: 'en-IN',
   defaultTimezone: 'Asia/Kolkata',
   defaultCurrency: 'INR' as const,

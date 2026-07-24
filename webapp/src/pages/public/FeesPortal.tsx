@@ -24,6 +24,7 @@ import { cn } from '@/lib/cn';
 import { formatINR, COMPANY, SLOT_PLANS, TUE_THU_SLOT, isTueThuSlot, type SlotPlanType, type SlotBookingDocument } from '@bba/shared';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '@/lib/firebase';
+import QRCode from 'qrcode';
 import {
   fetchActiveCentres,
   searchStudentsByCentre,
@@ -128,6 +129,41 @@ async function compressImage(file: File, maxDim = 1280, quality = 0.7): Promise<
   } catch {
     return file;
   }
+}
+
+/**
+ * Renders a scannable UPI QR code, generated entirely client-side (no network
+ * call, no third-party image host) from the exact same upi:// string as the
+ * "Open UPI App" deep link — so they can never drift out of sync with each
+ * other. Exists because the deep link alone isn't reliable: some UPI apps
+ * (notably on certain Android/PhonePe/GPay combinations) reject it with
+ * "receiver's VPA not available" even though the ID is valid — scanning a QR
+ * for the same payee doesn't hit that failure mode. Also the only way to pay
+ * for someone viewing the page on a desktop.
+ */
+function UpiQrCode({ upiUrl }: { upiUrl: string }) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    QRCode.toDataURL(upiUrl, { width: 220, margin: 1, color: { dark: '#0D1B2A', light: '#FFFFFF' } })
+      .then((url) => { if (!cancelled) setDataUrl(url); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [upiUrl]);
+
+  if (failed) return null; // deep-link button + manual UPI ID box still work
+
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-xl border border-gray-700 bg-white p-4">
+      {dataUrl
+        ? <img src={dataUrl} alt="Scan to pay via UPI" width={180} height={180} className="h-[180px] w-[180px]" />
+        : <div className="flex h-[180px] w-[180px] items-center justify-center"><Loader2 size={24} className="animate-spin text-gray-400" /></div>}
+      <p className="text-center text-xs font-medium text-gray-600">Scan &amp; Pay</p>
+    </div>
+  );
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -531,6 +567,13 @@ export default function FeesPortal() {
   const canSubmit = (isRuia
     ? slotPhone.length === 10 && !!selectedTimeSlot
     : true) && cashCoachSatisfied;
+
+  // Single source of truth for the UPI payment string — used by both the QR
+  // code and the "Open UPI App" deep link, so they can never show different
+  // amounts/payees.
+  const upiPayUrl = feeConfig
+    ? `upi://pay?pa=${encodeURIComponent(feeConfig.upiId)}&pn=${encodeURIComponent('BBA Sports')}&am=${effectiveAmount}&cu=INR&tn=${encodeURIComponent('BBA Fee Payment')}`
+    : '';
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-brand-secondary via-brand-secondary to-[#0D1B2E]">
@@ -1081,6 +1124,12 @@ export default function FeesPortal() {
               <>
                 <h2 className="text-lg font-semibold text-white">Pay via UPI</h2>
 
+                <UpiQrCode upiUrl={upiPayUrl} />
+                <p className="text-center text-xs text-gray-500">
+                  Scan with any UPI app, or tap "Open UPI App" below. If your app says the receiver's
+                  VPA isn't available, scanning this QR instead of the button usually works.
+                </p>
+
                 {/* UPI ID for manual entry or desktop scanning */}
                 <div className="flex items-center justify-between rounded-xl border border-gray-700 bg-gray-800/50 p-3">
                   <div>
@@ -1174,7 +1223,7 @@ export default function FeesPortal() {
                     Submit so it's the last thing people see/tap before confirming,
                     instead of sitting above the fold where it gets missed. */}
                 <a
-                  href={`upi://pay?pa=${encodeURIComponent(feeConfig.upiId)}&pn=${encodeURIComponent('BBA Sports')}&am=${effectiveAmount}&cu=INR&tn=${encodeURIComponent('BBA Fee Payment')}`}
+                  href={upiPayUrl}
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-4 text-base font-bold text-white shadow-lg shadow-blue-900/30 transition hover:bg-blue-500 active:scale-95"
                 >
                   <BadgeIndianRupee size={20} />
