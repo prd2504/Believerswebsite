@@ -230,7 +230,9 @@ export function EnrollmentDialog({
 
               {isUpdateMode && (
                 <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                  Already enrolled · updating existing record
+                  Already enrolled — their current days are pre-filled below (possibly a guess,
+                  if this came from a self-registration). Click a day to remove it, then pick
+                  the correct ones if they don't match.
                 </div>
               )}
 
@@ -267,9 +269,21 @@ export function EnrollmentDialog({
               {/* Day selector */}
               {batch && plan && (
                 <div>
-                  <label className="label">
-                    Which days? ({selectedDays.length}/{plan.daysPerWeek} selected)
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="label">
+                      Which days? ({selectedDays.length}/{plan.daysPerWeek} selected)
+                    </label>
+                    {selectedDays.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDays([])}
+                        disabled={busy}
+                        className="text-xs font-medium text-brand-primary hover:underline"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     {batch.offeredDays.map((d) => {
                       const active = selectedDays.includes(d);
