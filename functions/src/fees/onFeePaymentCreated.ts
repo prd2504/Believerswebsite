@@ -57,8 +57,23 @@ export async function autoEnrollIfMissing(
   const plan = ((batch.frequencyPlans as { daysPerWeek: number; monthlyFeePaise: number }[]) ?? [])
     .find((p) => p.daysPerWeek === daysPerWeek);
   const offeredDays = [...((batch.offeredDays as number[]) ?? [])].sort((a, b) => a - b);
-  const selectedDays = offeredDays.slice(0, daysPerWeek);
   const batchName = (batch.name as string) ?? '';
+
+  // A batch whose plan asks for more days than the batch actually runs is
+  // misconfigured. slice() would silently return too few days, creating an
+  // enrollment with selectedDays.length !== daysPerWeek — which then makes the
+  // admin Enrolment dialog unsatisfiable (it can never reach N/N, so the Enrol
+  // button stays disabled forever) and trips enrollStudent's length guard.
+  // Refuse to create the broken record; leave it for an admin to enrol
+  // manually once the batch's offered days are corrected.
+  if (offeredDays.length < daysPerWeek) {
+    logger.warn('[onFeePaymentCreated] auto-enrol skipped — batch offers fewer days than the plan requires', {
+      studentId, batchId: batchDoc.id, batchName, offeredDays: offeredDays.length, daysPerWeek,
+    });
+    return null;
+  }
+
+  const selectedDays = offeredDays.slice(0, daysPerWeek);
 
   const enrollmentRef = db.doc(`enrollments/${studentId}_${batchDoc.id}`);
   const existing = await enrollmentRef.get();

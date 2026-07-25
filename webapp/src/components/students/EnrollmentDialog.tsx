@@ -58,6 +58,20 @@ export function EnrollmentDialog({
   const plan: FrequencyPlan | undefined = batch?.frequencyPlans[planIdx];
   const isUpdateMode = existingEnrollment !== null;
 
+  // A batch can only satisfy a plan if it actually runs on enough days. When it
+  // doesn't, the day picker is unsatisfiable — there aren't enough chips to
+  // reach N/N — so the Enrol button would sit disabled with no explanation.
+  // Detect it and say so instead.
+  const notEnoughOfferedDays = !!batch && !!plan && batch.offeredDays.length < plan.daysPerWeek;
+
+  // Pre-filled days that aren't in the batch's offered days can't be
+  // deselected via the chips (no chip renders for them), which silently
+  // inflates the count. Surface it so the admin knows to hit Clear.
+  const staleSelectedDays = useMemo(
+    () => (batch ? selectedDays.filter((d) => !batch.offeredDays.includes(d)) : []),
+    [batch, selectedDays],
+  );
+
   // When batch changes, check if student already has an active enrollment
   useEffect(() => {
     if (!batchId || !student.id) return;
@@ -284,6 +298,22 @@ export function EnrollmentDialog({
                       </button>
                     )}
                   </div>
+                  {notEnoughOfferedDays && (
+                    <div className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                      <strong>This batch can&apos;t support this plan.</strong> It runs only{' '}
+                      {batch.offeredDays.length} day{batch.offeredDays.length === 1 ? '' : 's'} a week,
+                      but the {plan.daysPerWeek} days/week plan needs {plan.daysPerWeek}. Pick a smaller
+                      plan, or edit the batch (Batches → {batch.name}) to run on more days.
+                    </div>
+                  )}
+                  {staleSelectedDays.length > 0 && (
+                    <div className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      {staleSelectedDays.length} previously-selected day
+                      {staleSelectedDays.length === 1 ? ' is' : 's are'} no longer offered by this
+                      batch, so {staleSelectedDays.length === 1 ? 'it isn&apos;t' : 'they aren&apos;t'} shown
+                      below. Hit <strong>Clear</strong> and re-pick the days.
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-2">
                     {batch.offeredDays.map((d) => {
                       const active = selectedDays.includes(d);
