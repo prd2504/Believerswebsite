@@ -1049,6 +1049,10 @@ export default function BookingPortal() {
                       );
                       return;
                     }
+                    if (!daysSatisfied) {
+                      setError(`Please pick ${planDays?.pick ?? 0} preferred day${planDays?.pick === 1 ? '' : 's'}`);
+                      return;
+                    }
                     setError('');
                     setStep('payment');
                   }}
@@ -1129,6 +1133,12 @@ export default function BookingPortal() {
                     <AlertCircle size={14} />
                     {error}
                   </div>
+                )}
+
+                {!daysSatisfied && !submitting && (
+                  <p className="text-center text-xs text-amber-600">
+                    Go back and finish selecting your preferred days.
+                  </p>
                 )}
 
                 <button

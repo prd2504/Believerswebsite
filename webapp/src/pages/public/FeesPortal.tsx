@@ -1230,10 +1230,12 @@ export default function FeesPortal() {
               onClick={() => {
                 if (slotPhone.length !== 10) { setSlotError('Enter your 10-digit phone number.'); return; }
                 if (!selectedTimeSlot) { setSlotError('Please select a time slot.'); return; }
+                if (!daysSatisfied) { setSlotError(`Please pick ${planDays?.pick ?? 0} preferred day${planDays?.pick === 1 ? '' : 's'}.`); return; }
+                if (!bookingOpen) { setSlotError("Bookings haven't opened yet — please wait a moment."); return; }
                 setSlotError('');
                 setStep('payment');
               }}
-              disabled={!selectedTimeSlot || slotPhone.length !== 10}
+              disabled={!selectedTimeSlot || slotPhone.length !== 10 || !daysSatisfied || !bookingOpen}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary py-3 font-semibold text-white transition hover:bg-brand-primary/90 disabled:opacity-50">
               Continue to Payment <ChevronRight size={18} />
             </button>
@@ -1361,6 +1363,25 @@ export default function FeesPortal() {
                   Opens GPay, PhonePe, Paytm or any UPI app on your device
                 </p>
               </>
+            )}
+
+            {/* Submit is NEVER gated on tapping "Open UPI App" above — that link is just
+                a convenience shortcut. If it's disabled, something specific is missing;
+                say what, so a parent who already paid elsewhere isn't left guessing. */}
+            {isRuia && !canSubmit && !submitting && (
+              <p className="text-center text-xs text-amber-400">
+                {!bookingOpen
+                  ? "Bookings haven't opened yet — please wait a moment."
+                  : slotPhone.length !== 10
+                    ? 'Go back and enter a valid 10-digit phone number.'
+                    : !selectedTimeSlot
+                      ? 'Go back and select a time slot.'
+                      : !daysSatisfied
+                        ? 'Go back and finish selecting your preferred days.'
+                        : !cashCoachSatisfied
+                          ? "Enter the coach's name above."
+                          : ''}
+              </p>
             )}
 
             <button onClick={handleSubmit} disabled={submitting || !canSubmit}
