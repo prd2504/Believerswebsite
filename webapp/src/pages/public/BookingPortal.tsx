@@ -25,6 +25,8 @@ import {
   SlotBookingStatus,
   DEFAULT_SLOT_CONFIG,
   TUE_THU_SLOT,
+  isBookingWindowOpen,
+  getSlotPlanDays,
   type SlotBookingDocument,
   type SlotPlanConfig,
   type SlotBookingConfig,
@@ -65,6 +67,9 @@ const TIME_SLOT_LABELS: Record<string, string> = {
   '07:00-09:00': '7:00 – 9:00 AM',
   [TUE_THU_SLOT]: '6:00 – 7:00 AM (Tue/Thu)',
 };
+
+/** Indexed by JS day number (0=Sun … 6=Sat) — matches getSlotPlanDays(). */
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function getBookingMonth(): string {
   const d = new Date();
@@ -366,6 +371,11 @@ export default function BookingPortal() {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
+  // Weekdays the participant will attend — asked only when the plan leaves a
+  // choice (2-day, 4-day); derived automatically otherwise. Drives the roster.
+  const [selectedDays, setSelectedDays] = useState<number[]>([]);
+  // Ticks so a page left open before the window opens unlocks by itself.
+  const [now, setNow] = useState(() => new Date());
   const [upiCopied, setUpiCopied] = useState(false);
   const [msgCopied, setMsgCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -383,7 +393,13 @@ export default function BookingPortal() {
 
   const weekdayCapacity = portalConfig?.weekdayCapacity ?? DEFAULT_SLOT_CONFIG.weekdayCapacity;
   const saturdayCapacity = portalConfig?.saturdayCapacity ?? DEFAULT_SLOT_CONFIG.saturdayCapacity;
-  const isPortalOpen = portalConfig?.isOpen ?? DEFAULT_SLOT_CONFIG.isOpen;
+  // Open only when the manual switch is on AND any scheduled openAt has passed.
+  const isPortalOpen = isBookingWindowOpen(
+    portalConfig ? { isOpen: portalConfig.isOpen, openAt: portalConfig.openAt } : null,
+    now,
+  );
+  const planDays = selectedPlan ? getSlotPlanDays(selectedPlan.planType) : null;
+  const daysSatisfied = !planDays || selectedDays.length === planDays.pick;
   const closedSlots = portalConfig?.closedSlots ?? [];
 
   const weekdaySlots = ['06:00-07:00', '07:00-08:00', '08:00-09:00'];
@@ -433,6 +449,13 @@ export default function BookingPortal() {
       setError('Please enter a valid 10-digit phone number');
       return;
     }
+    {
+      const pd = getSlotPlanDays(selectedPlan.planType);
+      if (!pd.fixed && selectedDays.length !== pd.pick) {
+        setError(`Please pick exactly ${pd.pick} preferred days`);
+        return;
+      }
+    }
     if (!timeSlot && selectedPlan.timeSlots.length > 1) {
       setError('Please select a time slot');
       return;
@@ -470,6 +493,7 @@ export default function BookingPortal() {
         participantEmail: email.trim() || undefined,
         planType: selectedPlan.planType,
         timeSlot: finalTimeSlot,
+        selectedDays,
         amountPaise: selectedPlan.amountPaise,
       });
 
@@ -508,6 +532,30 @@ export default function BookingPortal() {
     );
   }
 
+  // Keep `now` fresh so a scheduled opening unlocks without a reload.
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 15_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Fixed-day plans have nothing to choose — set them silently so the roster
+  // still gets days. For choice plans, drop any day the new plan doesn't offer.
+  useEffect(() => {
+    if (!selectedPlan) { setSelectedDays([]); return; }
+    const pd = getSlotPlanDays(selectedPlan.planType);
+    if (pd.fixed) setSelectedDays(pd.choices);
+    else setSelectedDays((prev) => prev.filter((d) => pd.choices.includes(d)));
+  }, [selectedPlan]);
+
+  function toggleDay(d: number) {
+    if (!planDays || planDays.fixed) return;
+    setSelectedDays((prev) => {
+      if (prev.includes(d)) return prev.filter((x) => x !== d);
+      if (prev.length >= planDays.pick) return prev;
+      return [...prev, d].sort((a, b) => a - b);
+    });
+  }
+
   // ── Portal closed ─────────────────────────────────────────────────────────
 
   if (portalConfig !== null && !isPortalOpen) {
@@ -525,10 +573,29 @@ export default function BookingPortal() {
         <div className="flex min-h-[60vh] items-center justify-center px-4">
           <div className="text-center">
             <Lock size={48} className="mx-auto text-gray-300" />
-            <h1 className="mt-4 text-lg font-bold text-gray-700">Bookings Closed</h1>
-            <p className="mt-1 text-sm text-gray-500">
-              Slot bookings for {formatMonth(month)} are not open yet. Please check back later.
-            </p>
+            <h1 className="mt-4 text-lg font-bold text-gray-700">
+              {portalConfig?.isOpen && portalConfig?.openAt ? 'Booking Opens Soon' : 'Bookings Closed'}
+            </h1>
+            {portalConfig?.isOpen && portalConfig?.openAt ? (
+              <>
+                <p className="mt-1 text-sm text-gray-500">
+                  {formatMonth(month)} slots open at{' '}
+                  <strong className="text-gray-700">
+                    {new Date(portalConfig.openAt).toLocaleString('en-IN', {
+                      day: 'numeric', month: 'short',
+                      hour: 'numeric', minute: '2-digit', hour12: true,
+                    })}
+                  </strong>
+                </p>
+                <p className="mt-2 text-xs text-gray-400">
+                  Keep this page open — it unlocks automatically.
+                </p>
+              </>
+            ) : (
+              <p className="mt-1 text-sm text-gray-500">
+                Slot bookings for {formatMonth(month)} are not open yet. Please check back later.
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -863,6 +930,47 @@ export default function BookingPortal() {
               </div>
             )}
 
+            {/* Preferred days — only when the plan leaves a real choice. */}
+            {planDays && !planDays.fixed && (
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-gray-700">
+                  Preferred Days <span className="text-red-500">*</span>
+                  <span className="ml-1 font-normal text-gray-400">
+                    (pick {planDays.pick} — {selectedDays.length}/{planDays.pick})
+                  </span>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {planDays.choices.map((d) => {
+                    const active = selectedDays.includes(d);
+                    const atLimit = !active && selectedDays.length >= planDays.pick;
+                    return (
+                      <button key={d} type="button" onClick={() => toggleDay(d)} disabled={atLimit}
+                        className={cn(
+                          'rounded-lg border-2 px-3 py-2 text-xs font-medium transition-all',
+                          active
+                            ? 'border-brand-primary bg-brand-primary/5 text-brand-primary'
+                            : atLimit
+                              ? 'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-300'
+                              : 'border-gray-100 text-gray-600 hover:border-gray-200',
+                        )}>
+                        {DAY_LABELS[d]}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1 text-[11px] text-gray-400">Tue &amp; Thu run only the 6–7 AM session.</p>
+              </div>
+            )}
+
+            {planDays && planDays.fixed && planDays.choices.length > 0 && (
+              <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                Days for this plan:{' '}
+                <span className="font-semibold text-gray-700">
+                  {planDays.choices.map((d) => DAY_LABELS[d]).join(' · ')}
+                </span>
+              </p>
+            )}
+
             {/* Participant details */}
             <div className="space-y-3">
               <h3 className="text-sm font-bold text-brand-secondary">Your Details</h3>
@@ -1026,7 +1134,7 @@ export default function BookingPortal() {
                 <button
                   type="button"
                   onClick={handleSubmit}
-                  disabled={submitting}
+                  disabled={submitting || !daysSatisfied}
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-primary px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-primary/90 disabled:opacity-60"
                 >
                   {submitting ? (

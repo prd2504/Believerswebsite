@@ -21,7 +21,11 @@ import {
   Pencil,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { formatINR, COMPANY, SLOT_PLANS, TUE_THU_SLOT, isTueThuSlot, type SlotPlanType, type SlotBookingDocument } from '@bba/shared';
+import {
+  formatINR, COMPANY, SLOT_PLANS, TUE_THU_SLOT, isTueThuSlot,
+  isBookingWindowOpen, getSlotPlanDays,
+  type SlotPlanType, type SlotBookingDocument,
+} from '@bba/shared';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '@/lib/firebase';
 import QRCode from 'qrcode';
@@ -46,6 +50,8 @@ import {
 
 const RUIA_CENTRE_CODE = 'RUI';
 const RUIA_BOOKING_CENTRE_ID = 'ruia-college';
+/** Indexed by JS day number (0=Sun … 6=Sat) — matches getSlotPlanDays(). */
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 interface CentreFeeConfig { centreCode: string; upiId: string }
 const CENTRE_FEE_CONFIG: Record<string, CentreFeeConfig> = {
@@ -240,7 +246,16 @@ export default function FeesPortal() {
   const [slotPhone, setSlotPhone] = useState(persisted.slotPhone ?? '');
   const [slotError, setSlotError] = useState('');
   const [slotBookings, setSlotBookings] = useState<SlotBookingDocument[]>([]);
-  const [slotConfig, setSlotConfig] = useState({ weekdayCapacity: 9, saturdayCapacity: 15 });
+  const [slotConfig, setSlotConfig] = useState({
+    weekdayCapacity: 9, saturdayCapacity: 15,
+    isOpen: true, openAt: null as string | null,
+  });
+  // Which weekdays the participant will attend — only asked when the plan
+  // leaves a choice (2-day, 4-day); derived silently otherwise.
+  const [selectedDays, setSelectedDays] = useState<number[]>(persisted.selectedDays ?? []);
+  // Ticks every 15s so a page left open before the booking window opens
+  // unlocks on its own, without the visitor needing to reload.
+  const [now, setNow] = useState(() => new Date());
 
   // Payment
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
@@ -257,10 +272,20 @@ export default function FeesPortal() {
     if (!isRuia || step !== 'slot') return;
     const unsub1 = subscribeToBookings(RUIA_BOOKING_CENTRE_ID, month, setSlotBookings);
     const unsub2 = subscribeToConfig(RUIA_BOOKING_CENTRE_ID, (cfg) => {
-      setSlotConfig({ weekdayCapacity: cfg.weekdayCapacity, saturdayCapacity: cfg.saturdayCapacity });
+      setSlotConfig({
+        weekdayCapacity: cfg.weekdayCapacity, saturdayCapacity: cfg.saturdayCapacity,
+        isOpen: cfg.isOpen, openAt: cfg.openAt,
+      });
     });
     return () => { unsub1(); unsub2(); };
   }, [isRuia, step, month]);
+
+  // Keep `now` fresh while the countdown is on screen.
+  useEffect(() => {
+    if (!isRuia || step !== 'slot') return;
+    const id = setInterval(() => setNow(new Date()), 15_000);
+    return () => clearInterval(id);
+  }, [isRuia, step]);
 
   // ── Persist wizard state (survives the UPI-app round-trip / page reload) ───
   useEffect(() => {
@@ -268,12 +293,12 @@ export default function FeesPortal() {
       sessionStorage.setItem(PERSIST_KEY, JSON.stringify({
         step, selectedCentre, selectedStudent, month, payerEmail,
         selectedPlanType, selectedFreqDays, manualAmount, useManualAmount,
-        method, selectedCoach, selectedTimeSlot, slotPhone,
+        method, selectedCoach, selectedTimeSlot, slotPhone, selectedDays,
       }));
     } catch { /* private mode / quota — non-fatal */ }
   }, [step, selectedCentre, selectedStudent, month, payerEmail,
       selectedPlanType, selectedFreqDays, manualAmount, useManualAmount,
-      method, selectedCoach, selectedTimeSlot, slotPhone]);
+      method, selectedCoach, selectedTimeSlot, slotPhone, selectedDays]);
 
   // ── Derived: fee plans available (own enrollment or centre-wide fallback for new students) ──
   const availablePlans = useMemo(() => {
@@ -306,6 +331,30 @@ export default function FeesPortal() {
     if (!isRuia && availablePlans.length === 0) return Number(manualAmount) || 0;
     return selectedStudent?.monthlyFeeRupees ?? 0;
   }, [useManualAmount, manualAmount, isRuia, selectedPlanType, selectedFreqDays, selectedStudent, availablePlans]);
+
+  // ── Booking window + day plan ────────────────────────────────────────────
+  const bookingOpen = isBookingWindowOpen(slotConfig, now);
+  const planDays = selectedPlanType ? getSlotPlanDays(selectedPlanType as SlotPlanType) : null;
+
+  // Fixed-day plans (3-day, Games Day, Bundle) have nothing to choose — set
+  // them automatically so the roster still gets the days without extra UI.
+  useEffect(() => {
+    if (!planDays) return;
+    if (planDays.fixed) setSelectedDays(planDays.choices);
+    else setSelectedDays((prev) => prev.filter((d) => planDays.choices.includes(d)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPlanType]);
+
+  function toggleDay(d: number) {
+    if (!planDays || planDays.fixed) return;
+    setSelectedDays((prev) => {
+      if (prev.includes(d)) return prev.filter((x) => x !== d);
+      if (prev.length >= planDays.pick) return prev; // at the limit — ignore
+      return [...prev, d].sort((a, b) => a - b);
+    });
+  }
+
+  const daysSatisfied = !planDays || selectedDays.length === planDays.pick;
 
   // ── Slot helpers ─────────────────────────────────────────────────────────
   function getSlotCount(slot: string): number {
@@ -497,6 +546,7 @@ export default function FeesPortal() {
             participantPhone: slotPhone,
             planType: selectedPlanType as SlotPlanType,
             timeSlot: selectedTimeSlot,
+            selectedDays,
             amountPaise: effectiveAmount * 100,
           });
         } catch (bookingErr) {
@@ -530,6 +580,7 @@ export default function FeesPortal() {
     setMethod('UPI');
     setSelectedCoach('');
     setSelectedTimeSlot(null);
+    setSelectedDays([]);
     setSlotPhone('');
     setSlotError('');
     setSlotBookings([]);
@@ -565,7 +616,7 @@ export default function FeesPortal() {
       : effectiveAmount > 0);
 
   const canSubmit = (isRuia
-    ? slotPhone.length === 10 && !!selectedTimeSlot
+    ? slotPhone.length === 10 && !!selectedTimeSlot && daysSatisfied && bookingOpen
     : true) && cashCoachSatisfied;
 
   // Single source of truth for the UPI payment string — used by both the QR
@@ -998,7 +1049,81 @@ export default function FeesPortal() {
             })()}
 
             <h2 className="text-lg font-semibold text-white">Book Your Slot</h2>
-            <p className="text-sm text-gray-400">Slots are first-come-first-served. Once full, no further bookings are accepted.</p>
+            <p className="text-sm text-gray-400">
+              Slots are first-come-first-served. Tell us your preferred days and time — the
+              coaching team confirms the final roster.
+            </p>
+
+            {/* Booking window not open yet — show when it opens and block submit.
+                Unlocks on its own via the `now` tick; no reload needed. */}
+            {!bookingOpen && (
+              <div className="rounded-xl border border-amber-500/40 bg-amber-900/15 p-4 text-center">
+                <Clock size={22} className="mx-auto mb-2 text-amber-300" />
+                <p className="font-semibold text-amber-200">
+                  {slotConfig.isOpen ? 'Booking opens shortly' : 'Bookings are closed'}
+                </p>
+                {slotConfig.isOpen && slotConfig.openAt && (
+                  <p className="mt-1 text-sm text-amber-100/90">
+                    {formatMonth(month)} slots open at{' '}
+                    <strong>
+                      {new Date(slotConfig.openAt).toLocaleString('en-IN', {
+                        day: 'numeric', month: 'short',
+                        hour: 'numeric', minute: '2-digit', hour12: true,
+                      })}
+                    </strong>
+                  </p>
+                )}
+                <p className="mt-2 text-xs text-amber-200/70">
+                  Keep this page open — it unlocks automatically. You can pick your slot and
+                  days now; the Submit button enables when booking opens.
+                </p>
+              </div>
+            )}
+
+            {/* Preferred days — only when the plan leaves a real choice. */}
+            {planDays && !planDays.fixed && (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-300">
+                  Preferred days <span className="text-brand-primary">*</span>
+                  <span className="ml-1 text-xs font-normal text-gray-500">
+                    (pick {planDays.pick} — {selectedDays.length}/{planDays.pick} selected)
+                  </span>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {planDays.choices.map((d) => {
+                    const active = selectedDays.includes(d);
+                    const atLimit = !active && selectedDays.length >= planDays.pick;
+                    return (
+                      <button key={d} type="button" onClick={() => toggleDay(d)} disabled={atLimit}
+                        className={cn(
+                          'rounded-lg border px-4 py-2 text-sm font-medium transition',
+                          active
+                            ? 'border-brand-primary bg-brand-primary text-white'
+                            : atLimit
+                              ? 'cursor-not-allowed border-gray-700 bg-gray-800/40 text-gray-600'
+                              : 'border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-500',
+                        )}>
+                        {DAY_LABELS[d]}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  Tue &amp; Thu run only the 6–7 AM session.
+                </p>
+              </div>
+            )}
+
+            {planDays && planDays.fixed && planDays.choices.length > 0 && (
+              <div className="rounded-lg border border-gray-700 bg-gray-800/40 px-3 py-2">
+                <p className="text-xs text-gray-400">
+                  Days for this plan:{' '}
+                  <span className="font-medium text-gray-200">
+                    {planDays.choices.map((d) => DAY_LABELS[d]).join(' · ')}
+                  </span>
+                </p>
+              </div>
+            )}
 
             {/* Phone for booking */}
             <div>
@@ -1019,12 +1144,15 @@ export default function FeesPortal() {
                 const isSelected = selectedTimeSlot === slot;
 
                 return (
-                  <button key={slot} disabled={full}
+                  // Capacity is advisory, not a hard block: a slot past its
+                  // nominal size still accepts bookings and is flagged
+                  // "Filling up" so the coaching team can allocate from the
+                  // roster afterwards, rather than turning parents away.
+                  <button key={slot}
                     onClick={() => setSelectedTimeSlot(isSelected ? null : slot)}
                     className={cn(
                       'w-full rounded-xl border p-4 text-left transition',
-                      full ? 'cursor-not-allowed border-gray-700 bg-gray-800/30 opacity-50'
-                        : isSelected ? 'border-brand-primary bg-brand-primary/10'
+                      isSelected ? 'border-brand-primary bg-brand-primary/10'
                         : 'border-gray-700 bg-gray-800/50 hover:border-gray-500',
                     )}>
                     <div className="mb-2 flex items-center justify-between">
@@ -1037,11 +1165,11 @@ export default function FeesPortal() {
                       </div>
                       <div className={cn(
                         'rounded-full px-2.5 py-0.5 text-xs font-bold',
-                        full ? 'bg-red-900/50 text-red-300'
+                        full ? 'bg-yellow-900/50 text-yellow-300'
                           : count >= capacity * 0.8 ? 'bg-yellow-900/50 text-yellow-300'
                           : 'bg-green-900/50 text-green-300',
                       )}>
-                        {full ? 'FULL' : `${count}/${capacity}`}
+                        {count}/{capacity}{full ? ' · filling up' : ''}
                       </div>
                     </div>
 

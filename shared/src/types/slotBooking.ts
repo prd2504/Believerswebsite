@@ -38,6 +38,14 @@ export interface SlotBookingDocument {
 
   planType: SlotPlanType;
   timeSlot: string;
+  /**
+   * Which weekdays this participant will actually attend (0=Sun … 6=Sat).
+   * Captured at booking time so a daily roster (who's on court on which day,
+   * in which slot) can be built without phoning every parent. For plans where
+   * the days are fixed (3-day, Games Day, Bundle) this is derived
+   * automatically; only 2-day and 4-day present a choice.
+   */
+  selectedDays: number[];
   amountPaise: number;
 
   status: SlotBookingStatus;
@@ -57,6 +65,20 @@ export interface SlotBookingConfig {
   saturdayCapacity: number;
   isOpen: boolean;
   closedSlots: string[];
+  /**
+   * ISO timestamp before which bookings are not accepted — lets a booking
+   * window be announced ("opens 9:30 PM tonight") and unlock on its own,
+   * with no one needing to flip a switch at the exact minute.
+   *
+   * null / absent = no scheduled gate, behave as before. `isOpen` stays the
+   * master kill switch and is checked independently, so setting it false
+   * closes bookings immediately regardless of this value.
+   *
+   * Note: evaluated against the visitor's device clock, so a badly-set phone
+   * clock can be a few minutes out either way. Good enough for announcing a
+   * window; it is not a security boundary.
+   */
+  openAt: string | null;
   updatedAt: string;
   updatedBy: string | null;
 }
@@ -66,7 +88,55 @@ export const DEFAULT_SLOT_CONFIG: Omit<SlotBookingConfig, 'centreId' | 'updatedA
   saturdayCapacity: 15,
   isOpen: true,
   closedSlots: [],
+  openAt: null,
 };
+
+/**
+ * Whether bookings are currently accepted, given the config and "now".
+ * Both the /fees flow and the standalone /book portal call this so they can
+ * never disagree about whether the window is open.
+ *
+ * `isOpen: false` closes immediately regardless of openAt (master kill switch).
+ * A missing or unparseable `openAt` means no scheduled gate — fails open, so a
+ * typo can never lock everyone out.
+ */
+export function isBookingWindowOpen(
+  config: { isOpen: boolean; openAt: string | null } | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!config) return true;             // config not loaded yet — don't block
+  if (!config.isOpen) return false;     // manual kill switch wins
+  if (!config.openAt) return true;      // no scheduled gate
+  const opens = new Date(config.openAt);
+  if (isNaN(opens.getTime())) return true; // unparseable → treat as no gate
+  return now.getTime() >= opens.getTime();
+}
+
+/**
+ * Which weekdays a Ruia plan covers, and how many the participant chooses.
+ * `fixed` plans have no choice to make (choices.length === pick) so the UI
+ * derives them silently; the rest need a day picker.
+ *
+ * Day numbers follow JS convention: 0=Sun, 1=Mon … 6=Sat.
+ * Mon/Wed/Fri run the full 6–9 AM band; Tue/Thu run only the 6–7 AM session.
+ */
+export interface SlotPlanDays {
+  choices: number[];
+  pick: number;
+  fixed: boolean;
+}
+
+export function getSlotPlanDays(planType: SlotPlanType): SlotPlanDays {
+  const spec: Record<string, { choices: number[]; pick: number }> = {
+    [SlotPlanType.TWO_DAY]:         { choices: [1, 3, 5],          pick: 2 },
+    [SlotPlanType.THREE_DAY]:       { choices: [1, 3, 5],          pick: 3 },
+    [SlotPlanType.FOUR_DAY]:        { choices: [1, 2, 3, 4, 5],    pick: 4 },
+    [SlotPlanType.GAMES_DAY]:       { choices: [6],                pick: 1 },
+    [SlotPlanType.COMPLETE_BUNDLE]: { choices: [1, 3, 5, 6],       pick: 4 },
+  };
+  const s = spec[planType] ?? { choices: [], pick: 0 };
+  return { ...s, fixed: s.choices.length === s.pick };
+}
 
 export interface SlotPlanConfig {
   planType: SlotPlanType;

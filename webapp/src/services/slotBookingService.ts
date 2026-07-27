@@ -47,6 +47,9 @@ function fromFirestore(id: string, data: DocumentData): SlotBookingDocument {
     participantEmail: data.participantEmail ?? null,
     planType: data.planType ?? 'THREE_DAY',
     timeSlot: data.timeSlot ?? '',
+    // Bookings taken before day-capture existed have no selectedDays — treat
+    // as empty rather than guessing, so the roster shows them as unassigned.
+    selectedDays: Array.isArray(data.selectedDays) ? data.selectedDays : [],
     amountPaise: data.amountPaise ?? 0,
     status: data.status ?? SlotBookingStatus.PENDING_PAYMENT,
     upiTransactionId: data.upiTransactionId ?? null,
@@ -65,6 +68,10 @@ function configFromFirestore(id: string, data: DocumentData): SlotBookingConfig 
     saturdayCapacity: data.saturdayCapacity ?? DEFAULT_SLOT_CONFIG.saturdayCapacity,
     isOpen: data.isOpen ?? DEFAULT_SLOT_CONFIG.isOpen,
     closedSlots: Array.isArray(data.closedSlots) ? data.closedSlots : [],
+    // Accepts either a Firestore Timestamp or a plain ISO string, so the field
+    // can be set by hand in the console without breaking the page. Absent or
+    // unparseable → null → no scheduled gate (fails open, never locks out).
+    openAt: toIso(data.openAt) ?? (typeof data.openAt === 'string' ? data.openAt : null),
     updatedAt: toIso(data.updatedAt) ?? new Date().toISOString(),
     updatedBy: data.updatedBy ?? null,
   };
@@ -121,6 +128,8 @@ export interface CreateBookingInput {
   participantEmail?: string;
   planType: SlotPlanType;
   timeSlot: string;
+  /** Weekdays the participant will attend (0=Sun … 6=Sat) — drives the roster. */
+  selectedDays: number[];
   amountPaise: number;
 }
 
@@ -133,6 +142,7 @@ export async function createBooking(input: CreateBookingInput): Promise<string> 
     participantEmail: input.participantEmail || null,
     planType: input.planType,
     timeSlot: input.timeSlot,
+    selectedDays: input.selectedDays ?? [],
     amountPaise: input.amountPaise,
     status: SlotBookingStatus.PENDING_PAYMENT,
     upiTransactionId: null,
