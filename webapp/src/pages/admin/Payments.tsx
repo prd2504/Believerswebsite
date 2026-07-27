@@ -26,6 +26,8 @@ import {
   ChevronRight,
   Archive,
   Unlock,
+  CalendarDays,
+  Users,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { exportPaymentsCsv } from '@/lib/csv';
@@ -66,6 +68,7 @@ import {
   SlotBookingStatus,
   SLOT_PLANS,
   DEFAULT_SLOT_CONFIG,
+  isTueThuSlot,
 } from '@bba/shared';
 import type {
   PaymentDocument,
@@ -272,6 +275,17 @@ const SLOT_DISPLAY: Record<string, string> = {
   '07:00-09:00': '7–9 AM (Sat)',
 };
 
+// Sun (0) has no coaching — roster only ever spans Mon–Sat.
+const DAY_LABELS: Record<number, string> = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' };
+const ROSTER_DAYS = [1, 2, 3, 4, 5, 6];
+const ROSTER_STATUSES = new Set<string>([SlotBookingStatus.CONFIRMED, SlotBookingStatus.PENDING_VERIFICATION]);
+
+function rosterSlotLabel(day: number, timeSlot: string): string {
+  if (day === 6) return 'Games Day (7–9 AM)';
+  if (isTueThuSlot(timeSlot)) return '6–7 AM';
+  return SLOT_DISPLAY[timeSlot] ?? timeSlot;
+}
+
 function bookingSlotCount(bookings: SlotBookingDocument[], slot: string): number {
   if (slot === SATURDAY_SLOT) {
     return bookings.filter(
@@ -291,6 +305,7 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
   const [loading, setLoading] = useState(true);
   const [selectedCentre, setSelectedCentre] = useState('ruia-college');
   const [statusFilter, setStatusFilter] = useState('');
+  const [slotView, setSlotView] = useState<'list' | 'roster'>('list');
   const [showConfigEditor, setShowConfigEditor] = useState(false);
   const [configDraft, setConfigDraft] = useState({
     weekdayCapacity: DEFAULT_SLOT_CONFIG.weekdayCapacity,
@@ -357,6 +372,42 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
     (b) => b.status === SlotBookingStatus.PENDING_VERIFICATION || b.status === SlotBookingStatus.PENDING_PAYMENT,
   ).length;
   const confirmedCount = bookings.filter((b) => b.status === SlotBookingStatus.CONFIRMED).length;
+
+  // Daily roster — who's on court which day, built from each booking's
+  // selectedDays. Only paid-or-confirmed bookings count (PENDING_PAYMENT
+  // hasn't committed yet); bookings with no captured days (pre-launch-fix,
+  // or a legacy record) show up in `unassigned` instead of silently vanishing.
+  const roster = useMemo(() => {
+    const map: Record<number, SlotBookingDocument[]> = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
+    bookings
+      .filter((b) => ROSTER_STATUSES.has(b.status) && b.selectedDays && b.selectedDays.length > 0)
+      .forEach((b) => {
+        b.selectedDays.forEach((d) => {
+          if (map[d]) map[d].push(b);
+        });
+      });
+    Object.values(map).forEach((list) =>
+      list.sort(
+        (a, c) => a.timeSlot.localeCompare(c.timeSlot) || a.participantName.localeCompare(c.participantName),
+      ),
+    );
+    return map;
+  }, [bookings]);
+
+  const unassignedRoster = useMemo(
+    () => bookings.filter((b) => ROSTER_STATUSES.has(b.status) && (!b.selectedDays || b.selectedDays.length === 0)),
+    [bookings],
+  );
+
+  function rosterGroupedBySlot(day: number) {
+    const groups = new Map<string, SlotBookingDocument[]>();
+    (roster[day] ?? []).forEach((b) => {
+      const label = rosterSlotLabel(day, b.timeSlot);
+      if (!groups.has(label)) groups.set(label, []);
+      groups.get(label)!.push(b);
+    });
+    return Array.from(groups.entries());
+  }
 
   const weekdayCap = portalConfig?.weekdayCapacity ?? DEFAULT_SLOT_CONFIG.weekdayCapacity;
   const saturdayCap = portalConfig?.saturdayCapacity ?? DEFAULT_SLOT_CONFIG.saturdayCapacity;
@@ -478,6 +529,26 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
         >
           <ExternalLink size={13} /> View Portal
         </a>
+        <div className="ml-auto flex rounded-lg border border-gray-200 bg-white">
+          <button
+            onClick={() => setSlotView('list')}
+            className={cn(
+              'flex items-center gap-1.5 rounded-l-lg px-3 py-2 text-xs font-medium transition',
+              slotView === 'list' ? 'bg-brand-primary text-white' : 'text-gray-500 hover:bg-gray-50',
+            )}
+          >
+            <Users size={13} /> Bookings
+          </button>
+          <button
+            onClick={() => setSlotView('roster')}
+            className={cn(
+              'flex items-center gap-1.5 rounded-r-lg px-3 py-2 text-xs font-medium transition',
+              slotView === 'roster' ? 'bg-brand-primary text-white' : 'text-gray-500 hover:bg-gray-50',
+            )}
+          >
+            <CalendarDays size={13} /> Daily Roster
+          </button>
+        </div>
       </div>
 
       {/* Config editor panel */}
@@ -682,7 +753,7 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
         </div>
       </div>
 
-      {/* Table */}
+      {/* Table / Roster */}
       {loading ? (
         <CardSkeleton count={4} />
       ) : !selectedCentre ? (
@@ -691,6 +762,66 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
           title="Select a centre"
           description="Choose a centre to view slot bookings."
         />
+      ) : slotView === 'roster' ? (
+        confirmedCount + pendingCount === 0 ? (
+          <EmptyState
+            icon={<CalendarDays size={48} />}
+            title="No bookings yet"
+            description="The roster fills in as bookings come through for the selected month."
+          />
+        ) : (
+          <div>
+            {unassignedRoster.length > 0 && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                <strong>{unassignedRoster.length}</strong> paid/confirmed booking{unassignedRoster.length !== 1 ? 's' : ''} with no
+                day preference captured — not shown below, follow up directly:{' '}
+                {unassignedRoster.map((b) => b.participantName).join(', ')}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              {ROSTER_DAYS.map((day) => {
+                const dayBookings = roster[day] ?? [];
+                return (
+                  <div key={day} className="rounded-xl border border-gray-100 bg-white p-3 shadow-sm">
+                    <div className="mb-2 flex items-center justify-between">
+                      <h4 className="text-sm font-bold text-brand-secondary">{DAY_LABELS[day]}</h4>
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500">
+                        {dayBookings.length}
+                      </span>
+                    </div>
+                    {dayBookings.length === 0 ? (
+                      <p className="text-xs text-gray-300">No one yet</p>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {rosterGroupedBySlot(day).map(([slotLabel, list]) => (
+                          <div key={slotLabel}>
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                              {slotLabel} · {list.length}
+                            </p>
+                            <ul className="mt-0.5 space-y-0.5">
+                              {list.map((b) => (
+                                <li key={b.id} className="flex items-center gap-1 text-xs text-gray-700">
+                                  <span
+                                    className={cn(
+                                      'h-1.5 w-1.5 shrink-0 rounded-full',
+                                      b.status === SlotBookingStatus.CONFIRMED ? 'bg-green-500' : 'bg-yellow-500',
+                                    )}
+                                    title={b.status === SlotBookingStatus.CONFIRMED ? 'Confirmed' : 'Pending verification'}
+                                  />
+                                  <span className="truncate">{b.participantName}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={<Ticket size={48} />}
