@@ -128,7 +128,9 @@ export interface SlotPlanDays {
 
 export function getSlotPlanDays(planType: SlotPlanType): SlotPlanDays {
   const spec: Record<string, { choices: number[]; pick: number }> = {
-    [SlotPlanType.TWO_DAY]:         { choices: [1, 3, 5],          pick: 2 },
+    // Tue & Thu now also run a 6–7 AM session, so a 2-day plan can be any mix
+    // of Mon/Wed/Fri and Tue/Thu (e.g. both Tue+Thu, or one of each).
+    [SlotPlanType.TWO_DAY]:         { choices: [1, 2, 3, 4, 5],    pick: 2 },
     [SlotPlanType.THREE_DAY]:       { choices: [1, 3, 5],          pick: 3 },
     [SlotPlanType.FOUR_DAY]:        { choices: [1, 2, 3, 4, 5],    pick: 4 },
     [SlotPlanType.GAMES_DAY]:       { choices: [6],                pick: 1 },
@@ -153,10 +155,11 @@ export const SLOT_PLANS: SlotPlanConfig[] = [
   {
     planType: SlotPlanType.TWO_DAY,
     label: '2 Days / Week',
-    description: 'Pick any 2 days from Mon, Wed, Fri',
+    description: 'Pick any 2 days — Mon/Wed/Fri, or Tue & Thu (6–7 AM)',
     amountPaise: 300_000,
-    days: 'Mon, Wed, Fri (any 2)',
-    timeSlots: ['06:00-07:00', '07:00-08:00', '08:00-09:00'],
+    days: 'Any 2 of Mon–Fri',
+    // Mon/Wed/Fri offer all 3 bands; Tue/Thu only run 6–7 AM (its own slot).
+    timeSlots: ['06:00-07:00', '07:00-08:00', '08:00-09:00', TUE_THU_SLOT],
     includesWeekday: true,
     includesSaturday: false,
   },

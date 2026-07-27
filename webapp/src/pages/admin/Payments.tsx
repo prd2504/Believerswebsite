@@ -69,6 +69,7 @@ import {
   SLOT_PLANS,
   DEFAULT_SLOT_CONFIG,
   isTueThuSlot,
+  TUE_THU_SLOT,
 } from '@bba/shared';
 import type {
   PaymentDocument,
@@ -267,11 +268,12 @@ const BOOKING_CENTRES = [
 
 const WEEKDAY_SLOTS = ['06:00-07:00', '07:00-08:00', '08:00-09:00'] as const;
 const SATURDAY_SLOT = '07:00-09:00';
-const ALL_SLOTS = [...WEEKDAY_SLOTS, SATURDAY_SLOT];
+const ALL_SLOTS = [...WEEKDAY_SLOTS, TUE_THU_SLOT, SATURDAY_SLOT];
 const SLOT_DISPLAY: Record<string, string> = {
   '06:00-07:00': '6–7 AM (MWF)',
   '07:00-08:00': '7–8 AM (MWF)',
   '08:00-09:00': '8–9 AM (MWF)',
+  [TUE_THU_SLOT]: '6–7 AM (Tue/Thu)',
   '07:00-09:00': '7–9 AM (Sat)',
 };
 
@@ -282,7 +284,10 @@ const ROSTER_STATUSES = new Set<string>([SlotBookingStatus.CONFIRMED, SlotBookin
 
 function rosterSlotLabel(day: number, timeSlot: string): string {
   if (day === 6) return 'Games Day (7–9 AM)';
-  if (isTueThuSlot(timeSlot)) return '6–7 AM';
+  // Tue/Thu only ever run 6–7 AM — say so regardless of which band string is
+  // actually stored on the booking (a mixed-day plan like 2-day may have
+  // picked an MWF band as its primary timeSlot while still attending Tue/Thu).
+  if (day === 2 || day === 4 || isTueThuSlot(timeSlot)) return '6–7 AM';
   return SLOT_DISPLAY[timeSlot] ?? timeSlot;
 }
 
@@ -295,7 +300,7 @@ function bookingSlotCount(bookings: SlotBookingDocument[], slot: string): number
   return bookings.filter(
     (b) =>
       b.timeSlot === slot &&
-      (b.planType === 'TWO_DAY' || b.planType === 'THREE_DAY' || b.planType === 'COMPLETE_BUNDLE'),
+      (b.planType === 'TWO_DAY' || b.planType === 'THREE_DAY' || b.planType === 'FOUR_DAY' || b.planType === 'COMPLETE_BUNDLE'),
   ).length;
 }
 
@@ -639,7 +644,7 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
         <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
           Slot Fill Rates — {fmtMonth(month)}
         </h3>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {ALL_SLOTS.map((slot) => {
             const cnt = bookingSlotCount(bookings, slot);
             const cap = slot === SATURDAY_SLOT ? saturdayCap : weekdayCap;
