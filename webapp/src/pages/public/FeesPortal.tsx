@@ -76,6 +76,26 @@ function formatMonth(m: string): string {
   return new Date(Number(y), Number(mo) - 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 }
 
+/** Sortable rank for a YYYY-MM string, so months can be compared across years. */
+function monthRank(m: string): number {
+  const [y, mo] = m.split('-').map(Number);
+  return y * 12 + (mo - 1);
+}
+
+/**
+ * Rewrite raw YYYY-MM codes coming back from the server into readable months —
+ * the duplicate-payment 409 embeds one, and "2026-08" in an error a parent
+ * reads mid-payment is needlessly cryptic.
+ */
+function humanizeError(msg: string): string {
+  return msg.replace(/\b(\d{4})-(0[1-9]|1[0-2])\b/g, (whole, y, mo) => {
+    const d = new Date(Number(y), Number(mo) - 1);
+    return isNaN(d.getTime())
+      ? whole
+      : d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+  });
+}
+
 function getMonthOptions(): string[] {
   const now = new Date();
   return Array.from({ length: 4 }, (_, i) => {
@@ -332,6 +352,15 @@ export default function FeesPortal() {
     return selectedStudent?.monthlyFeeRupees ?? 0;
   }, [useManualAmount, manualAmount, isRuia, selectedPlanType, selectedFreqDays, selectedStudent, availablePlans]);
 
+  // ── Billing month sanity ─────────────────────────────────────────────────
+  // The month a payment lands in is whatever the form sends, so a mis-picked
+  // dropdown quietly files money against the wrong month. Computed once on
+  // mount: the wizard is short-lived, and a value that shifted mid-session
+  // (e.g. across midnight on the 24th) would be more confusing than stale.
+  const [currentBillingMonth] = useState(getDefaultMonth);
+  const monthIsPast = monthRank(month) < monthRank(currentBillingMonth);
+  const monthIsAhead = monthRank(month) > monthRank(currentBillingMonth);
+
   // ── Booking window + day plan ────────────────────────────────────────────
   const bookingOpen = isBookingWindowOpen(slotConfig, now);
   const planDays = selectedPlanType ? getSlotPlanDays(selectedPlanType as SlotPlanType) : null;
@@ -557,7 +586,15 @@ export default function FeesPortal() {
       setResult(paymentResult);
       setStep('success');
     } catch (err: any) {
-      setSubmitError(err.message || 'Payment submission failed');
+      const raw = err?.message || 'Payment submission failed';
+      // The backend rejects a second payment for the same student+month+batch.
+      // That's the safety net working, not a failure — say so plainly, and
+      // point at the one thing the payer can actually act on (the month).
+      setSubmitError(
+        /already exists/i.test(raw)
+          ? `${humanizeError(raw)}. Nothing was charged again. If you meant a different month, go back and change the Fee Month — otherwise email ${COMPANY.supportEmail}.`
+          : humanizeError(raw),
+      );
     } finally {
       setSubmitting(false);
     }
@@ -857,9 +894,30 @@ export default function FeesPortal() {
                 <Calendar size={14} className="mr-1 inline" /> Fee Month
               </label>
               <select value={month} onChange={(e) => setMonth(e.target.value)}
-                className="w-full rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-white focus:border-brand-primary focus:outline-none">
+                className={cn(
+                  'w-full rounded-xl border bg-gray-800 px-4 py-3 text-white focus:outline-none',
+                  monthIsPast || monthIsAhead
+                    ? 'border-amber-500/60 focus:border-amber-500'
+                    : 'border-gray-700 focus:border-brand-primary',
+                )}>
                 {getMonthOptions().map((m) => <option key={m} value={m}>{formatMonth(m)}</option>)}
               </select>
+              {monthIsPast ? (
+                <p className="mt-1 text-xs text-amber-400">
+                  You&apos;ve selected <strong>{formatMonth(month)}</strong>, which is before the
+                  current fee month ({formatMonth(currentBillingMonth)}). Only pick a past month if
+                  you&apos;re clearing an unpaid fee.
+                </p>
+              ) : monthIsAhead ? (
+                <p className="mt-1 text-xs text-amber-400">
+                  You&apos;ve selected <strong>{formatMonth(month)}</strong> — that&apos;s ahead of the
+                  current fee month ({formatMonth(currentBillingMonth)}).
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-gray-500">
+                  This payment will be recorded against <strong className="text-gray-300">{formatMonth(month)}</strong>.
+                </p>
+              )}
             </div>
 
             {/* Email — invoice receipt goes here (required) */}

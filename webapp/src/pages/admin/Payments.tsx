@@ -28,6 +28,9 @@ import {
   Unlock,
   CalendarDays,
   Users,
+  ShieldCheck,
+  AlertTriangle,
+  Wrench,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { exportPaymentsCsv } from '@/lib/csv';
@@ -56,6 +59,12 @@ import {
   reopenMonth,
 } from '@/services/monthCloseoutService';
 import { getAllCentres } from '@/services/centreService';
+import {
+  checkCentreLaunchReadiness,
+  setCentreCounters,
+  type CentreLaunchCheck,
+  type IdCounterHealth,
+} from '@/services/centreLaunchCheckService';
 import { getAllBatches } from '@/services/batchService';
 import { getAllStudents } from '@/services/studentService';
 import { PaymentCard } from '@/components/payments/PaymentCard';
@@ -82,7 +91,7 @@ import type {
 } from '@bba/shared';
 import type { PaymentFormValues } from '@/lib/schemas/paymentSchema';
 
-type PageTab = 'payments' | 'slotBookings';
+type PageTab = 'payments' | 'slotBookings' | 'launchCheck';
 type Mode = 'list' | 'create' | 'edit';
 type ViewMode = 'card' | 'table' | 'detail';
 type SortField = 'month' | 'status' | 'total' | 'dueDate' | 'student';
@@ -915,6 +924,223 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
   );
 }
 
+// ─── Launch Check Tab ─────────────────────────────────────────────────────────
+
+function CounterRow({
+  label,
+  health,
+  sampleId,
+  onFix,
+  fixing,
+}: {
+  label: string;
+  health: IdCounterHealth;
+  sampleId: (n: number) => string;
+  onFix: () => void;
+  fixing: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        'rounded-lg border p-3',
+        health.willCollide ? 'border-red-200 bg-red-50' : 'border-gray-100 bg-gray-50/60',
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-gray-600">{label}</p>
+          <p className="mt-0.5 text-xs text-gray-500">
+            Counter at <strong className="text-gray-700">{health.counter}</strong> · highest in use{' '}
+            <strong className="text-gray-700">{health.maxInUse}</strong>
+            {health.missing > 0 && <> · {health.missing} record(s) with no ID</>}
+          </p>
+          {health.willCollide && (
+            <p className="mt-1 text-xs font-medium text-red-600">
+              Next mint would be {sampleId(health.counter + 1)} — already taken.
+            </p>
+          )}
+          {health.duplicates.length > 0 && (
+            <p className="mt-1 text-xs text-red-600">
+              Duplicated: {health.duplicates.slice(0, 6).join(', ')}
+              {health.duplicates.length > 6 && ` +${health.duplicates.length - 6} more`}
+            </p>
+          )}
+          {health.foreign.length > 0 && (
+            <p className="mt-1 text-xs text-amber-600">
+              Wrong prefix for this centre: {health.foreign.slice(0, 4).join(', ')}
+              {health.foreign.length > 4 && ` +${health.foreign.length - 4} more`}
+            </p>
+          )}
+        </div>
+        {health.willCollide && (
+          <button
+            onClick={onFix}
+            disabled={fixing}
+            className="shrink-0 rounded-lg bg-red-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+            title={`Advance the counter to ${health.maxInUse}`}
+          >
+            <Wrench size={12} className="mr-1 inline" />
+            Set to {health.maxInUse}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LaunchCheckTab({
+  centres,
+  profile,
+}: {
+  centres: CentreDocument[];
+  profile: { id: string } | null;
+}) {
+  const [checks, setChecks] = useState<CentreLaunchCheck[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [fixing, setFixing] = useState<string | null>(null);
+
+  const run = useCallback(async () => {
+    if (centres.length === 0) return;
+    setLoading(true);
+    try {
+      const results = await Promise.all(centres.map((c) => checkCentreLaunchReadiness(c)));
+      setChecks(results);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to run launch check');
+    } finally {
+      setLoading(false);
+    }
+  }, [centres]);
+
+  useEffect(() => { run(); }, [run]);
+
+  const handleFix = async (
+    check: CentreLaunchCheck,
+    field: 'lastStudentNo' | 'lastInvoiceNo',
+    value: number,
+  ) => {
+    if (!profile) return;
+    const what = field === 'lastStudentNo' ? 'student ID' : 'invoice';
+    if (!confirm(
+      `Advance ${check.centreName}'s ${what} counter to ${value}?\n\n` +
+      `New ${what}s will continue from ${value + 1}. This only moves the counter forward — ` +
+      `no existing record is changed.`,
+    )) return;
+    setFixing(`${check.centreId}_${field}`);
+    try {
+      await setCentreCounters(check.centreId, { [field]: value }, profile.id);
+      toast.success(`${check.centreName}: ${what} counter set to ${value}`);
+      await run();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to update counter');
+    } finally {
+      setFixing(null);
+    }
+  };
+
+  const blocked = checks.filter((c) => c.blockers.length > 0);
+
+  return (
+    <div>
+      <div className="mb-5 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-brand-secondary">Launch Check</h1>
+          <p className="mt-0.5 text-sm text-gray-500">
+            Verify a centre is safe to take public payments before its /fees page goes live.
+          </p>
+        </div>
+        <button onClick={run} disabled={loading} className="btn-secondary shrink-0" title="Re-run">
+          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {checks.length > 0 && (
+        <div
+          className={cn(
+            'mb-5 flex items-center gap-3 rounded-xl border p-4',
+            blocked.length === 0 ? 'border-green-100 bg-green-50' : 'border-red-100 bg-red-50',
+          )}
+        >
+          {blocked.length === 0 ? (
+            <ShieldCheck size={22} className="shrink-0 text-green-600" />
+          ) : (
+            <AlertTriangle size={22} className="shrink-0 text-red-600" />
+          )}
+          <p className={cn('text-sm font-medium', blocked.length === 0 ? 'text-green-800' : 'text-red-800')}>
+            {blocked.length === 0
+              ? `All ${checks.length} centre(s) clear — safe to go live.`
+              : `${blocked.length} of ${checks.length} centre(s) need attention before going live.`}
+          </p>
+        </div>
+      )}
+
+      {loading && checks.length === 0 ? (
+        <CardSkeleton count={3} />
+      ) : (
+        <div className="space-y-4">
+          {checks.map((c) => (
+            <div key={c.centreId} className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-bold text-brand-secondary">{c.centreName}</h3>
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 font-mono text-[10px] font-semibold text-gray-600">
+                  {c.centreCode ?? 'NO CODE'}
+                </span>
+                {!c.active && (
+                  <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-semibold text-gray-600">
+                    Inactive
+                  </span>
+                )}
+                <span
+                  className={cn(
+                    'ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold',
+                    c.blockers.length === 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700',
+                  )}
+                >
+                  {c.blockers.length === 0 ? 'READY' : `${c.blockers.length} ISSUE(S)`}
+                </span>
+              </div>
+
+              <p className="mb-3 text-xs text-gray-400">
+                {c.studentCount} student(s) · {c.paymentCount} payment(s) · {c.batchCount} batch(es)
+              </p>
+
+              <div className="space-y-2">
+                <CounterRow
+                  label="Student IDs"
+                  health={c.students}
+                  sampleId={(n) => `${c.centreCode}-${String(n).padStart(3, '0')}`}
+                  fixing={fixing === `${c.centreId}_lastStudentNo`}
+                  onFix={() => handleFix(c, 'lastStudentNo', c.students.maxInUse)}
+                />
+                <CounterRow
+                  label="Invoice numbers"
+                  health={c.invoices}
+                  sampleId={(n) => `BBA-${c.centreCode}-${String(n).padStart(3, '0')}`}
+                  fixing={fixing === `${c.centreId}_lastInvoiceNo`}
+                  onFix={() => handleFix(c, 'lastInvoiceNo', c.invoices.maxInUse)}
+                />
+              </div>
+
+              {c.blockers.length > 0 && (
+                <ul className="mt-3 space-y-1 rounded-lg bg-red-50 p-3">
+                  {c.blockers.map((b, i) => (
+                    <li key={i} className="flex gap-2 text-xs text-red-700">
+                      <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                      {b}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function PaymentsPage() {
@@ -1275,9 +1501,22 @@ export default function PaymentsPage() {
           <Ticket size={14} className="inline mr-1" />
           Slot Bookings
         </button>
+        <button
+          type="button"
+          onClick={() => setPageTab('launchCheck')}
+          className={cn(
+            'flex-1 rounded-md py-2 text-sm font-medium transition-colors',
+            pageTab === 'launchCheck' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700',
+          )}
+        >
+          <ShieldCheck size={14} className="inline mr-1" />
+          Launch Check
+        </button>
       </div>
 
-      {pageTab === 'slotBookings' ? (
+      {pageTab === 'launchCheck' ? (
+        <LaunchCheckTab centres={centres} profile={profile} />
+      ) : pageTab === 'slotBookings' ? (
         <SlotBookingsTab centres={centres} profile={profile} />
       ) : (
       <>
