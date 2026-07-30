@@ -183,7 +183,6 @@ export default function AttendancePage() {
           </p>
           <QuickAttendance
             batches={activeBatches}
-            centreId={centreFilter || centres[0]?.id || ''}
             userId={profile.id}
             onDone={load}
           />

@@ -59,8 +59,14 @@ interface SlotGroup {
 }
 
 interface QuickAttendanceProps {
+  /**
+   * Batches to mark for. Already scoped by the caller — this component shows
+   * every batch it is handed that runs on the selected day. There is
+   * deliberately no centreId prop: it took one, ignored it, and read
+   * batch.centreId instead, which made the component look centre-scoped when
+   * it never was.
+   */
   batches: BatchDocument[];
-  centreId: string;
   userId: string;
   onDone?: () => void;
 }
@@ -76,7 +82,7 @@ function dayOfWeekFromIso(iso: string): DayOfWeek {
   return date.getUTCDay() as DayOfWeek;
 }
 
-export function QuickAttendance({ batches, centreId, userId, onDone }: QuickAttendanceProps) {
+export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProps) {
   const [sessionDate, setSessionDate] = useState(todayStr);
   const [rows, setRows] = useState<QuickRow[]>([]);
   const [loading, setLoading] = useState(false);

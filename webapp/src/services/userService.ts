@@ -209,6 +209,43 @@ export async function approveCoach(
 }
 
 /**
+ * Force `batches.coachIds` to agree with the coach's `assignedBatchIds`.
+ *
+ * The two are written separately (here and by the batch form), so they can
+ * drift — and when they do, the coach's app believes the batch side, because
+ * getBatchesByCoach queries coachIds. A coach can therefore look correctly
+ * assigned on their profile and still see nothing. updateCoachAssignments only
+ * syncs the difference against the *previous* profile value, so re-saving an
+ * unchanged list will not repair existing drift; this will.
+ *
+ * Idempotent — only writes the batches that are actually wrong.
+ */
+export async function repairCoachBatchLinks(
+  uid: string,
+  assignedBatchIds: string[],
+  allBatches: { id: string; coachIds: string[] }[],
+  adminId: string,
+): Promise<number> {
+  const assigned = new Set(assignedBatchIds);
+  let fixed = 0;
+
+  for (const batch of allBatches) {
+    const linked = (batch.coachIds ?? []).includes(uid);
+    const shouldBeLinked = assigned.has(batch.id);
+    if (linked === shouldBeLinked) continue;
+
+    await updateDoc(doc(db, COLLECTIONS.batches, batch.id), {
+      coachIds: shouldBeLinked ? arrayUnion(uid) : arrayRemove(uid),
+      updatedAt: serverTimestamp(),
+      updatedBy: adminId,
+    });
+    fixed += 1;
+  }
+
+  return fixed;
+}
+
+/**
  * Update a coach's assigned centres and batches (replaces existing arrays).
  * Syncs batch `coachIds`: removes coach from old batches, adds to new ones.
  */

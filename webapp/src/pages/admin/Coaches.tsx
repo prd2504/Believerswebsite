@@ -17,6 +17,7 @@ import {
   getAllCoaches,
   approveCoach,
   updateCoachAssignments,
+  repairCoachBatchLinks,
   suspendCoach,
   reactivateCoach,
 } from '@/services/userService';
@@ -109,6 +110,13 @@ export default function CoachesPage() {
     setEditBatches((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
+    // Batch access is what actually drives the coach's app — attendance reads
+    // batches.coachIds, never centreIds. Ticking a batch therefore implies its
+    // centre, so the two can't be left inconsistent by hand.
+    const batch = batches.find((b) => b.id === id);
+    if (batch) {
+      setEditCentres((prev) => (prev.includes(batch.centreId) ? prev : [...prev, batch.centreId]));
+    }
   }
 
   async function handleApprove(coach: UserDocument) {
@@ -147,6 +155,31 @@ export default function CoachesPage() {
     }
   }
 
+  async function handleRepair(coach: UserDocument) {
+    if (!profile) return;
+    if (!confirm(
+      `Make the batches match ${coach.name}'s profile?\n\n` +
+      `Batches listed on the profile will be linked to them; batches linked to them but not on ` +
+      `the profile will be unlinked. No other coach is affected.`,
+    )) return;
+    setBusy(true);
+    try {
+      const fixed = await repairCoachBatchLinks(
+        coach.id,
+        coach.assignedBatchIds ?? [],
+        batches,
+        profile.id,
+      );
+      toast.success(fixed > 0 ? `Repaired ${fixed} batch link(s)` : 'Nothing to repair');
+      await load();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to repair batch links');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleSuspend(coach: UserDocument) {
     if (!profile) return;
     if (!confirm(`Suspend ${coach.name}? They won't be able to use the app.`)) return;
@@ -179,9 +212,19 @@ export default function CoachesPage() {
   }
 
   function AssignmentEditor({ coach, onSave }: { coach: UserDocument; onSave: () => void }) {
-    const filteredBatches = editCentres.length > 0
-      ? batches.filter((b) => editCentres.includes(b.centreId) && b.status === 'ACTIVE')
-      : [];
+    // Every active batch, grouped by centre. Previously this listed only
+    // batches whose centre was already ticked, so assigning a coach to a new
+    // centre's batch meant ticking the centre first — and ticking the centre
+    // alone (which grants nothing) looked like it had done the job.
+    const activeBatches = batches.filter((b) => b.status === 'ACTIVE');
+    const byCentre = centres
+      .map((c) => ({ centre: c, list: activeBatches.filter((b) => b.centreId === c.id) }))
+      .filter((g) => g.list.length > 0);
+
+    const orphanBatchIds = editBatches.filter((id) => !activeBatches.some((b) => b.id === id));
+    const centresWithoutBatch = editCentres.filter(
+      (cid) => !editBatches.some((bid) => activeBatches.find((b) => b.id === bid)?.centreId === cid),
+    );
 
     return (
       <div className="mt-3 space-y-3 rounded-lg bg-gray-50 p-3">
@@ -205,27 +248,60 @@ export default function CoachesPage() {
             ))}
           </div>
         </div>
-        {filteredBatches.length > 0 && (
-          <div>
-            <p className="mb-1.5 text-xs font-medium text-gray-600">Assign batches</p>
-            <div className="flex flex-wrap gap-2">
-              {filteredBatches.map((b) => (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => toggleBatch(b.id)}
-                  className={`rounded-full border px-2.5 py-1 text-xs transition ${
-                    editBatches.includes(b.id)
-                      ? 'border-brand-primary bg-brand-primary text-white'
-                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
-                  }`}
-                  disabled={busy}
-                >
-                  {b.name}
-                </button>
+
+        <div>
+          <p className="mb-1 text-xs font-medium text-gray-600">Assign batches</p>
+          <p className="mb-2 text-[11px] text-gray-400">
+            This is what actually gives the coach access — attendance and student lists are
+            driven by batch assignment, not centre access.
+          </p>
+          {byCentre.length === 0 ? (
+            <p className="text-xs text-gray-400">No active batches exist yet.</p>
+          ) : (
+            <div className="space-y-2.5">
+              {byCentre.map(({ centre, list }) => (
+                <div key={centre.id}>
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                    {centre.name}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {list.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => toggleBatch(b.id)}
+                        className={`rounded-full border px-2.5 py-1 text-xs transition ${
+                          editBatches.includes(b.id)
+                            ? 'border-brand-primary bg-brand-primary text-white'
+                            : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                        }`}
+                        disabled={busy}
+                      >
+                        {b.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
-          </div>
+          )}
+        </div>
+
+        {centresWithoutBatch.length > 0 && (
+          <p className="rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] text-amber-700">
+            <strong>
+              {centresWithoutBatch.map((id) => centreMap.get(id) ?? id).join(', ')}
+            </strong>{' '}
+            {centresWithoutBatch.length === 1 ? 'is' : 'are'} assigned as {centresWithoutBatch.length === 1 ? 'a centre' : 'centres'} but
+            no batch there is selected — the coach will see nothing from {centresWithoutBatch.length === 1 ? 'it' : 'them'}.
+          </p>
+        )}
+
+        {orphanBatchIds.length > 0 && (
+          <p className="rounded-lg bg-gray-100 px-2.5 py-2 text-[11px] text-gray-500">
+            {orphanBatchIds.length} previously-assigned batch(es) are inactive or deleted. They stay
+            assigned and are left untouched when you save.
+          </p>
         )}
         <div className="flex gap-2">
           <button onClick={onSave} className="btn-primary text-xs py-1.5" disabled={busy}>
@@ -244,6 +320,19 @@ export default function CoachesPage() {
     const assignedCentreNames = (coach.centreIds ?? []).map((id) => centreMap.get(id)).filter(Boolean);
     const assignedBatchNames = (coach.assignedBatchIds ?? []).map((id) => batchMap.get(id)).filter(Boolean);
 
+    // The coach's app resolves batches from batches.coachIds, not from the
+    // profile — so a mismatch between the two is invisible here but decisive
+    // there. Surface it rather than letting it look like a working assignment.
+    const assignedIds = new Set(coach.assignedBatchIds ?? []);
+    const linkedIds = new Set(batches.filter((b) => (b.coachIds ?? []).includes(coach.id)).map((b) => b.id));
+    const drift = [
+      ...[...linkedIds].filter((id) => !assignedIds.has(id))
+        .map((id) => `${batchMap.get(id) ?? id}: on the batch, missing from this profile`),
+      ...[...assignedIds].filter((id) => !linkedIds.has(id) && batchMap.has(id))
+        .map((id) => `${batchMap.get(id)}: on this profile, missing from the batch — coach cannot see it`),
+    ];
+    const noBatches = (coach.assignedBatchIds ?? []).length === 0 && linkedIds.size === 0;
+
     return (
       <div className="card">
         <div className="flex items-start justify-between gap-3">
@@ -259,6 +348,29 @@ export default function CoachesPage() {
               <p className="text-xs text-gray-500">
                 Batches: {assignedBatchNames.join(', ')}
               </p>
+            )}
+            {noBatches && coach.accountStatus === AccountStatus.ACTIVE && (
+              <p className="mt-1.5 rounded bg-amber-50 px-2 py-1 text-[11px] text-amber-700">
+                No batches assigned — this coach sees no students and cannot mark attendance.
+                {assignedCentreNames.length > 0 && ' Centre access alone does not grant this.'}
+              </p>
+            )}
+            {drift.length > 0 && (
+              <div className="mt-1.5 rounded bg-red-50 px-2 py-1.5">
+                <p className="text-[11px] font-semibold text-red-700">Assignment out of sync</p>
+                <ul className="mt-0.5 space-y-0.5">
+                  {drift.map((d) => (
+                    <li key={d} className="text-[11px] text-red-600">{d}</li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => handleRepair(coach)}
+                  disabled={busy}
+                  className="mt-1.5 rounded bg-red-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  Repair from profile
+                </button>
+              </div>
             )}
           </div>
           <div className="flex shrink-0 gap-1.5">
