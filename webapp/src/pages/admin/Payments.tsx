@@ -536,7 +536,7 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
           <Settings size={13} /> Manage Capacity
         </button>
         <a
-          href="/book/ruia"
+          href="/fees?centre=RUI"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50"

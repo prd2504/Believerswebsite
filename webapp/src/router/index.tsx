@@ -27,7 +27,7 @@ import { RootRedirect } from './RootRedirect';
 const LoginPage = lazy(() => import('@/pages/auth/Login'));
 const RegisterPage = lazy(() => import('@/pages/auth/Register'));
 const PendingApprovalPage = lazy(() => import('@/pages/auth/PendingApproval'));
-const BookingPortal = lazy(() => import('@/pages/public/BookingPortal'));
+const BookingRedirect = lazy(() => import('@/pages/public/BookingRedirect'));
 const FeesPortal = lazy(() => import('@/pages/public/FeesPortal'));
 
 const AdminDashboard = lazy(() => import('@/pages/admin/Dashboard'));
@@ -81,9 +81,10 @@ const routes: RouteObject[] = [
     path: '/pending-approval',
     element: <Lazy><PendingApprovalPage /></Lazy>,
   },
+  // Legacy slot-booking portal — now folded into /fees. See BookingRedirect.
   {
     path: '/book/:centreSlug',
-    element: <Lazy><BookingPortal /></Lazy>,
+    element: <Lazy><BookingRedirect /></Lazy>,
   },
   {
     path: '/fees',

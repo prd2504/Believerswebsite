@@ -1,3 +1,19 @@
+/**
+ * RETIRED — no longer routed. /book/<slug> now redirects to /fees via
+ * BookingRedirect.tsx.
+ *
+ * This portal wrote a slotBooking document and nothing else: no payment
+ * record, no invoice number, no receipt email. Bookings taken here were
+ * therefore absent from the payment ledger and from the CA's invoice
+ * sequence, and had to be reconciled by hand from WhatsApp screenshots.
+ * /fees does all of that in one flow, so Ruia now uses it like every other
+ * centre.
+ *
+ * Kept in the tree (rather than deleted) so the flow can be restored quickly
+ * if the standalone portal is ever wanted again — re-point the /book route at
+ * this component. Note it would need its UPI ID kept in step with
+ * CENTRE_FEE_CONFIG in FeesPortal.tsx; they had already drifted apart once.
+ */
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import {
@@ -52,7 +68,9 @@ const CENTRE_SLUG_MAP: Record<string, CentreConfig> = {
   ruia: {
     centreId: 'ruia-college',
     name: 'Ruia College',
-    upiId: 'getepay.tdmcblqr413065',
+    // Must match CENTRE_FEE_CONFIG.RUI in FeesPortal.tsx — these drifted apart
+    // once and Ruia advertised two different payees depending on entry point.
+    upiId: '85287401@ubin',
     upiQrPath: '/upi-qr-ruia.png',
     whatsappGroupUrl: 'https://chat.whatsapp.com/IMOn7V1P8KZAIPCW3zJhpt',
   },

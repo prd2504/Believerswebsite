@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ChevronRight,
@@ -224,6 +225,25 @@ export default function FeesPortal() {
   });
   const [selectedCentre, setSelectedCentre] = useState<CentreOption | null>(persisted.selectedCentre ?? null);
   const isRuia = selectedCentre?.centreCode === RUIA_CENTRE_CODE;
+
+  // ?centre=<code> lets a link point straight at one centre's form — used by
+  // the legacy /book/<slug> redirect. Applied once per page load so it can't
+  // fight the Back button or trap someone who resets to pick another centre.
+  const [searchParams] = useSearchParams();
+  const centreParam = searchParams.get('centre');
+  const centreParamApplied = useRef(false);
+  useEffect(() => {
+    if (centreParamApplied.current || !centreParam || centres.length === 0) return;
+    if (selectedCentre) { centreParamApplied.current = true; return; } // resumed session wins
+    const match = centres.find(
+      (c) => c.centreCode && c.centreCode.toUpperCase() === centreParam.toUpperCase(),
+    );
+    centreParamApplied.current = true;
+    if (match) {
+      setSelectedCentre(match);
+      setStep((s) => (s === 'centre' ? 'lookup' : s));
+    }
+  }, [centreParam, centres, selectedCentre]);
 
   // Lookup / autocomplete
   const [nameQuery, setNameQuery] = useState('');
