@@ -11,6 +11,21 @@ export const ExpenseCategory = {
 } as const;
 export type ExpenseCategory = (typeof ExpenseCategory)[keyof typeof ExpenseCategory];
 
+/**
+ * Approval state of an expense.
+ *
+ * A centre manager can submit an expense for their own centre, but it does not
+ * affect any profit figure until a super-admin approves it. Rows created before
+ * this workflow existed carry no status field at all and are read as APPROVED —
+ * they were only creatable by a super-admin, so they were already trusted.
+ */
+export const ExpenseStatus = {
+  PENDING: 'PENDING',
+  APPROVED: 'APPROVED',
+  REJECTED: 'REJECTED',
+} as const;
+export type ExpenseStatus = (typeof ExpenseStatus)[keyof typeof ExpenseStatus];
+
 export interface CentreExpenseDocument extends BaseDocument {
   id: string;
   centreId: string;
@@ -20,7 +35,17 @@ export interface CentreExpenseDocument extends BaseDocument {
   expenseDate: IsoDate;
   yearMonth: YearMonth;
   receiptPath: string | null;
+  status: ExpenseStatus;
   approvedBy: string | null;
+  approvedAt: IsoTimestamp | null;
+  rejectionReason: string | null;
+  /** Who submitted it — set for manager-raised expenses. */
+  submittedBy: string | null;
+}
+
+/** Only approved spend belongs in a profit figure. */
+export function countsTowardPnl(e: Pick<CentreExpenseDocument, 'status'>): boolean {
+  return e.status === ExpenseStatus.APPROVED;
 }
 
 /**

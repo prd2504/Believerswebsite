@@ -193,10 +193,46 @@ service cloud.firestore {
     // paid) and drive the profit view. This is finance data a CENTRE_MANAGER
     // must never see or edit — read/write is SUPER_ADMIN only, matching
     // partnerPayouts and the payroll collections.
+    // A centre manager may raise expenses for a centre they manage and see only
+    // that centre's expenses. They can never approve — approval is what lets a
+    // row affect profit, so it stays a super-admin act. Revenue, payouts and
+    // payroll remain invisible to them (separate collections, unchanged).
     match /centreExpenses/{expenseId} {
-      allow read: if isSuperAdmin();
-      allow create, update: if isSuperAdmin();
-      allow delete: if isSuperAdmin();
+      function managerOwnsRow() {
+        return isCentreManager() && managesCentre(resource.data.centreId);
+      }
+      // Approval fields and the original submitter are never a manager's to
+      // change. centreId is allowed to move, but only between centres they
+      // manage — enforced separately below.
+      function approvalFieldsUntouched() {
+        return !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['approvedBy', 'approvedAt', 'rejectionReason', 'submittedBy']);
+      }
+
+      allow read: if isSuperAdmin() || managerOwnsRow();
+
+      // Managers submit as PENDING only, for a centre they manage, attributed
+      // to themselves — so a submission can't be back-dated onto someone else
+      // or slipped in pre-approved.
+      allow create: if isSuperAdmin() || (
+        isCentreManager()
+        && managesCentre(request.resource.data.centreId)
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.approvedBy == null
+        && request.resource.data.submittedBy == uid()
+      );
+
+      // A manager may correct their own row only while it is still PENDING,
+      // and may not touch the approval fields.
+      allow update: if isSuperAdmin() || (
+        managerOwnsRow()
+        && resource.data.status == 'PENDING'
+        && request.resource.data.status == 'PENDING'
+        && managesCentre(request.resource.data.centreId)
+        && approvalFieldsUntouched()
+      );
+
+      allow delete: if isSuperAdmin() || (managerOwnsRow() && resource.data.status == 'PENDING');
     }
 
     // ── /recurringExpenses/{templateId} — SUPER_ADMIN ONLY ───────────────────────────────

@@ -273,7 +273,14 @@ export const onPayrollPaid = onDocumentWritten(
           expenseDate: (after.paidAt as string | null)?.slice(0, 10) ?? nowIso.slice(0, 10),
           yearMonth: after.month as string,
           receiptPath: null,
+          // The payroll run was already approved and paid before this fires, so
+          // the resulting cost is approved spend — it must not sit in the
+          // manager approval queue waiting to be re-approved.
+          status: 'APPROVED',
           approvedBy: after.approvedBy ?? null,
+          approvedAt: nowIso,
+          rejectionReason: null,
+          submittedBy: 'onPayrollPaid',
           sourcePayrollRunId: runId,
           createdAt: nowIso,
           updatedAt: nowIso,

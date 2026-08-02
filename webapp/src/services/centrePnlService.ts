@@ -10,6 +10,7 @@
  * profit, and counting it would flatter a centre with poor collection.
  */
 
+import { countsTowardPnl } from '@bba/shared';
 import type {
   CentreExpenseDocument,
   PartnerPayoutDocument,
@@ -90,8 +91,10 @@ export function buildCentrePnl(input: PnlInputs): CentrePnlRow[] {
     const billedPaise = sum(curPayments, (p) => p.totalAmountPaise);
     const prevRevenuePaise = sum(prevPayments.filter((p) => p.status === 'PAID'), (p) => p.totalAmountPaise);
 
-    const curExp = forCentre(monthExpenses);
-    const prevExp = forCentre(prevMonthExpenses);
+    // Pending and rejected submissions are excluded — an expense a manager has
+    // raised but no one has approved is not yet a cost against profit.
+    const curExp = forCentre(monthExpenses).filter(countsTowardPnl);
+    const prevExp = forCentre(prevMonthExpenses).filter(countsTowardPnl);
     const expensesPaise = sum(curExp, (e) => e.amountPaise);
     const prevExpensesPaise = sum(prevExp, (e) => e.amountPaise);
     const salaryPaise = sum(curExp.filter((e) => e.category === 'COACH_SALARY'), (e) => e.amountPaise);

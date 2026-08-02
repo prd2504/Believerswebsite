@@ -30,6 +30,7 @@ import {
   type PartnerPayoutDocument,
   type RecurringExpenseDocument,
   type ExpenseCategory,
+  type ExpenseStatus,
   type PayoutStatus,
 } from '@bba/shared';
 
@@ -67,7 +68,15 @@ function expenseFromFirestore(id: string, data: DocumentData): CentreExpenseDocu
     expenseDate: data.expenseDate ?? '',
     yearMonth: data.yearMonth ?? '',
     receiptPath: data.receiptPath ?? null,
+    // Rows predating the approval workflow have no status. They could only ever
+    // have been created by a super-admin, so they were already trusted spend —
+    // reading them as APPROVED keeps historical P&L intact instead of silently
+    // zeroing every past month.
+    status: (data.status ?? 'APPROVED') as ExpenseStatus,
     approvedBy: data.approvedBy ?? null,
+    approvedAt: data.approvedAt ? toIso(data.approvedAt) : null,
+    rejectionReason: data.rejectionReason ?? null,
+    submittedBy: data.submittedBy ?? null,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     createdBy: data.createdBy ?? null,
@@ -106,9 +115,16 @@ export async function createExpense(
     expenseDate: string;
     yearMonth: string;
     receiptPath?: string;
+    /**
+     * PENDING when a centre manager raises it (rules enforce this), APPROVED
+     * when a super-admin records it directly — they are the approver, so a
+     * second confirmation step would be theatre.
+     */
+    status?: ExpenseStatus;
   },
   userId: string,
 ): Promise<CentreExpenseDocument> {
+  const status: ExpenseStatus = data.status ?? 'APPROVED';
   const payload: Record<string, unknown> = {
     centreId: data.centreId,
     category: data.category,
@@ -117,7 +133,11 @@ export async function createExpense(
     expenseDate: data.expenseDate,
     yearMonth: data.yearMonth,
     receiptPath: data.receiptPath ?? null,
-    approvedBy: null,
+    status,
+    approvedBy: status === 'APPROVED' ? userId : null,
+    approvedAt: status === 'APPROVED' ? serverTimestamp() : null,
+    rejectionReason: null,
+    submittedBy: userId,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     createdBy: userId,
@@ -187,6 +207,57 @@ export async function getAllExpenses(
   const q = query(expensesCol, ...constraints);
   const snap = await getDocs(q);
   return snap.docs.map((d) => expenseFromFirestore(d.id, d.data()));
+}
+
+/**
+ * Expenses for a set of centres in a month — the centre-manager view.
+ *
+ * Firestore's `in` operator caps at 30 values, and a query spanning a centre
+ * the caller doesn't manage is rejected wholesale by the rules, so this
+ * queries one centre at a time and merges.
+ */
+export async function getExpensesForCentres(
+  centreIds: string[],
+  yearMonth?: string,
+): Promise<CentreExpenseDocument[]> {
+  if (centreIds.length === 0) return [];
+  const perCentre = await Promise.all(
+    centreIds.map((id) => getExpensesByCentre(id, yearMonth)),
+  );
+  return perCentre
+    .flat()
+    .sort((a, b) => b.expenseDate.localeCompare(a.expenseDate));
+}
+
+/** Approve a submitted expense — this is what lets it count toward profit. */
+export async function approveExpense(expenseId: string, adminId: string): Promise<void> {
+  await updateDoc(expenseRef(expenseId), {
+    status: 'APPROVED' satisfies ExpenseStatus,
+    approvedBy: adminId,
+    approvedAt: serverTimestamp(),
+    rejectionReason: null,
+    updatedAt: serverTimestamp(),
+    updatedBy: adminId,
+  });
+}
+
+/**
+ * Reject a submitted expense. Kept rather than deleted so the manager can see
+ * what happened and why, instead of the row silently vanishing.
+ */
+export async function rejectExpense(
+  expenseId: string,
+  adminId: string,
+  reason: string,
+): Promise<void> {
+  await updateDoc(expenseRef(expenseId), {
+    status: 'REJECTED' satisfies ExpenseStatus,
+    approvedBy: adminId,
+    approvedAt: serverTimestamp(),
+    rejectionReason: reason,
+    updatedAt: serverTimestamp(),
+    updatedBy: adminId,
+  });
 }
 
 // ── Recurring expense templates ──
@@ -299,7 +370,13 @@ export async function postRecurringExpensesForMonth(
         expenseDate,
         yearMonth,
         receiptPath: null,
-        approvedBy: null,
+        // Posted by a super-admin from a template they authored — already
+        // approved spend, so it counts toward P&L immediately.
+        status: 'APPROVED' satisfies ExpenseStatus,
+        approvedBy: userId,
+        approvedAt: serverTimestamp(),
+        rejectionReason: null,
+        submittedBy: userId,
         sourceRecurringId: t.id,
         updatedAt: serverTimestamp(),
         updatedBy: userId,

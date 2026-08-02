@@ -27,6 +27,8 @@ import {
   updatePayout,
   deletePayout,
   getAllPayouts,
+  approveExpense,
+  rejectExpense,
   getAllRecurringExpenses,
   createRecurringExpense,
   updateRecurringExpense,
@@ -251,6 +253,38 @@ export default function FinancialsPage() {
     const posted = new Set(expenses.map((e) => e.id));
     return recurringDue.filter((t) => posted.has(postedRecurringExpenseId(t.id, month))).length;
   }, [recurringDue, expenses, month]);
+
+  // ── Expense approval queue ──
+  const pendingExpenses = useMemo(
+    () => expenses.filter((e) => e.status === 'PENDING'),
+    [expenses],
+  );
+
+  async function handleApproveExpense(e: CentreExpenseDocument) {
+    if (!profile) return;
+    try {
+      await approveExpense(e.id, profile.id);
+      toast.success(`Approved ${formatINR(e.amountPaise)} — ${e.description}`);
+      await load();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to approve expense');
+    }
+  }
+
+  async function handleRejectExpense(e: CentreExpenseDocument) {
+    if (!profile) return;
+    const reason = prompt(`Why is "${e.description}" being rejected?`);
+    if (reason === null) return;
+    try {
+      await rejectExpense(e.id, profile.id, reason.trim() || 'No reason given');
+      toast.success('Expense rejected');
+      await load();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to reject expense');
+    }
+  }
 
   async function handlePostRecurring() {
     if (!profile) return;
@@ -568,6 +602,61 @@ export default function FinancialsPage() {
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Pending approvals — surfaced on every tab so a submission can't sit
+          unnoticed while the super-admin is looking at profit figures. */}
+      {isSuperAdmin && pendingExpenses.length > 0 && tab !== 'expenses' && (
+        <button
+          onClick={() => setTab('expenses')}
+          className="mb-4 flex w-full items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left"
+        >
+          <AlertTriangle size={16} className="shrink-0 text-amber-600" />
+          <span className="text-sm font-medium text-amber-800">
+            {pendingExpenses.length} expense{pendingExpenses.length !== 1 ? 's' : ''} awaiting your
+            approval ({formatINR(pendingExpenses.reduce((s, e) => s + e.amountPaise, 0))}) — not yet
+            counted in profit.
+          </span>
+        </button>
+      )}
+
+      {isSuperAdmin && tab === 'expenses' && pendingExpenses.length > 0 && (
+        <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-amber-800">
+            <AlertTriangle size={15} />
+            Awaiting approval — {formatINR(pendingExpenses.reduce((s, e) => s + e.amountPaise, 0))}
+          </h3>
+          <div className="space-y-2">
+            {pendingExpenses.map((e) => (
+              <div
+                key={e.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white p-3"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-brand-secondary">{e.description}</p>
+                  <p className="text-xs text-gray-400">
+                    {centreMap.get(e.centreId) ?? e.centreId} · {e.category.replace('_', ' ')} · {e.expenseDate}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-brand-secondary">{formatINR(e.amountPaise)}</span>
+                  <button
+                    onClick={() => handleApproveExpense(e)}
+                    className="rounded-lg bg-green-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-green-700"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => handleRejectExpense(e)}
+                    className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

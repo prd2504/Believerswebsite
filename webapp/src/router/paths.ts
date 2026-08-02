@@ -27,6 +27,7 @@ export const paths = {
     sessionLogs: '/admin/session-logs',
     parentFeedback: '/admin/parent-feedback',
     financials: '/admin/financials',
+    expenses: '/admin/expenses',
     issues: '/admin/issues',
     notifications: '/admin/notifications',
     payroll: '/admin/payroll',

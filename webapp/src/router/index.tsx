@@ -46,6 +46,7 @@ const AdminIssues = lazy(() => import('@/pages/admin/Issues'));
 const AdminNotifications = lazy(() => import('@/pages/admin/Notifications'));
 const AdminPayroll = lazy(() => import('@/pages/admin/Payroll'));
 const AdminSettings = lazy(() => import('@/pages/admin/Settings'));
+const AdminCentreExpenses = lazy(() => import('@/pages/admin/CentreExpenses'));
 
 const CoachDashboard = lazy(() => import('@/pages/coach/Dashboard'));
 const CoachBatches = lazy(() => import('@/pages/coach/Batches'));
@@ -121,6 +122,10 @@ const routes: RouteObject[] = [
               { path: '/admin/issues', element: <Lazy><AdminIssues /></Lazy> },
               { path: '/admin/notifications', element: <Lazy><AdminNotifications /></Lazy> },
               { path: '/admin/settings', element: <Lazy><AdminSettings /></Lazy> },
+              // Expense submission is scoped to the centres the user manages
+              // and carries no revenue or profit data, so a CENTRE_MANAGER may
+              // reach it. Approval stays on the SUPER_ADMIN Financials page.
+              { path: '/admin/expenses', element: <Lazy><AdminCentreExpenses /></Lazy> },
               // Financials & Payroll expose salaries, expenses, partner payouts
               // and profit — SUPER_ADMIN only, never CENTRE_MANAGER. Nested guard
               // so a manager can't reach them by typing the URL directly.
