@@ -194,6 +194,26 @@ export async function rejectBooking(
   });
 }
 
+/**
+ * Change which weekdays a booking attends — the roster edit surface for
+ * "shift this student to a different day" / "add them to Wednesday too" /
+ * "they're not coming Tuesdays anymore". Deliberately separate from
+ * verify/reject: this never touches status, amount or payment, only
+ * attendance days, so a manager can freely adjust a roster without any risk
+ * of it reading as a payment action.
+ */
+export async function updateBookingSelectedDays(
+  bookingId: string,
+  selectedDays: number[],
+  adminUid: string,
+): Promise<void> {
+  await updateDoc(doc(db, COL, bookingId), {
+    selectedDays,
+    updatedAt: serverTimestamp(),
+    updatedBy: adminUid,
+  });
+}
+
 export async function deleteBooking(bookingId: string): Promise<void> {
   await deleteDoc(doc(db, COL, bookingId));
 }
