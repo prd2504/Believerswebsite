@@ -18,6 +18,26 @@ export const COMPANY = {
   defaultCountryCode: '+91',
 } as const;
 
+/**
+ * Ruia College identifiers, in one place because they previously weren't:
+ * the centre code and the slot-booking namespace id were each hardcoded
+ * separately in three different files and drifted at least once already
+ * (two different UPI IDs shown depending on which page a parent opened).
+ *
+ * RUIA_CENTRE_CODE matches `centres.{id}.centreCode` — the real centre
+ * document used everywhere else (payments, batches, enrollments).
+ *
+ * RUIA_SLOT_BOOKING_CENTRE_ID is the `centreId` value stored on every
+ * `slotBookings` document. It is NOT a real centre document id — it's a
+ * fixed namespace string chosen when the slot-booking flow was built,
+ * decoupled from the centre doc on purpose so the booking flow didn't need
+ * a live centre lookup. The two must be bridged explicitly (via
+ * centreCode) wherever code needs to go from "the real Ruia centre" to
+ * "Ruia's slot bookings", or vice versa.
+ */
+export const RUIA_CENTRE_CODE = 'RUI';
+export const RUIA_SLOT_BOOKING_CENTRE_ID = 'ruia-college';
+
 /** Brand colours — mirrored in Tailwind theme config in webapp/tailwind.config.js. */
 export const BRAND_COLORS = {
   primary: '#E8593C',

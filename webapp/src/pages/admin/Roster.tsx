@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { CalendarDays, Users, AlertCircle, UserPlus, X, Search, Trash2 } from 'lucide-react';
+import { CalendarDays, Users, AlertCircle, UserPlus, X, Search, Trash2, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
 import { useAuth } from '@/hooks/useAuth';
@@ -17,6 +17,8 @@ import { getAllCentres } from '@/services/centreService';
 import { getAllBatches } from '@/services/batchService';
 import { getAllStudents } from '@/services/studentService';
 import { getEnrollmentsByCentre, enrollStudent, endEnrollment } from '@/services/enrollmentService';
+import { subscribeToBookings } from '@/services/slotBookingService';
+import { buildDayRoster, ROSTER_STATUSES } from '@/lib/slotRoster';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
 import { EmptyState } from '@/components/common/EmptyState';
 import {
@@ -26,12 +28,16 @@ import {
   ADMIN_LIKE_ROLES,
   makeEnrollmentId,
   formatINR,
+  RUIA_CENTRE_CODE,
+  RUIA_SLOT_BOOKING_CENTRE_ID,
+  SlotBookingStatus,
 } from '@bba/shared';
 import type {
   CentreDocument,
   BatchDocument,
   StudentDocument,
   EnrollmentDocument,
+  SlotBookingDocument,
   DayOfWeek,
   FrequencyPlan,
 } from '@bba/shared';
@@ -80,6 +86,13 @@ export default function RosterPage() {
   const [unenrolTarget, setUnenrolTarget] = useState<{ enrollment: EnrollmentDocument; studentName: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Ruia runs on the slot-booking flow, not batches — students never get a
+  // batch enrolment, they get a paid slotBooking. Without this the page could
+  // only ever show "no batches scheduled", including for the Tue/Thu 6–7 AM
+  // session that has real, paying bookings and simply has no batch to match.
+  const [slotBookings, setSlotBookings] = useState<SlotBookingDocument[]>([]);
+  const [slotBookingsLoading, setSlotBookingsLoading] = useState(true);
+
   const load = useCallback(async (cid: string) => {
     if (!cid) return;
     try {
@@ -113,6 +126,35 @@ export default function RosterPage() {
   useEffect(() => {
     if (centreId) load(centreId);
   }, [centreId, load]);
+
+  // The slot-booking flow uses a fixed namespace id ('ruia-college') decoupled
+  // from the real centre document, so the bridge from "selected centre" to
+  // "which bookings to fetch" has to go via centreCode, not centreId.
+  const selectedCentreDoc = useMemo(() => centres.find((c) => c.id === centreId), [centres, centreId]);
+  const isRuia = selectedCentreDoc?.centreCode === RUIA_CENTRE_CODE;
+
+  useEffect(() => {
+    if (!isRuia) {
+      setSlotBookings([]);
+      return;
+    }
+    setSlotBookingsLoading(true);
+    const unsub = subscribeToBookings(RUIA_SLOT_BOOKING_CENTRE_ID, month, (data) => {
+      setSlotBookings(data);
+      setSlotBookingsLoading(false);
+    });
+    return unsub;
+  }, [isRuia, month]);
+
+  const dayRoster = useMemo(() => buildDayRoster(slotBookings, dayOfWeek), [slotBookings, dayOfWeek]);
+
+  // Paid/confirmed bookings with no captured day preference at all — legacy
+  // records from before day-capture existed. Same across every day, so
+  // computed once rather than off whichever day happens to be selected.
+  const unassignedBookings = useMemo(
+    () => slotBookings.filter((b) => ROSTER_STATUSES.has(b.status) && (!b.selectedDays || b.selectedDays.length === 0)),
+    [slotBookings],
+  );
 
   const studentMap = useMemo(() => {
     const m = new Map<string, StudentDocument>();
@@ -282,14 +324,25 @@ export default function RosterPage() {
         <div>
           <h1 className="text-xl font-bold text-brand-secondary">Daily Roster</h1>
           <p className="text-sm text-gray-500">
-            {grandTotal} student{grandTotal !== 1 ? 's' : ''} expected
+            {isRuia ? dayRoster.total : grandTotal} student{(isRuia ? dayRoster.total : grandTotal) !== 1 ? 's' : ''} expected
             {' · '}{DAY_OF_WEEK_LABELS[dayOfWeek]}
-            {grandExcluded > 0 && (
-              <span className="ml-1 text-xs text-gray-400">
-                · {grandExcluded} hidden (dormant / paused this month)
-              </span>
-            )}
+            {isRuia
+              ? unassignedBookings.length > 0 && (
+                  <span className="ml-1 text-xs text-amber-600">
+                    · {unassignedBookings.length} paid booking{unassignedBookings.length !== 1 ? 's' : ''} with no day set
+                  </span>
+                )
+              : grandExcluded > 0 && (
+                  <span className="ml-1 text-xs text-gray-400">
+                    · {grandExcluded} hidden (dormant / paused this month)
+                  </span>
+                )}
           </p>
+          {isRuia && (
+            <p className="mt-0.5 text-xs text-gray-400">
+              Live from Slot Bookings — updates as parents pay and pick days.
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <select
@@ -319,7 +372,77 @@ export default function RosterPage() {
         </div>
       </div>
 
-      {loading ? (
+      {isRuia ? (
+        slotBookingsLoading ? (
+          <CardSkeleton count={2} />
+        ) : (
+          <div className="space-y-4">
+            {unassignedBookings.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                <strong>{unassignedBookings.length}</strong> paid booking{unassignedBookings.length !== 1 ? 's' : ''} with no
+                preferred day captured — not shown on any day below:{' '}
+                {unassignedBookings.map((b) => b.participantName).join(', ')}
+              </div>
+            )}
+
+            <div className="card">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h2 className="font-semibold text-brand-secondary">Ruia College — Slot Bookings</h2>
+                  <p className="text-xs text-gray-400">
+                    Paid or confirmed bookings for {DAY_OF_WEEK_LABELS[dayOfWeek]}
+                  </p>
+                </div>
+                <a
+                  href="/admin/payments"
+                  className="flex items-center gap-1 text-xs font-medium text-brand-primary hover:underline"
+                >
+                  Manage bookings <ExternalLink size={11} />
+                </a>
+              </div>
+
+              {dayRoster.total === 0 ? (
+                <p className="py-6 text-center text-sm text-gray-400">
+                  No one booked for {DAY_OF_WEEK_LABELS[dayOfWeek]} yet.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {dayRoster.groups.map((group) => (
+                    <div key={group.label} className="rounded-lg border border-gray-100 p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-sm font-semibold text-brand-secondary">{group.label}</span>
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+                          {group.bookings.length} student{group.bookings.length !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {group.bookings.map((b) => (
+                          <div
+                            key={b.id}
+                            className={cn(
+                              'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs',
+                              b.status === SlotBookingStatus.CONFIRMED
+                                ? 'border-green-200 bg-green-50 text-green-800'
+                                : 'border-amber-200 bg-amber-50 text-amber-800',
+                            )}
+                            title={b.status === SlotBookingStatus.CONFIRMED ? 'Confirmed' : 'Payment pending verification'}
+                          >
+                            <span className={cn(
+                              'h-1.5 w-1.5 shrink-0 rounded-full',
+                              b.status === SlotBookingStatus.CONFIRMED ? 'bg-green-500' : 'bg-amber-500',
+                            )} />
+                            {b.participantName}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      ) : loading ? (
         <CardSkeleton count={4} />
       ) : roster.length === 0 ? (
         <EmptyState

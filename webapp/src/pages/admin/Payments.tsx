@@ -77,9 +77,10 @@ import {
   SlotBookingStatus,
   SLOT_PLANS,
   DEFAULT_SLOT_CONFIG,
-  isTueThuSlot,
   TUE_THU_SLOT,
+  RUIA_SLOT_BOOKING_CENTRE_ID,
 } from '@bba/shared';
+import { buildDayRoster, ROSTER_STATUSES, type DayRoster } from '@/lib/slotRoster';
 import type {
   PaymentDocument,
   CentreDocument,
@@ -272,7 +273,7 @@ const BOOKING_STATUS_PILL: Record<string, string> = {
 };
 
 const BOOKING_CENTRES = [
-  { id: 'ruia-college', name: 'Ruia College (Booking Portal)' },
+  { id: RUIA_SLOT_BOOKING_CENTRE_ID, name: 'Ruia College (Booking Portal)' },
 ];
 
 const WEEKDAY_SLOTS = ['06:00-07:00', '07:00-08:00', '08:00-09:00'] as const;
@@ -289,16 +290,6 @@ const SLOT_DISPLAY: Record<string, string> = {
 // Sun (0) has no coaching — roster only ever spans Mon–Sat.
 const DAY_LABELS: Record<number, string> = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' };
 const ROSTER_DAYS = [1, 2, 3, 4, 5, 6];
-const ROSTER_STATUSES = new Set<string>([SlotBookingStatus.CONFIRMED, SlotBookingStatus.PENDING_VERIFICATION]);
-
-function rosterSlotLabel(day: number, timeSlot: string): string {
-  if (day === 6) return 'Games Day (7–9 AM)';
-  // Tue/Thu only ever run 6–7 AM — say so regardless of which band string is
-  // actually stored on the booking (a mixed-day plan like 2-day may have
-  // picked an MWF band as its primary timeSlot while still attending Tue/Thu).
-  if (day === 2 || day === 4 || isTueThuSlot(timeSlot)) return '6–7 AM';
-  return SLOT_DISPLAY[timeSlot] ?? timeSlot;
-}
 
 function bookingSlotCount(bookings: SlotBookingDocument[], slot: string): number {
   if (slot === SATURDAY_SLOT) {
@@ -317,7 +308,7 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
   const [bookings, setBookings] = useState<SlotBookingDocument[]>([]);
   const [portalConfig, setPortalConfig] = useState<SlotBookingConfig | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedCentre, setSelectedCentre] = useState('ruia-college');
+  const [selectedCentre, setSelectedCentre] = useState(RUIA_SLOT_BOOKING_CENTRE_ID);
   const [statusFilter, setStatusFilter] = useState('');
   const [slotView, setSlotView] = useState<'list' | 'roster'>('list');
   const [showConfigEditor, setShowConfigEditor] = useState(false);
@@ -387,41 +378,20 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
   ).length;
   const confirmedCount = bookings.filter((b) => b.status === SlotBookingStatus.CONFIRMED).length;
 
-  // Daily roster — who's on court which day, built from each booking's
-  // selectedDays. Only paid-or-confirmed bookings count (PENDING_PAYMENT
-  // hasn't committed yet); bookings with no captured days (pre-launch-fix,
-  // or a legacy record) show up in `unassigned` instead of silently vanishing.
-  const roster = useMemo(() => {
-    const map: Record<number, SlotBookingDocument[]> = { 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] };
-    bookings
-      .filter((b) => ROSTER_STATUSES.has(b.status) && b.selectedDays && b.selectedDays.length > 0)
-      .forEach((b) => {
-        b.selectedDays.forEach((d) => {
-          if (map[d]) map[d].push(b);
-        });
-      });
-    Object.values(map).forEach((list) =>
-      list.sort(
-        (a, c) => a.timeSlot.localeCompare(c.timeSlot) || a.participantName.localeCompare(c.participantName),
-      ),
-    );
-    return map;
-  }, [bookings]);
+  // Daily roster — who's on court which day, built via the shared helper so
+  // this view and the main Daily Roster page can never disagree on which
+  // bookings count or how a slot is labelled.
+  const dayRosters = useMemo(
+    () => Object.fromEntries(ROSTER_DAYS.map((d) => [d, buildDayRoster(bookings, d)])) as Record<number, DayRoster>,
+    [bookings],
+  );
 
+  // Same across every day (a booking either has selectedDays captured or it
+  // doesn't) — computed once rather than reading it off day 1's group.
   const unassignedRoster = useMemo(
     () => bookings.filter((b) => ROSTER_STATUSES.has(b.status) && (!b.selectedDays || b.selectedDays.length === 0)),
     [bookings],
   );
-
-  function rosterGroupedBySlot(day: number) {
-    const groups = new Map<string, SlotBookingDocument[]>();
-    (roster[day] ?? []).forEach((b) => {
-      const label = rosterSlotLabel(day, b.timeSlot);
-      if (!groups.has(label)) groups.set(label, []);
-      groups.get(label)!.push(b);
-    });
-    return Array.from(groups.entries());
-  }
 
   const weekdayCap = portalConfig?.weekdayCapacity ?? DEFAULT_SLOT_CONFIG.weekdayCapacity;
   const saturdayCap = portalConfig?.saturdayCapacity ?? DEFAULT_SLOT_CONFIG.saturdayCapacity;
@@ -794,26 +764,26 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
             )}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               {ROSTER_DAYS.map((day) => {
-                const dayBookings = roster[day] ?? [];
+                const dayRoster = dayRosters[day];
                 return (
                   <div key={day} className="rounded-xl border border-gray-100 bg-white p-3 shadow-sm">
                     <div className="mb-2 flex items-center justify-between">
                       <h4 className="text-sm font-bold text-brand-secondary">{DAY_LABELS[day]}</h4>
                       <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-500">
-                        {dayBookings.length}
+                        {dayRoster.total}
                       </span>
                     </div>
-                    {dayBookings.length === 0 ? (
+                    {dayRoster.total === 0 ? (
                       <p className="text-xs text-gray-300">No one yet</p>
                     ) : (
                       <div className="space-y-2.5">
-                        {rosterGroupedBySlot(day).map(([slotLabel, list]) => (
-                          <div key={slotLabel}>
+                        {dayRoster.groups.map((group) => (
+                          <div key={group.label}>
                             <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                              {slotLabel} · {list.length}
+                              {group.label} · {group.bookings.length}
                             </p>
                             <ul className="mt-0.5 space-y-0.5">
-                              {list.map((b) => (
+                              {group.bookings.map((b) => (
                                 <li key={b.id} className="flex items-center gap-1 text-xs text-gray-700">
                                   <span
                                     className={cn(
