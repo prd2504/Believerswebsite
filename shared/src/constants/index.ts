@@ -105,6 +105,7 @@ export const COLLECTIONS = {
   progressReports: 'reports',
   parentFeedback: 'parentFeedback',
   centreExpenses: 'centreExpenses',
+  recurringExpenses: 'recurringExpenses',
   partnerPayouts: 'partnerPayouts',
   issues: 'issues',
   issueComments: 'comments',

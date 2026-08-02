@@ -12,6 +12,7 @@ import {
   addDoc,
   getDoc,
   getDocs,
+  setDoc,
   updateDoc,
   deleteDoc,
   serverTimestamp,
@@ -22,11 +23,14 @@ import {
   type Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import type {
-  CentreExpenseDocument,
-  PartnerPayoutDocument,
-  ExpenseCategory,
-  PayoutStatus,
+import {
+  recurringAppliesTo,
+  postedRecurringExpenseId,
+  type CentreExpenseDocument,
+  type PartnerPayoutDocument,
+  type RecurringExpenseDocument,
+  type ExpenseCategory,
+  type PayoutStatus,
 } from '@bba/shared';
 
 // ── Path helpers ──
@@ -183,6 +187,130 @@ export async function getAllExpenses(
   const q = query(expensesCol, ...constraints);
   const snap = await getDocs(q);
   return snap.docs.map((d) => expenseFromFirestore(d.id, d.data()));
+}
+
+// ── Recurring expense templates ──
+
+const recurringCol = collection(db, 'recurringExpenses');
+
+function recurringFromFirestore(id: string, data: DocumentData): RecurringExpenseDocument {
+  return {
+    id,
+    centreId: data.centreId ?? '',
+    category: (data.category ?? 'OTHER') as ExpenseCategory,
+    description: data.description ?? '',
+    amountPaise: data.amountPaise ?? 0,
+    dayOfMonth: data.dayOfMonth ?? 1,
+    startMonth: data.startMonth ?? '',
+    endMonth: data.endMonth ?? null,
+    active: data.active ?? true,
+    createdAt: toIso(data.createdAt),
+    updatedAt: toIso(data.updatedAt),
+    createdBy: data.createdBy ?? null,
+    updatedBy: data.updatedBy ?? null,
+  };
+}
+
+export async function getAllRecurringExpenses(): Promise<RecurringExpenseDocument[]> {
+  const snap = await getDocs(query(recurringCol, orderBy('centreId', 'asc')));
+  return snap.docs.map((d) => recurringFromFirestore(d.id, d.data()));
+}
+
+export async function createRecurringExpense(
+  data: {
+    centreId: string;
+    category: ExpenseCategory;
+    description: string;
+    amountPaise: number;
+    dayOfMonth: number;
+    startMonth: string;
+    endMonth?: string | null;
+  },
+  userId: string,
+): Promise<string> {
+  const ref = await addDoc(recurringCol, {
+    ...data,
+    // Cap at 28 — a template dated the 30th would silently roll into the next
+    // month in February and land the expense outside the month it belongs to.
+    dayOfMonth: Math.min(28, Math.max(1, data.dayOfMonth)),
+    endMonth: data.endMonth ?? null,
+    active: true,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    createdBy: userId,
+    updatedBy: userId,
+  });
+  return ref.id;
+}
+
+export async function updateRecurringExpense(
+  templateId: string,
+  data: Partial<Omit<RecurringExpenseDocument, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'>>,
+  userId: string,
+): Promise<void> {
+  const patch: Record<string, unknown> = { ...data, updatedAt: serverTimestamp(), updatedBy: userId };
+  if (typeof data.dayOfMonth === 'number') {
+    patch.dayOfMonth = Math.min(28, Math.max(1, data.dayOfMonth));
+  }
+  await updateDoc(doc(db, 'recurringExpenses', templateId), patch);
+}
+
+export async function deleteRecurringExpense(templateId: string): Promise<void> {
+  await deleteDoc(doc(db, 'recurringExpenses', templateId));
+}
+
+export interface PostRecurringResult {
+  posted: number;
+  skipped: number;
+}
+
+/**
+ * Materialise every applicable template into a real expense for the month.
+ *
+ * Idempotent: each posted row has a deterministic id derived from the template
+ * and month, so running this twice updates the same rows rather than charging
+ * a centre twice. That does mean re-posting overwrites hand-edits made to a
+ * posted row — the template stays the source of truth for these.
+ */
+export async function postRecurringExpensesForMonth(
+  yearMonth: string,
+  templates: RecurringExpenseDocument[],
+  userId: string,
+): Promise<PostRecurringResult> {
+  const applicable = templates.filter((t) => recurringAppliesTo(t, yearMonth));
+
+  let posted = 0;
+  for (const t of applicable) {
+    const dom = Math.min(28, Math.max(1, t.dayOfMonth));
+    const expenseDate = `${yearMonth}-${String(dom).padStart(2, '0')}`;
+    const ref = expenseRef(postedRecurringExpenseId(t.id, yearMonth));
+
+    // Preserve the original createdAt on a re-post so the row doesn't look
+    // newly created every time the month is re-run.
+    const existing = await getDoc(ref);
+
+    await setDoc(
+      ref,
+      {
+        centreId: t.centreId,
+        category: t.category,
+        description: t.description,
+        amountPaise: t.amountPaise,
+        expenseDate,
+        yearMonth,
+        receiptPath: null,
+        approvedBy: null,
+        sourceRecurringId: t.id,
+        updatedAt: serverTimestamp(),
+        updatedBy: userId,
+        ...(existing.exists() ? {} : { createdAt: serverTimestamp(), createdBy: userId }),
+      },
+      { merge: true },
+    );
+    posted += 1;
+  }
+
+  return { posted, skipped: templates.length - applicable.length };
 }
 
 // ── Payout CRUD ──

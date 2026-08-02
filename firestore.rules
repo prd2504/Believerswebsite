@@ -199,6 +199,15 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
+    // ── /recurringExpenses/{templateId} — SUPER_ADMIN ONLY ───────────────────────────────
+    // Templates for fixed monthly costs (rent, utilities). Same finance-only
+    // sensitivity as centreExpenses, which is what they post into.
+    match /recurringExpenses/{templateId} {
+      allow read: if isSuperAdmin();
+      allow create, update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
     // ── /partnerPayouts/{payoutId} — SUPER_ADMIN ONLY ───────────────────────────────────
     match /partnerPayouts/{payoutId} {
       allow read: if isSuperAdmin();
