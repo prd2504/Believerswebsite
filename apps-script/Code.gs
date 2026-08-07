@@ -168,6 +168,7 @@ function onOpen() {
     .addItem("Run monthly rollover now (catches up)", "monthlyRollover")
     .addSeparator()
     .addItem("Diagnose month values…", "diagnoseMonths")
+    .addItem("Apply table styling (safe)", "applySafeStyling")
     .addItem("Clear one centre's month…", "promptClearCentreMonth")
     .addSeparator()
     .addItem("Retry failed Firebase syncs", "retryFailedSyncs")
@@ -227,6 +228,70 @@ function diagnoseMonths() {
   var text = out.join("\n\n");
   Logger.log(text);
   SpreadsheetApp.getUi().alert("Month values by tab", text, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+
+// ───────────────────────────────────────────────────────────────────────
+//  SAFE TABLE STYLING
+//
+//  Gives the machine-written tabs the banded, easy-to-scan look of a real
+//  Google Sheets Table — frozen bold header, alternating row colours,
+//  auto-sized columns — WITHOUT converting them to actual Tables.
+//
+//  Why not real Tables on these four tabs: a Table enforces a column TYPE,
+//  and Sheets would auto-detect Month as a Date column because every row
+//  currently holds a date. Re-typing a machine-written column is the exact
+//  mechanism that broke the rollover for two months. This is pure
+//  formatting — it cannot change how any value is stored or read.
+//
+//  Fee_Status_* and Fee_Status_Archive are read-only reports; converting
+//  THOSE to real Tables is safe and worth doing if you like the filters.
+// ───────────────────────────────────────────────────────────────────────
+
+function applySafeStyling() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var done = [];
+
+  var targets = Object.keys(SHEETS.PAYMENTS).map(function (c) {
+    return { name: SHEETS.PAYMENTS[c], monthIdx: PAY_COL.MONTH };
+  });
+  targets.push({ name: SHEETS.INVOICES, monthIdx: INV_COL.MONTH });
+  targets.push({ name: SHEETS.PLAYERS,  monthIdx: -1 });
+  targets.push({ name: SHEETS.ADMIN,    monthIdx: -1 });
+
+  targets.forEach(function (t) {
+    var sheet = ss.getSheetByName(t.name);
+    if (!sheet) return;
+
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow < 1 || lastCol < 1) return;
+
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, lastCol)
+         .setBackground("#0A0A0A").setFontColor("#E84C1E").setFontWeight("bold");
+
+    // Re-applying banding on a range that already has it throws, so clear first.
+    var body = sheet.getRange(1, 1, Math.max(lastRow, 2), lastCol);
+    body.getBandings().forEach(function (b) { b.remove(); });
+    body.applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, true, false);
+
+    // Keep the Month column as plain text so nothing re-parses it to a date.
+    if (t.monthIdx >= 0) {
+      sheet.getRange(2, t.monthIdx + 1, Math.max(sheet.getMaxRows() - 1, 1), 1)
+           .setNumberFormat("@");
+    }
+
+    sheet.autoResizeColumns(1, lastCol);
+    done.push(t.name);
+  });
+
+  adminLog("Styling applied", "—", "—", done.join(", "));
+  SpreadsheetApp.getUi().alert(
+    "Styled " + done.length + " tabs:\n\n" + done.join("\n") +
+    "\n\nFrozen bold header, banded rows, auto-sized columns. " +
+    "Month columns forced to plain text.\n\n" +
+    "Fee_Status_* report tabs are safe to convert to real Tables if you want filters there.");
 }
 
 
