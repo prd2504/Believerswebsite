@@ -78,6 +78,33 @@ var MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov",
 
 
 // ───────────────────────────────────────────────────────────────────────
+//  APPEARANCE & STATUS OPTIONS — safe to edit, no logic depends on colours
+// ───────────────────────────────────────────────────────────────────────
+
+var HEADER_BG = "#0A0A0A";   // header row background
+var HEADER_FG = "#E84C1E";   // header row text
+
+/**
+ * The Status dropdown.
+ *
+ * "Pending Verification" MUST stay spelled exactly like this — it is the
+ * literal string that BOTH writers put on every new payment: the website
+ * (functions/src/fees/sheetsSync.ts) and the legacy Google Form path in
+ * this file. Change or reorder the wording and every incoming row lands
+ * outside the dropdown and gets flagged invalid.
+ *
+ * Adding a third option (e.g. "Rejected") is safe — just append it here
+ * and give it a colour below, then re-run the menu item.
+ */
+var STATUS_OPTIONS = ["Pending Verification", "Verified"];
+
+var STATUS_COLORS = {
+  "Pending Verification": { bg: "#FFF4E5", fg: "#B26A00" },  // amber
+  "Verified"            : { bg: "#E6F4EA", fg: "#137333" }   // green
+};
+
+
+// ───────────────────────────────────────────────────────────────────────
 //  MONTH NORMALISATION — the heart of the v7 fix.
 //
 //  A Month cell can legitimately contain any of these, depending on which
@@ -169,6 +196,7 @@ function onOpen() {
     .addSeparator()
     .addItem("Diagnose month values…", "diagnoseMonths")
     .addItem("Apply table styling (safe)", "applySafeStyling")
+    .addItem("Set up Status dropdown + colours", "applyStatusSetup")
     .addItem("Rebuild a tab as a plain sheet…", "promptRebuildTab")
     .addItem("Clear one centre's month…", "promptClearCentreMonth")
     .addSeparator()
@@ -270,7 +298,7 @@ function applySafeStyling() {
 
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, lastCol)
-         .setBackground("#0A0A0A").setFontColor("#E84C1E").setFontWeight("bold");
+         .setBackground(HEADER_BG).setFontColor(HEADER_FG).setFontWeight("bold");
 
     // Re-applying banding on a range that already has it throws, so clear first.
     var body = sheet.getRange(1, 1, Math.max(lastRow, 2), lastCol);
@@ -293,6 +321,98 @@ function applySafeStyling() {
     "\n\nFrozen bold header, banded rows, auto-sized columns. " +
     "Month columns forced to plain text.\n\n" +
     "Fee_Status_* report tabs are safe to convert to real Tables if you want filters there.");
+}
+
+
+// ───────────────────────────────────────────────────────────────────────
+//  STATUS DROPDOWN + COLOUR CODING
+//
+//  Turns the Status column into a two-option dropdown so verifying a
+//  payment is one click instead of retyping "Pending Verification" — and
+//  colours the cell by value so a tab can be scanned at a glance.
+//
+//  Applied to the whole column, not just existing rows, so payments that
+//  arrive later get the dropdown automatically.
+//
+//  Nothing reads this column programmatically; it is written by the
+//  website and the legacy form, and read only by a human. Flipping a row
+//  to "Verified" is therefore purely a bookkeeping act and cannot affect
+//  invoices, the rollover, or Firestore.
+// ───────────────────────────────────────────────────────────────────────
+
+function applyStatusSetup() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var done = [];
+  var offList = {};
+
+  Object.keys(SHEETS.PAYMENTS).forEach(function (centre) {
+    var tab   = SHEETS.PAYMENTS[centre];
+    var sheet = ss.getSheetByName(tab);
+    if (!sheet) return;
+
+    var col     = PAY_COL.STATUS + 1;
+    var lastRow = sheet.getLastRow();
+
+    // Surface any existing value that is not in the dropdown, rather than
+    // letting it silently acquire a red "invalid" corner.
+    if (lastRow > 1) {
+      sheet.getRange(2, col, lastRow - 1, 1).getValues().forEach(function (r) {
+        var v = String(r[0]).trim();
+        if (v && STATUS_OPTIONS.indexOf(v) === -1) {
+          offList[v] = (offList[v] || 0) + 1;
+        }
+      });
+    }
+
+    var fullCol = sheet.getRange(2, col, Math.max(sheet.getMaxRows() - 1, 1), 1);
+
+    fullCol.setDataValidation(
+      SpreadsheetApp.newDataValidation()
+        .requireValueInList(STATUS_OPTIONS, true)
+        .setAllowInvalid(false)
+        .setHelpText("Pick one: " + STATUS_OPTIONS.join(" or "))
+        .build()
+    );
+
+    // Colour the Status CELL only — not the whole row — so the row banding
+    // from applySafeStyling stays visible underneath.
+    var kept = sheet.getConditionalFormatRules().filter(function (rule) {
+      return !rule.getRanges().some(function (rg) {
+        return rg.getColumn() === col && rg.getNumColumns() === 1;
+      });
+    });
+
+    STATUS_OPTIONS.forEach(function (opt) {
+      var c = STATUS_COLORS[opt];
+      if (!c) return;
+      kept.push(
+        SpreadsheetApp.newConditionalFormatRule()
+          .whenTextEqualTo(opt)
+          .setBackground(c.bg)
+          .setFontColor(c.fg)
+          .setBold(true)
+          .setRanges([fullCol])
+          .build()
+      );
+    });
+
+    sheet.setConditionalFormatRules(kept);
+    done.push(tab);
+  });
+
+  var msg = "Status dropdown + colours applied to:\n" + done.join("\n") +
+            "\n\nOptions: " + STATUS_OPTIONS.join("  |  ");
+
+  var odd = Object.keys(offList);
+  if (odd.length > 0) {
+    msg += "\n\n⚠ These existing values are NOT in the dropdown and will show a red " +
+           "flag until changed:\n" +
+           odd.map(function (v) { return "   " + offList[v] + ' × "' + v + '"'; }).join("\n");
+  }
+
+  adminLog("Status dropdown applied", "—", "—",
+    done.join(", ") + (odd.length ? " · off-list values: " + odd.join(", ") : ""));
+  SpreadsheetApp.getUi().alert(msg);
 }
 
 
@@ -346,7 +466,7 @@ function rebuildTabAsPlainSheet(tabName, monthIdx) {
   dest.getRange(1, 1, rows, cols).setValues(values);
   dest.setFrozenRows(1);
   dest.getRange(1, 1, 1, cols)
-      .setBackground("#0A0A0A").setFontColor("#E84C1E").setFontWeight("bold");
+      .setBackground(HEADER_BG).setFontColor(HEADER_FG).setFontWeight("bold");
   dest.getRange(1, 1, Math.max(rows, 2), cols)
       .applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, true, false);
   dest.autoResizeColumns(1, cols);
@@ -443,8 +563,8 @@ function setupSpreadsheet() {
       sheet.appendRow(paymentHeaders);
       sheet.setFrozenRows(1);
       sheet.getRange(1, 1, 1, paymentHeaders.length)
-           .setBackground("#0A0A0A")
-           .setFontColor("#E84C1E")
+           .setBackground(HEADER_BG)
+           .setFontColor(HEADER_FG)
            .setFontWeight("bold");
       Logger.log("Created: " + tabName);
     } else {
@@ -805,7 +925,7 @@ function runMonthlyFeeCheck() {
   statusSheet.appendRow(headers);
   statusSheet.setFrozenRows(1);
   statusSheet.getRange(1, 1, 1, headers.length)
-             .setBackground("#0A0A0A").setFontColor("#E84C1E").setFontWeight("bold");
+             .setBackground(HEADER_BG).setFontColor(HEADER_FG).setFontWeight("bold");
 
   var players  = getSheet(SHEETS.PLAYERS).getDataRange().getValues().slice(1);
   var invoices = getSheet(SHEETS.INVOICES).getDataRange().getValues().slice(1);
@@ -1120,7 +1240,7 @@ function archiveFeeStatus(monthLabel) {
                        "Expected_Fee", "Paid", "Invoice_No", "Month"]);
     archive.setFrozenRows(1);
     archive.getRange(1, 1, 1, 8)
-           .setBackground("#0A0A0A").setFontColor("#E84C1E").setFontWeight("bold");
+           .setBackground(HEADER_BG).setFontColor(HEADER_FG).setFontWeight("bold");
   }
 
   var statusRows = oldTab.getDataRange().getValues().slice(1);
