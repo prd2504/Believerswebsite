@@ -53,6 +53,25 @@ function formatMonth(ym: string): string {
   return `${MONTHS[m - 1]} ${y}`;
 }
 
+/**
+ * The Month cell, forced to stay TEXT.
+ *
+ * Every write here uses valueInputOption: 'USER_ENTERED', which makes Sheets
+ * parse values exactly as if a human typed them — and "Aug 2026" parses as a
+ * DATE, not a string. The cell then holds a date serial, so Apps Script reads
+ * it back as a Date object and every `cell === "Aug 2026"` comparison in the
+ * rollover/fee-check silently fails. That is why monthly rows were never
+ * cleared and why paid students could still show as unpaid.
+ *
+ * A leading apostrophe is the documented Sheets escape for "treat this as
+ * text". It is not displayed in the cell and is not part of the stored value.
+ * Do not remove it, and do not switch these appends to RAW — that would stop
+ * amounts being stored as numbers.
+ */
+function monthCell(ym: string): string {
+  return `'${formatMonth(ym)}`;
+}
+
 function normPhone(s: string | null | undefined): string {
   const d = (s ?? '').replace(/\D/g, '');
   return d.length === 12 && d.startsWith('91') ? d.slice(2) : d;
@@ -289,17 +308,20 @@ async function appendAdminLog(
 export async function syncPublicFeePayment(p: PublicFeeSyncPayload): Promise<{ isNewStudent: boolean }> {
   const sheets = getSheets();
   const ts = formatISTDateTime(p.nowIso);
+  // Display form for logs/emails; monthCell() is the text-forced form that
+  // actually goes into the Month columns the rollover matches on.
   const monthStr = formatMonth(p.month);
+  const monthText = monthCell(p.month);
   const errors: string[] = [];
   let isNew = false;
 
   try { isNew = await findOrCreatePlayerDirectory(sheets, p); }
   catch (e: any) { errors.push(`Player_Directory: ${e?.message}`); logger.warn('[sheetsSync] Player_Directory failed', { error: e?.message }); }
 
-  try { await appendInvoiceLog(sheets, p, ts, monthStr); }
+  try { await appendInvoiceLog(sheets, p, ts, monthText); }
   catch (e: any) { errors.push(`Invoice_Log: ${e?.message}`); logger.warn('[sheetsSync] Invoice_Log failed', { error: e?.message }); }
 
-  try { await appendPaymentsTab(sheets, p, ts, monthStr); }
+  try { await appendPaymentsTab(sheets, p, ts, monthText); }
   catch (e: any) { errors.push(`Payments: ${e?.message}`); logger.warn('[sheetsSync] Payments tab failed', { error: e?.message }); }
 
   try { await mirrorCentreConfigCounters(sheets, p.centreCode, p.centreName, p.lastInvoiceNo, p.lastStudentNo); }
