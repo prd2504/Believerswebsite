@@ -169,6 +169,7 @@ function onOpen() {
     .addSeparator()
     .addItem("Diagnose month values…", "diagnoseMonths")
     .addItem("Apply table styling (safe)", "applySafeStyling")
+    .addItem("Rebuild a tab as a plain sheet…", "promptRebuildTab")
     .addItem("Clear one centre's month…", "promptClearCentreMonth")
     .addSeparator()
     .addItem("Retry failed Firebase syncs", "retryFailedSyncs")
@@ -292,6 +293,133 @@ function applySafeStyling() {
     "\n\nFrozen bold header, banded rows, auto-sized columns. " +
     "Month columns forced to plain text.\n\n" +
     "Fee_Status_* report tabs are safe to convert to real Tables if you want filters there.");
+}
+
+
+// ───────────────────────────────────────────────────────────────────────
+//  REBUILD A TAB AS A PLAIN SHEET
+//
+//  Escape hatch for a tab that was converted to a Google Sheets Table and
+//  needs to go back. Copies the values into a brand-new plain sheet, so it
+//  does not depend on any "convert to range" menu item existing.
+//
+//  It also NORMALISES the Month column to canonical text on the way
+//  through, which fixes the underlying date-typed data rather than just
+//  the container. That is a genuine improvement over a UI revert.
+//
+//  Non-destructive: the original is renamed <name>_OLD_<stamp> and kept.
+//  Nothing is deleted — verify the rebuilt tab, then remove the old one
+//  by hand when you are satisfied.
+// ───────────────────────────────────────────────────────────────────────
+
+function rebuildTabAsPlainSheet(tabName, monthIdx) {
+  var ss  = SpreadsheetApp.getActiveSpreadsheet();
+  var src = ss.getSheetByName(tabName);
+  if (!src) throw new Error("Tab not found: " + tabName);
+
+  var values = src.getDataRange().getValues();
+  if (values.length === 0) throw new Error(tabName + " is empty — nothing to rebuild.");
+
+  var rows = values.length;
+  var cols = values[0].length;
+
+  // Normalise the Month column to canonical text (row 0 is the header).
+  var converted = 0;
+  if (monthIdx >= 0 && monthIdx < cols) {
+    for (var r = 1; r < rows; r++) {
+      var canon = canonicalMonth(values[r][monthIdx]);
+      if (canon && String(values[r][monthIdx]) !== canon) converted++;
+      if (canon) values[r][monthIdx] = canon;
+    }
+  }
+
+  var stamp   = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd_HHmmss");
+  var tempName = tabName + "_REBUILD_" + stamp;
+  var dest = ss.insertSheet(tempName);
+
+  // Force the Month column to text BEFORE writing, so the write cannot be
+  // re-parsed into a date on its way in.
+  if (monthIdx >= 0 && monthIdx < cols) {
+    dest.getRange(1, monthIdx + 1, dest.getMaxRows(), 1).setNumberFormat("@");
+  }
+
+  dest.getRange(1, 1, rows, cols).setValues(values);
+  dest.setFrozenRows(1);
+  dest.getRange(1, 1, 1, cols)
+      .setBackground("#0A0A0A").setFontColor("#E84C1E").setFontWeight("bold");
+  dest.getRange(1, 1, Math.max(rows, 2), cols)
+      .applyRowBanding(SpreadsheetApp.BandingTheme.LIGHT_GREY, true, false);
+  dest.autoResizeColumns(1, cols);
+
+  // Verify before touching the original.
+  if (dest.getLastRow() !== rows) {
+    throw new Error("Rebuild verification failed for " + tabName +
+      " — expected " + rows + " rows, got " + dest.getLastRow() + ". Original untouched.");
+  }
+
+  src.setName(tabName + "_OLD_" + stamp);
+  dest.setName(tabName);
+
+  adminLog("Tab rebuilt as plain sheet", "—", tabName,
+    rows - 1 + " data rows copied · " + converted + " month cells normalised to text · " +
+    "original kept as " + tabName + "_OLD_" + stamp);
+
+  return { rows: rows - 1, converted: converted, oldName: tabName + "_OLD_" + stamp };
+}
+
+
+function promptRebuildTab() {
+  var ui = SpreadsheetApp.getUi();
+
+  // Month column index per tab, so the rebuild knows what to normalise.
+  var known = {};
+  Object.keys(SHEETS.PAYMENTS).forEach(function (c) {
+    known[SHEETS.PAYMENTS[c]] = PAY_COL.MONTH;
+  });
+  known[SHEETS.INVOICES] = INV_COL.MONTH;
+  known[SHEETS.PLAYERS]  = -1;
+  known[SHEETS.ADMIN]    = -1;
+
+  var names = Object.keys(known);
+
+  var resp = ui.prompt("Rebuild a tab as a plain sheet",
+    "Tab name, exactly one of:\n" + names.join("\n") +
+    "\n\nOr type ALL-PAYMENTS to rebuild all four Payments tabs.",
+    ui.ButtonSet.OK_CANCEL);
+  if (resp.getSelectedButton() !== ui.Button.OK) return;
+
+  var input = resp.getResponseText().trim();
+  var targets;
+
+  if (input.toUpperCase() === "ALL-PAYMENTS") {
+    targets = Object.keys(SHEETS.PAYMENTS).map(function (c) { return SHEETS.PAYMENTS[c]; });
+  } else if (known[input] !== undefined) {
+    targets = [input];
+  } else {
+    ui.alert('Unknown tab "' + input + '".\n\nMust be one of:\n' + names.join("\n"));
+    return;
+  }
+
+  var confirm = ui.alert("Confirm",
+    "Rebuild as plain sheet(s):\n" + targets.join("\n") +
+    "\n\nEach original is RENAMED and kept (nothing deleted). " +
+    "Month cells are normalised to text.",
+    ui.ButtonSet.YES_NO);
+  if (confirm !== ui.Button.YES) return;
+
+  var lines = [];
+  targets.forEach(function (t) {
+    try {
+      var res = rebuildTabAsPlainSheet(t, known[t]);
+      lines.push("✓ " + t + " — " + res.rows + " rows, " + res.converted + " months → text");
+    } catch (e) {
+      lines.push("✗ " + t + " — " + e.message);
+      adminLog("Tab rebuild FAILED", "—", t, e.toString());
+    }
+  });
+
+  ui.alert("Rebuild result\n\n" + lines.join("\n") +
+    "\n\nOriginals kept as *_OLD_<timestamp>. Check the rebuilt tabs, then delete the old ones by hand.");
 }
 
 
