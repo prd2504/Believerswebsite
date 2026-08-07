@@ -192,7 +192,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("BBA Admin")
     .addItem("Run monthly fee check now", "runMonthlyFeeCheck")
-    .addItem("Run monthly rollover now (catches up)", "monthlyRollover")
+    .addItem("Run monthly rollover now (catches up)", "runRolloverFromMenu")
     .addSeparator()
     .addItem("Diagnose month values…", "diagnoseMonths")
     .addItem("Apply table styling (safe)", "applySafeStyling")
@@ -1211,19 +1211,79 @@ function monthlyRollover() {
   if (months.length === 0) {
     adminLog("ROLLOVER: nothing pending", "All centres", getMonthLabel(),
       "No months older than the current one remain in any Payments tab");
-    return;
+    return { months: [], results: [] };
   }
 
   adminLog("ROLLOVER start", "All centres", getMonthLabel(),
     "Pending months: " + months.join(", "));
 
+  var results = [];
   months.forEach(function (monthLabel) {
-    clearCentreMonthRows(monthLabel);
+    var summary = clearCentreMonthRows(monthLabel);
+    results.push({ month: monthLabel, summary: summary });
     archiveFeeStatus(monthLabel);
   });
 
   adminLog("ROLLOVER complete", "All centres", getMonthLabel(),
     "Processed: " + months.join(", "));
+
+  return { months: months, results: results };
+}
+
+
+/**
+ * Menu wrapper — runs the rollover and SHOWS the result.
+ *
+ * monthlyRollover() itself must stay UI-free: it is the time-based trigger
+ * target, and SpreadsheetApp.getUi() throws when called from a trigger
+ * context, which would abort the very automation this is meant to be. So
+ * the dialog lives here instead, and the menu points at this function
+ * while the trigger stays pointed at monthlyRollover.
+ */
+function runRolloverFromMenu() {
+  var ui = SpreadsheetApp.getUi();
+  var out;
+
+  try {
+    out = monthlyRollover();
+  } catch (e) {
+    adminLog("ROLLOVER FAILED", "—", "—", e.toString());
+    ui.alert("Rollover failed\n\n" + e.message + "\n\nNothing was deleted. See admin_logs.");
+    return;
+  }
+
+  if (!out || out.months.length === 0) {
+    ui.alert("Nothing to roll over.\n\nNo month older than " + getMonthLabel() +
+             " remains in any Payments tab — everything is already clean.");
+    return;
+  }
+
+  var lines = [];
+  var totalCleared = 0;
+  var blocked = 0;
+
+  out.results.forEach(function (r) {
+    lines.push("── " + r.month + " ──");
+    r.summary.forEach(function (s) {
+      if (s.status === "cleared")      totalCleared += s.rows;
+      if (s.status === "BLOCKED")      blocked += 1;
+      var mark = s.status === "cleared" ? "✓"
+               : s.status === "BLOCKED" ? "✗" : "·";
+      lines.push("  " + mark + " " + s.centre + " — " + s.status +
+                 (s.rows ? " (" + s.rows + " rows)" : ""));
+    });
+  });
+
+  var msg = "Rollover finished.\n\n" + lines.join("\n") +
+            "\n\nTotal rows cleared: " + totalCleared;
+  if (blocked > 0) {
+    msg += "\n\n⚠ " + blocked + " centre/month combination(s) were BLOCKED and nothing " +
+           "was deleted for them. admin_logs lists the exact invoice numbers that are " +
+           "missing from Invoice_Log.";
+  }
+  msg += "\n\nRun 'Diagnose month values…' to confirm what's left.";
+
+  ui.alert(msg);
 }
 
 
