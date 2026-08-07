@@ -745,13 +745,29 @@ function sendFeeReminders() {
 
 function clearCentreMonthRows(monthLabel, onlyCentre) {
   var target   = canonicalMonth(monthLabel);
-  var invoices = getSheet(SHEETS.INVOICES).getDataRange().getValues().slice(1);
   var summary  = [];
 
   if (!target) {
     adminLog("ROLLOVER ERROR", "—", "—", 'Unparseable month label: "' + monthLabel + '"');
     return summary;
   }
+
+  // Verification is per-row BY INVOICE NUMBER, not by counting rows per
+  // centre+month.
+  //
+  // Counting required Invoice_Log's centre name to equal the SHEETS.PAYMENTS
+  // key exactly — but that column is written by two different systems (the
+  // legacy Google Form writes its own label; the website writes Firestore's
+  // centre name). Any drift, even a trailing space or "Ruia" vs "Ruia
+  // College", would make the count come up short and silently BLOCK a
+  // perfectly valid rollover. An invoice number is one unique key that both
+  // systems already agree on, so this checks the actual thing that matters:
+  // is THIS row's payment permanently recorded before we delete it?
+  var invoiceSet = {};
+  getSheet(SHEETS.INVOICES).getDataRange().getValues().slice(1).forEach(function (row) {
+    var no = String(row[INV_COL.INVOICE] || "").trim();
+    if (no) invoiceSet[no] = true;
+  });
 
   Object.keys(SHEETS.PAYMENTS).forEach(function (centre) {
     if (onlyCentre && centre !== onlyCentre) return;
@@ -771,8 +787,14 @@ function clearCentreMonthRows(monthLabel, onlyCentre) {
     }
 
     var targetRows = [];
+    var missing    = [];
     for (var r = 1; r < data.length; r++) {
-      if (canonicalMonth(data[r][PAY_COL.MONTH]) === target) targetRows.push(r + 1);
+      if (canonicalMonth(data[r][PAY_COL.MONTH]) !== target) continue;
+      targetRows.push(r + 1);
+
+      var inv = String(data[r][PAY_COL.INVOICE] || "").trim();
+      if (!inv) missing.push("(blank invoice no — sheet row " + (r + 1) + ")");
+      else if (!invoiceSet[inv]) missing.push(inv);
     }
 
     if (targetRows.length === 0) {
@@ -782,16 +804,12 @@ function clearCentreMonthRows(monthLabel, onlyCentre) {
       return;
     }
 
-    var invoiceCount = invoices.filter(function (row) {
-      return String(row[INV_COL.CENTRE]).trim() === centre
-          && canonicalMonth(row[INV_COL.MONTH]) === target;
-    }).length;
-
-    if (invoiceCount < targetRows.length) {
+    if (missing.length > 0) {
       summary.push({ centre: centre, status: "BLOCKED", rows: targetRows.length });
       adminLog("ROLLOVER BLOCKED", centre, target,
-        "Payments rows: " + targetRows.length + " vs Invoice_Log: " + invoiceCount +
-        " — mismatch, nothing deleted. Check Invoice_Log before retrying.");
+        missing.length + " of " + targetRows.length + " rows are NOT in Invoice_Log — " +
+        "nothing deleted. Missing: " + missing.slice(0, 15).join(", ") +
+        (missing.length > 15 ? " …(+" + (missing.length - 15) + " more)" : ""));
       return;
     }
 
@@ -799,7 +817,7 @@ function clearCentreMonthRows(monthLabel, onlyCentre) {
 
     summary.push({ centre: centre, status: "cleared", rows: targetRows.length });
     adminLog("ROLLOVER: Payments cleared", centre, target,
-      targetRows.length + " rows verified in Invoice_Log and cleared; other months untouched");
+      targetRows.length + " rows — every invoice confirmed present in Invoice_Log before deleting; other months untouched");
   });
 
   return summary;
