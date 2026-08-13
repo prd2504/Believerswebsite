@@ -25,6 +25,8 @@ import { cn } from '@/lib/cn';
 import {
   formatINR, COMPANY, SLOT_PLANS, TUE_THU_SLOT, isTueThuSlot,
   isBookingWindowOpen, getSlotPlanDays,
+  BillingCycle, QUARTERLY_LAUNCH_MONTH, CYCLE_MONTHS,
+  cycleAmountPaise, cycleSavingPaise, formatCoverage, monthRank,
   type SlotPlanType, type SlotBookingDocument,
 } from '@bba/shared';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -75,12 +77,6 @@ function getDefaultMonth(): string {
 function formatMonth(m: string): string {
   const [y, mo] = m.split('-');
   return new Date(Number(y), Number(mo) - 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-}
-
-/** Sortable rank for a YYYY-MM string, so months can be compared across years. */
-function monthRank(m: string): number {
-  const [y, mo] = m.split('-').map(Number);
-  return y * 12 + (mo - 1);
 }
 
 /**
@@ -280,6 +276,7 @@ export default function FeesPortal() {
   const [useManualAmount, setUseManualAmount] = useState(persisted.useManualAmount ?? false);
   const [method, setMethod] = useState<'UPI' | 'CASH' | 'BANK_TRANSFER'>(persisted.method ?? 'UPI');
   const [selectedCoach, setSelectedCoach] = useState<string>(persisted.selectedCoach ?? ''); // cash → coach who received it
+  const [billingCycle, setBillingCycle] = useState<BillingCycle>(persisted.billingCycle ?? 'MONTHLY');
 
   // Slot step (Ruia only)
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string | null>(persisted.selectedTimeSlot ?? null);
@@ -334,11 +331,12 @@ export default function FeesPortal() {
         step, selectedCentre, selectedStudent, month, payerEmail,
         selectedPlanType, selectedFreqDays, manualAmount, useManualAmount,
         method, selectedCoach, selectedTimeSlot, slotPhone, selectedDays,
+        billingCycle,
       }));
     } catch { /* private mode / quota — non-fatal */ }
   }, [step, selectedCentre, selectedStudent, month, payerEmail,
       selectedPlanType, selectedFreqDays, manualAmount, useManualAmount,
-      method, selectedCoach, selectedTimeSlot, slotPhone, selectedDays]);
+      method, selectedCoach, selectedTimeSlot, slotPhone, selectedDays, billingCycle]);
 
   // ── Derived: fee plans available (own enrollment or centre-wide fallback for new students) ──
   const availablePlans = useMemo(() => {
@@ -357,8 +355,8 @@ export default function FeesPortal() {
   }, [selectedStudent, studentsQuery.data]);
 
   // ── Derived: effective amount ────────────────────────────────────────────
-  const effectiveAmount = useMemo(() => {
-    if (useManualAmount) return Number(manualAmount) || 0;
+  /** The plan's MONTHLY rate, before any cycle multiplier. */
+  const monthlyAmount = useMemo(() => {
     if (isRuia && selectedPlanType) {
       const plan = SLOT_PLANS.find((p) => p.planType === selectedPlanType);
       return plan ? Math.round(plan.amountPaise / 100) : 0;
@@ -367,10 +365,33 @@ export default function FeesPortal() {
       const match = availablePlans.find((p) => p.daysPerWeek === selectedFreqDays);
       if (match) return Math.round(match.monthlyFeePaise / 100);
     }
-    // No frequencyPlans data (CF not yet deployed or batch has none) — let manual input drive
-    if (!isRuia && availablePlans.length === 0) return Number(manualAmount) || 0;
+    if (!isRuia && availablePlans.length === 0) return 0;
     return selectedStudent?.monthlyFeeRupees ?? 0;
-  }, [useManualAmount, manualAmount, isRuia, selectedPlanType, selectedFreqDays, selectedStudent, availablePlans]);
+  }, [isRuia, selectedPlanType, selectedFreqDays, selectedStudent, availablePlans]);
+
+  // ── Billing cycle ────────────────────────────────────────────────────────
+  // Quarterly is hidden entirely before its launch month, so this whole
+  // feature can ship and be tested without changing anything for a parent
+  // paying for an earlier month. A manual amount is inherently a one-off, so
+  // it stays monthly — multiplying a hand-typed figure would be a guess.
+  const quarterlyAvailable =
+    monthRank(month) >= monthRank(QUARTERLY_LAUNCH_MONTH) &&
+    !useManualAmount &&
+    monthlyAmount > 0;
+
+  const effectiveCycle: BillingCycle =
+    quarterlyAvailable && billingCycle === 'QUARTERLY' ? 'QUARTERLY' : 'MONTHLY';
+
+  const effectiveAmount = useMemo(() => {
+    if (useManualAmount) return Number(manualAmount) || 0;
+    if (monthlyAmount <= 0) return Number(manualAmount) || 0;
+    return Math.round(cycleAmountPaise(monthlyAmount * 100, effectiveCycle) / 100);
+  }, [useManualAmount, manualAmount, monthlyAmount, effectiveCycle]);
+
+  const cycleSaving = useMemo(
+    () => (monthlyAmount > 0 ? Math.round(cycleSavingPaise(monthlyAmount * 100, 'QUARTERLY') / 100) : 0),
+    [monthlyAmount],
+  );
 
   // ── Billing month sanity ─────────────────────────────────────────────────
   // The month a payment lands in is whatever the form sends, so a mis-picked
@@ -579,6 +600,7 @@ export default function FeesPortal() {
         // there. Elsewhere this lets the backend auto-enrol a student with no
         // batch link yet (harmless no-op for an already-enrolled student).
         daysPerWeek: isRuia ? undefined : (selectedFreqDays ?? undefined),
+        billingCycle: effectiveCycle,
       });
 
       // Ruia: create the slot booking. This runs AFTER the payment is recorded,
@@ -636,6 +658,7 @@ export default function FeesPortal() {
     setUseManualAmount(false);
     setMethod('UPI');
     setSelectedCoach('');
+    setBillingCycle('MONTHLY');
     setSelectedTimeSlot(null);
     setSelectedDays([]);
     setSlotPhone('');
@@ -1012,6 +1035,51 @@ export default function FeesPortal() {
                       </button>
                     ))}
                 </div>
+              </div>
+            )}
+
+            {/* Pay monthly or quarterly. Hidden entirely before the launch
+                month, so this ships without changing anything for a parent
+                paying for an earlier month. */}
+            {quarterlyAvailable && (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-300">How often?</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { cycle: 'MONTHLY' as const, title: 'Monthly', sub: `${formatINR(monthlyAmount * 100, { withDecimals: false })} / month` },
+                    { cycle: 'QUARTERLY' as const, title: '3 Months', sub: `${formatINR(cycleAmountPaise(monthlyAmount * 100, 'QUARTERLY'), { withDecimals: false })} total` },
+                  ]).map(({ cycle, title, sub }) => {
+                    const active = effectiveCycle === cycle;
+                    return (
+                      <button
+                        key={cycle}
+                        type="button"
+                        onClick={() => setBillingCycle(cycle)}
+                        className={cn(
+                          'relative rounded-xl border p-3 text-left transition',
+                          active
+                            ? 'border-brand-primary bg-brand-primary/10'
+                            : 'border-gray-700 bg-gray-800/50 hover:border-gray-600',
+                        )}
+                      >
+                        {cycle === 'QUARTERLY' && cycleSaving > 0 && (
+                          <span className="absolute -top-2 right-2 rounded-full bg-green-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                            SAVE {formatINR(cycleSaving * 100, { withDecimals: false })}
+                          </span>
+                        )}
+                        <p className={cn('text-sm font-semibold', active ? 'text-brand-primary' : 'text-white')}>
+                          {title}
+                        </p>
+                        <p className="mt-0.5 text-xs text-gray-400">{sub}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+                {effectiveCycle === 'QUARTERLY' && (
+                  <p className="mt-1.5 text-xs text-green-400">
+                    Covers {formatCoverage(month, CYCLE_MONTHS.QUARTERLY)} — one payment, no monthly form.
+                  </p>
+                )}
               </div>
             )}
 
@@ -1459,7 +1527,14 @@ export default function FeesPortal() {
               <div className="space-y-1 text-gray-400">
                 <div className="flex justify-between"><span>Student</span><span className="text-white">{selectedStudent.name}</span></div>
                 <div className="flex justify-between"><span>Centre</span><span className="text-white">{selectedCentre?.name}</span></div>
-                <div className="flex justify-between"><span>Month</span><span className="text-white">{formatMonth(month)}</span></div>
+                <div className="flex justify-between">
+                  <span>{effectiveCycle === 'QUARTERLY' ? 'Covers' : 'Month'}</span>
+                  <span className="text-white">
+                    {effectiveCycle === 'QUARTERLY'
+                      ? formatCoverage(month, CYCLE_MONTHS.QUARTERLY)
+                      : formatMonth(month)}
+                  </span>
+                </div>
                 {isRuia && selectedPlanType && (
                   <>
                     <div className="flex justify-between">

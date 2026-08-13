@@ -154,6 +154,9 @@ export async function submitFeePayment(input: {
    * who has no batch link yet (e.g. just self-registered). Omit for Ruia, which
    * tracks attendance via slotBookings instead of batch enrollments. */
   daysPerWeek?: number;
+  /** MONTHLY (default) or QUARTERLY. The backend derives the coverage window
+   *  from this and rejects anything overlapping an existing payment. */
+  billingCycle?: 'MONTHLY' | 'QUARTERLY';
 }): Promise<FeeSubmissionResult> {
   const res = await fetch(`${FUNCTIONS_BASE}/submitFeePayment`, {
     method: 'POST',
