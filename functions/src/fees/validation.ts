@@ -17,6 +17,9 @@ export const submitFeePaymentSchema = z.object({
   // self-registered) into whichever batch at the centre offers this many
   // days/week — see onFeePaymentCreated.ts.
   daysPerWeek: z.number().int().min(1).max(7).optional(),
+  // Monthly (default) or quarterly. Absent means monthly, so every existing
+  // caller — including the legacy Apps Script form — keeps working untouched.
+  billingCycle: z.enum(['MONTHLY', 'QUARTERLY']).optional(),
 }).refine(
   (d) => d.studentId || d.studentName || d.externalStudentId || d.phone,
   { message: 'At least one of studentId, studentName, externalStudentId, or phone is required' },

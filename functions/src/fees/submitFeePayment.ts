@@ -5,6 +5,14 @@ import { config } from '../config.js';
 import { submitFeePaymentSchema } from './validation.js';
 import { checkRateLimit } from './rateLimiter.js';
 import { assignExternalStudentId, generateExternalInvoiceNo } from './invoiceCounter.js';
+import {
+  CYCLE_MONTHS,
+  coverageEndMonth,
+  coverageOverlaps,
+  paymentCoverage,
+  formatCoverage,
+  type BillingCycle,
+} from '@bba/shared';
 
 function normalize(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -208,20 +216,54 @@ export const submitFeePayment = onRequest(
         batchId = student.batchIds?.[0] ?? '';
       }
 
-      // --- Duplicate check ---
-      const dupSnap = await db.collection('payments')
+      // --- Coverage / duplicate check ---
+      //
+      // This used to be an exact match on studentId + month + batchId, which
+      // quarterly billing walks straight past: a quarterly payment made in
+      // September covers Sep–Nov, but a monthly payment for October has a
+      // different `month`, so nothing clashed and the parent was charged
+      // twice. We now compare COVERAGE WINDOWS instead of single months.
+      //
+      // Fetched by studentId only (not month), because the clashing payment is
+      // by definition filed under a different month. A student has a handful of
+      // payments, so reading them all is cheap.
+      const cycle: BillingCycle = input.billingCycle === 'QUARTERLY' ? 'QUARTERLY' : 'MONTHLY';
+      const months = CYCLE_MONTHS[cycle];
+      const endMonth = coverageEndMonth(input.month, months);
+
+      const priorSnap = await db.collection('payments')
         .where('studentId', '==', student.id)
-        .where('month', '==', input.month)
-        .where('batchId', '==', batchId)
-        .limit(1)
         .get();
 
-      if (!dupSnap.empty) {
-        const existing = dupSnap.docs[0];
+      const incoming = { month: input.month, coverageMonths: months, coverageEndMonth: endMonth };
+
+      const clash = priorSnap.docs.find((d) => {
+        const p = d.data();
+        // A refunded or waived payment no longer holds the months it covered.
+        if (p.status === 'REFUNDED' || p.status === 'WAIVED') return false;
+        if (p.batchId !== batchId) return false;
+        return coverageOverlaps(incoming, {
+          month: p.month,
+          coverageMonths: p.coverageMonths,
+          coverageEndMonth: p.coverageEndMonth,
+        });
+      });
+
+      if (clash) {
+        const p = clash.data();
+        const covered = paymentCoverage({
+          month: p.month,
+          coverageMonths: p.coverageMonths,
+          coverageEndMonth: p.coverageEndMonth,
+        });
         res.status(409).json({
           ok: false,
-          error: `Payment already exists for ${student.name} for ${input.month}`,
-          existingPaymentId: existing.id,
+          error:
+            `${student.name} is already paid for ${formatCoverage(covered.start, covered.months)}` +
+            ` (invoice ${p.externalInvoiceNo ?? clash.id}). ` +
+            `Nothing has been charged again.`,
+          existingPaymentId: clash.id,
+          coveredThrough: covered.end,
         });
         return;
       }
@@ -250,6 +292,13 @@ export const submitFeePayment = onRequest(
         batchId,
         centreId,
         month: input.month,
+        // Coverage window. Always written, including for monthly (cycle
+        // MONTHLY / 1 month / end == month), so every new payment is
+        // queryable the same way and "who expires in November" is a plain
+        // where('coverageEndMonth','==',...) rather than a client-side scan.
+        billingCycle: cycle,
+        coverageMonths: months,
+        coverageEndMonth: endMonth,
         baseAmountPaise: basePaise,
         gstAmountPaise: gstPaise,
         totalAmountPaise: totalPaise,

@@ -211,6 +211,11 @@ export const onFeePaymentCreated = onDocumentWritten(
         centreName,
         centreCode,
         month: after.month as string,
+        // Payments written before quarterly existed carry neither field; they
+        // were all single-month, so they mirror as MONTHLY covering their own
+        // month and nothing in the sheet changes meaning.
+        billingCycle: (after.billingCycle as string) ?? 'MONTHLY',
+        coverageEndMonth: (after.coverageEndMonth as string) ?? (after.month as string),
         batchName,
         amountRupees: Math.round((after.totalAmountPaise as number) / 100),
         method: after.method as string,

@@ -72,6 +72,11 @@ function monthCell(ym: string): string {
   return `'${formatMonth(ym)}`;
 }
 
+/** Covers_Until cell — same text-forcing rule as monthCell. */
+function coversCell(ym: string): string {
+  return `'${formatMonth(ym)}`;
+}
+
 function normPhone(s: string | null | undefined): string {
   const d = (s ?? '').replace(/\D/g, '');
   return d.length === 12 && d.startsWith('91') ? d.slice(2) : d;
@@ -125,6 +130,10 @@ export interface PublicFeeSyncPayload {
   centreName: string;
   centreCode: string;
   month: string;
+  /** MONTHLY or QUARTERLY — mirrored into the sheet's Cycle column. */
+  billingCycle: string;
+  /** Last month this payment covers, inclusive. Equals `month` for monthly. */
+  coverageEndMonth: string;
   batchName: string;
   amountRupees: number;
   method: string;
@@ -140,13 +149,17 @@ export interface PublicFeeSyncPayload {
 async function appendInvoiceLog(sheets: Sheets, p: PublicFeeSyncPayload, ts: string, monthStr: string) {
   await svcAppend(sheets, {
     spreadsheetId: SPREADSHEET_ID,
-    range: `${INVOICE_LOG_TAB}!A:M`,
+    range: `${INVOICE_LOG_TAB}!A:O`,
     valueInputOption: 'USER_ENTERED',
     requestBody: {
       values: [[
         p.externalInvoiceNo, ts, p.externalStudentId ?? '', p.studentName,
         p.centreName, monthStr, p.batchName, p.amountRupees, p.method,
         '', p.coachName ?? '', p.screenshotUrl ?? '', 'Via bbashuttle.com/fees',
+        // Appended AFTER the existing 13 columns on purpose: Code.gs addresses
+        // Invoice_Log by fixed index (INV_COL), so inserting mid-row would
+        // silently shift every one of them.
+        p.billingCycle, coversCell(p.coverageEndMonth),
       ]],
     },
   });
@@ -160,13 +173,14 @@ async function appendPaymentsTab(sheets: Sheets, p: PublicFeeSyncPayload, ts: st
   }
   await svcAppend(sheets, {
     spreadsheetId: SPREADSHEET_ID,
-    range: `${tab}!A:J`,
+    range: `${tab}!A:L`,
     valueInputOption: 'USER_ENTERED',
     requestBody: {
       values: [[
         ts, p.externalInvoiceNo, p.externalStudentId ?? '', p.studentName,
         p.batchName, p.amountRupees, monthStr, p.method, 'Pending Verification',
         p.screenshotUrl ?? '',
+        p.billingCycle, coversCell(p.coverageEndMonth),
       ]],
     },
   });
