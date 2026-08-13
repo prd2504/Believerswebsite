@@ -221,6 +221,7 @@ function onOpen() {
     .addItem("Run monthly rollover now (catches up)", "runRolloverFromMenu")
     .addSeparator()
     .addItem("Diagnose month values…", "diagnoseMonths")
+    .addItem("Label new columns (Cycle / Covers_Until)", "ensureNewColumnHeaders")
     .addItem("Apply table styling (safe)", "applySafeStyling")
     .addItem("Set up Status dropdown + colours", "applyStatusSetup")
     .addItem("Rebuild a tab as a plain sheet…", "promptRebuildTab")
@@ -347,6 +348,65 @@ function applySafeStyling() {
     "\n\nFrozen bold header, banded rows, auto-sized columns. " +
     "Month columns forced to plain text.\n\n" +
     "Fee_Status_* report tabs are safe to convert to real Tables if you want filters there.");
+}
+
+
+// ───────────────────────────────────────────────────────────────────────
+//  LABEL THE NEW COLUMNS
+//
+//  setupSpreadsheet() only writes a header row when it CREATES a tab, so an
+//  existing tab never gets labels for columns added later. The Cloud Function
+//  already writes Cycle and Covers_Until into those positions; this just names
+//  them.
+//
+//  Deliberately surgical: it writes ONLY the specific header cells for the new
+//  columns and never touches the existing ones, because the older headers were
+//  authored by hand over time and are not worth risking to a bulk rewrite.
+//  Data rows are never touched at all.
+// ───────────────────────────────────────────────────────────────────────
+
+function ensureNewColumnHeaders() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var changed = [];
+
+  function setHeader(sheet, colIdx, label) {
+    var cell = sheet.getRange(1, colIdx + 1);
+    if (String(cell.getValue()).trim() === label) return false;
+    cell.setValue(label)
+        .setBackground(HEADER_BG).setFontColor(HEADER_FG).setFontWeight("bold");
+    return true;
+  }
+
+  Object.keys(SHEETS.PAYMENTS).forEach(function (centre) {
+    var sheet = ss.getSheetByName(SHEETS.PAYMENTS[centre]);
+    if (!sheet) return;
+    var hits = 0;
+    if (setHeader(sheet, PAY_COL.SCREENSHOT,   "Screenshot"))   hits++;
+    if (setHeader(sheet, PAY_COL.CYCLE,        "Cycle"))        hits++;
+    if (setHeader(sheet, PAY_COL.COVERS_UNTIL, "Covers_Until")) hits++;
+    // Covers_Until holds a month label, so it must resist the same
+    // date-coercion that broke the Month column.
+    sheet.getRange(2, PAY_COL.COVERS_UNTIL + 1, Math.max(sheet.getMaxRows() - 1, 1), 1)
+         .setNumberFormat("@");
+    if (hits) changed.push(SHEETS.PAYMENTS[centre] + " (" + hits + ")");
+  });
+
+  var inv = ss.getSheetByName(SHEETS.INVOICES);
+  if (inv) {
+    var n = 0;
+    if (setHeader(inv, INV_COL.CYCLE,        "Cycle"))        n++;
+    if (setHeader(inv, INV_COL.COVERS_UNTIL, "Covers_Until")) n++;
+    inv.getRange(2, INV_COL.COVERS_UNTIL + 1, Math.max(inv.getMaxRows() - 1, 1), 1)
+       .setNumberFormat("@");
+    if (n) changed.push(SHEETS.INVOICES + " (" + n + ")");
+  }
+
+  adminLog("Column headers ensured", "—", "—", changed.join(", ") || "already correct");
+  SpreadsheetApp.getUi().alert(
+    changed.length
+      ? "Labelled new columns in:\n\n" + changed.join("\n") +
+        "\n\nNo data rows were touched."
+      : "All column headers were already correct — nothing to do.");
 }
 
 

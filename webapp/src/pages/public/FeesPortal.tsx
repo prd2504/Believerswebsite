@@ -26,7 +26,7 @@ import {
   formatINR, COMPANY, SLOT_PLANS, TUE_THU_SLOT, isTueThuSlot,
   isBookingWindowOpen, getSlotPlanDays,
   BillingCycle, QUARTERLY_LAUNCH_MONTH, CYCLE_MONTHS,
-  cycleAmountPaise, cycleSavingPaise, formatCoverage, monthRank,
+  cycleAmountPaise, cycleSavingPaise, formatCoverage, monthRank, coveredMonths,
   type SlotPlanType, type SlotBookingDocument,
 } from '@bba/shared';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -618,6 +618,10 @@ export default function FeesPortal() {
             planType: selectedPlanType as SlotPlanType,
             timeSlot: selectedTimeSlot,
             selectedDays,
+            // A quarterly booking must appear on all three months' rosters,
+            // otherwise the coach can't mark attendance in months 2 and 3 for
+            // someone who has already paid for them.
+            coversMonths: coveredMonths(month, CYCLE_MONTHS[effectiveCycle]),
             amountPaise: effectiveAmount * 100,
           });
         } catch (bookingErr) {

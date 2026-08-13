@@ -30,7 +30,24 @@ export function isTueThuSlot(slot: string): boolean {
 export interface SlotBookingDocument {
   id: string;
   centreId: string;
+  /** First month this booking covers. For monthly, the only month. */
   month: YearMonth;
+
+  /**
+   * Every month this booking covers, e.g. ['2026-09','2026-10','2026-11'] for
+   * a quarterly booking.
+   *
+   * Exists because the roster query is per-month. A quarterly booking is filed
+   * under a single `month`, so querying month == '2026-10' would drop that
+   * participant off October's roster entirely and the coach could not mark
+   * their attendance. Rosters therefore query
+   * where('coversMonths','array-contains', month) instead.
+   *
+   * Always includes `month`, so monthly bookings have exactly one entry and
+   * behave identically. Bookings written before quarterly existed have no
+   * such field and are backfilled to [month] — see backfillSlotBookingCoverage.
+   */
+  coversMonths: YearMonth[];
 
   participantName: string;
   participantPhone: string;

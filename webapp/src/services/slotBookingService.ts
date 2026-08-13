@@ -42,6 +42,11 @@ function fromFirestore(id: string, data: DocumentData): SlotBookingDocument {
     id,
     centreId: data.centreId ?? '',
     month: data.month ?? '',
+    // Legacy bookings predate quarterly and have no coversMonths. Falling back
+    // to [month] keeps them on exactly the roster they were always on.
+    coversMonths: Array.isArray(data.coversMonths) && data.coversMonths.length > 0
+      ? data.coversMonths
+      : (data.month ? [data.month] : []),
     participantName: data.participantName ?? '',
     participantPhone: data.participantPhone ?? '',
     participantEmail: data.participantEmail ?? null,
@@ -79,25 +84,76 @@ function configFromFirestore(id: string, data: DocumentData): SlotBookingConfig 
 
 // ── Real-time subscriptions ───────────────────────────────────────────────────
 
+const ROSTER_STATUSES = [
+  SlotBookingStatus.PENDING_PAYMENT,
+  SlotBookingStatus.PENDING_VERIFICATION,
+  SlotBookingStatus.CONFIRMED,
+];
+
+/**
+ * Live bookings for one month.
+ *
+ * Runs TWO listeners and merges them, rather than a single query:
+ *
+ *   month == X              → finds bookings written before coversMonths
+ *                             existed, which have no such field at all
+ *   coversMonths contains X → finds every booking that covers X, including a
+ *                             quarterly one filed under an earlier month
+ *
+ * A single array-contains query would be cleaner, but it would silently drop
+ * every pre-existing booking off every roster the instant it deployed, unless
+ * a backfill had already been run — and correctness here cannot depend on two
+ * operations happening in the right order. New bookings match both queries and
+ * are de-duplicated by id, so the merge costs a little and can never lose
+ * anyone. Once all live bookings carry coversMonths this can collapse to the
+ * single query.
+ */
 export function subscribeToBookings(
   centreId: string,
   month: string,
   callback: (bookings: SlotBookingDocument[]) => void,
 ): () => void {
-  const q = query(
-    collection(db, COL),
-    where('centreId', '==', centreId),
-    where('month', '==', month),
-    where('status', 'in', [
-      SlotBookingStatus.PENDING_PAYMENT,
-      SlotBookingStatus.PENDING_VERIFICATION,
-      SlotBookingStatus.CONFIRMED,
-    ]),
-    orderBy('createdAt', 'asc'),
+  let byMonth: SlotBookingDocument[] | null = null;
+  let byCoverage: SlotBookingDocument[] | null = null;
+
+  const emit = () => {
+    // Wait for both before the first emit, so the roster doesn't visibly
+    // flicker from a half-populated list on load.
+    if (byMonth === null || byCoverage === null) return;
+    const merged = new Map<string, SlotBookingDocument>();
+    [...byMonth, ...byCoverage].forEach((b) => merged.set(b.id, b));
+    callback(
+      Array.from(merged.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    );
+  };
+
+  const unsubMonth = onSnapshot(
+    query(
+      collection(db, COL),
+      where('centreId', '==', centreId),
+      where('month', '==', month),
+      where('status', 'in', ROSTER_STATUSES),
+    ),
+    (snap) => {
+      byMonth = snap.docs.map((d) => fromFirestore(d.id, d.data()));
+      emit();
+    },
   );
-  return onSnapshot(q, (snap) => {
-    callback(snap.docs.map((d) => fromFirestore(d.id, d.data())));
-  });
+
+  const unsubCoverage = onSnapshot(
+    query(
+      collection(db, COL),
+      where('centreId', '==', centreId),
+      where('coversMonths', 'array-contains', month),
+      where('status', 'in', ROSTER_STATUSES),
+    ),
+    (snap) => {
+      byCoverage = snap.docs.map((d) => fromFirestore(d.id, d.data()));
+      emit();
+    },
+  );
+
+  return () => { unsubMonth(); unsubCoverage(); };
 }
 
 export function subscribeToConfig(
@@ -130,6 +186,8 @@ export interface CreateBookingInput {
   timeSlot: string;
   /** Weekdays the participant will attend (0=Sun … 6=Sat) — drives the roster. */
   selectedDays: number[];
+  /** Months this booking covers. Omit for monthly; defaults to [month]. */
+  coversMonths?: string[];
   amountPaise: number;
 }
 
@@ -137,6 +195,9 @@ export async function createBooking(input: CreateBookingInput): Promise<string> 
   const ref = await addDoc(collection(db, COL), {
     centreId: input.centreId,
     month: input.month,
+    coversMonths: input.coversMonths && input.coversMonths.length > 0
+      ? input.coversMonths
+      : [input.month],
     participantName: input.participantName,
     participantPhone: input.participantPhone,
     participantEmail: input.participantEmail || null,
