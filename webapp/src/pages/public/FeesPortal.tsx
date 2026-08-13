@@ -1328,29 +1328,91 @@ export default function FeesPortal() {
               <ChevronLeft size={16} /> Back
             </button>
 
+            {/* Three EQUAL ways to pay, not a QR buried above a "Step 1" button.
+                The old layout put the QR at the top and the deep-link button at
+                the bottom, so people scrolled past the QR, tapped the button,
+                and — when their UPI app rejected the VPA — had no idea scanning
+                was even an option. Each route is now its own labelled card. */}
             {method === 'UPI' && (
               <>
-                <h2 className="text-lg font-semibold text-white">Pay via UPI</h2>
+                <div className="text-center">
+                  <p className="text-sm text-gray-400">Amount to pay</p>
+                  <p className="text-3xl font-bold text-white">
+                    {formatINR(effectiveAmount * 100, { withDecimals: false })}
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500">Any one of the three ways below</p>
+                </div>
 
-                <UpiQrCode upiUrl={upiPayUrl} />
-                <p className="text-center text-xs text-gray-500">
-                  Scan with any UPI app, or tap "Open UPI App" below. If your app says the receiver's
-                  VPA isn't available, scanning this QR instead of the button usually works.
-                </p>
-
-                {/* UPI ID for manual entry or desktop scanning */}
-                <div className="flex items-center justify-between rounded-xl border border-gray-700 bg-gray-800/50 p-3">
-                  <div>
-                    <p className="text-xs text-gray-400">UPI ID (manual / desktop)</p>
-                    <p className="font-mono text-sm text-white">{feeConfig.upiId}</p>
+                {/* 1 — Scan */}
+                <div className="rounded-xl border border-gray-700 bg-gray-800/40 p-4">
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-primary text-xs font-bold text-white">1</span>
+                    <p className="text-sm font-semibold text-white">Scan the QR code</p>
                   </div>
-                  <button onClick={async () => { await copyToClipboard(feeConfig.upiId); setUpiCopied(true); setTimeout(() => setUpiCopied(false), 2000); }}
-                    className="rounded-lg bg-gray-700 p-2 transition hover:bg-gray-600">
-                    {upiCopied ? <Check size={16} className="text-green-400" /> : <Copy size={16} className="text-gray-300" />}
+                  <UpiQrCode upiUrl={upiPayUrl} />
+                  <p className="mt-2 text-center text-xs text-gray-500">
+                    Open GPay / PhonePe / Paytm &rarr; Scan
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-gray-700" />
+                  <span className="text-xs font-medium text-gray-500">or</span>
+                  <div className="h-px flex-1 bg-gray-700" />
+                </div>
+
+                {/* 2 — Deep link. Kept, but no longer the only obvious route:
+                    it fails outright on some Android/PhonePe combinations with
+                    "receiver's VPA not available", which is what made the QR
+                    above worth surfacing properly. */}
+                <div className="rounded-xl border border-gray-700 bg-gray-800/40 p-4">
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-primary text-xs font-bold text-white">2</span>
+                    <p className="text-sm font-semibold text-white">Open your UPI app directly</p>
+                  </div>
+                  <a
+                    href={upiPayUrl}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3.5 text-base font-bold text-white shadow-lg shadow-blue-900/30 transition hover:bg-blue-500 active:scale-95"
+                  >
+                    <BadgeIndianRupee size={20} />
+                    Pay {formatINR(effectiveAmount * 100, { withDecimals: false })}
+                  </a>
+                  <p className="mt-2 text-center text-xs text-gray-500">
+                    If your app says &ldquo;receiver&rsquo;s VPA not available&rdquo;, use the QR above instead
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-gray-700" />
+                  <span className="text-xs font-medium text-gray-500">or</span>
+                  <div className="h-px flex-1 bg-gray-700" />
+                </div>
+
+                {/* 3 — Manual UPI ID, the fallback that always works. */}
+                <div className="rounded-xl border border-gray-700 bg-gray-800/40 p-4">
+                  <div className="mb-3 flex items-center gap-2">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-primary text-xs font-bold text-white">3</span>
+                    <p className="text-sm font-semibold text-white">Pay to this UPI ID</p>
+                  </div>
+                  <button
+                    onClick={async () => { await copyToClipboard(feeConfig.upiId); setUpiCopied(true); setTimeout(() => setUpiCopied(false), 2000); }}
+                    className="flex w-full items-center justify-between rounded-lg border border-gray-600 bg-gray-900/60 p-3 transition hover:border-gray-500"
+                  >
+                    <span className="font-mono text-sm text-white">{feeConfig.upiId}</span>
+                    <span className={cn(
+                      'flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold',
+                      upiCopied ? 'bg-green-600 text-white' : 'bg-gray-700 text-gray-200',
+                    )}>
+                      {upiCopied ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy</>}
+                    </span>
                   </button>
                 </div>
-                <div className="rounded-lg bg-blue-900/20 p-3 text-xs text-blue-300">
-                  Tap "Open UPI App" below to pay, then upload a screenshot — it helps us verify your payment faster.
+
+                <div className="rounded-xl border border-amber-500/30 bg-amber-900/15 p-3">
+                  <p className="text-xs text-amber-200">
+                    <strong>After paying</strong>, upload your screenshot below and tap Submit.
+                    Your invoice is emailed within a few minutes.
+                  </p>
                 </div>
               </>
             )}
@@ -1425,27 +1487,16 @@ export default function FeesPortal() {
               </div>
             </div>
 
-            {method === 'UPI' && (
-              <>
-                {/* UPI deep link — opens GPay / PhonePe / Paytm etc. Placed right above
-                    Submit so it's the last thing people see/tap before confirming,
-                    instead of sitting above the fold where it gets missed. */}
-                <a
-                  href={upiPayUrl}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-4 text-base font-bold text-white shadow-lg shadow-blue-900/30 transition hover:bg-blue-500 active:scale-95"
-                >
-                  <BadgeIndianRupee size={20} />
-                  Step 1: Pay {formatINR(effectiveAmount * 100, { withDecimals: false })} — Open UPI App
-                </a>
-                <p className="text-center text-xs text-gray-500">
-                  Opens GPay, PhonePe, Paytm or any UPI app on your device
-                </p>
-              </>
-            )}
+            {/* The deep link lives with the QR and the UPI ID above, as one of
+                three equal options. It used to be duplicated down here as
+                "Step 1", which implied paying and submitting were a sequence —
+                misleading for the many parents who pay first and only then open
+                this page to submit proof. */}
 
-            {/* Submit is NEVER gated on tapping "Open UPI App" above — that link is just
-                a convenience shortcut. If it's disabled, something specific is missing;
-                say what, so a parent who already paid elsewhere isn't left guessing. */}
+            {/* Submit is NEVER gated on having tapped the pay link — that link is
+                just a convenience shortcut. If Submit is disabled, something
+                specific is missing; say what, so a parent who already paid
+                elsewhere isn't left guessing. */}
             {isRuia && !canSubmit && !submitting && (
               <p className="text-center text-xs text-amber-400">
                 {!bookingOpen
@@ -1465,7 +1516,7 @@ export default function FeesPortal() {
             <button onClick={handleSubmit} disabled={submitting || !canSubmit}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3 font-semibold text-white transition hover:bg-green-500 disabled:opacity-50">
               {submitting ? <Loader2 size={18} className="animate-spin" /> : <Receipt size={18} />}
-              {submitting ? 'Submitting...' : method === 'UPI' ? 'Step 2: Submit Payment' : 'Submit Payment'}
+              {submitting ? 'Submitting...' : 'Submit Payment'}
             </button>
           </div>
         )}
