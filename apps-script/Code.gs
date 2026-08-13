@@ -71,8 +71,10 @@ var SHEETS = {
 };
 
 // Column indexes, named so an off-by-one is visible rather than buried.
-var PAY_COL   = { TIMESTAMP:0, INVOICE:1, STUDENT_ID:2, NAME:3, BATCH:4, AMOUNT:5, MONTH:6, MODE:7, STATUS:8 };
-var INV_COL   = { INVOICE:0, DATE:1, STUDENT_ID:2, NAME:3, CENTRE:4, MONTH:5, BATCH:6, AMOUNT:7, MODE:8 };
+var PAY_COL   = { TIMESTAMP:0, INVOICE:1, STUDENT_ID:2, NAME:3, BATCH:4, AMOUNT:5, MONTH:6, MODE:7, STATUS:8,
+                  SCREENSHOT:9, CYCLE:10, COVERS_UNTIL:11 };
+var INV_COL   = { INVOICE:0, DATE:1, STUDENT_ID:2, NAME:3, CENTRE:4, MONTH:5, BATCH:6, AMOUNT:7, MODE:8,
+                  RECEIPT:9, COACH:10, SCREENSHOT:11, NOTES:12, CYCLE:13, COVERS_UNTIL:14 };
 
 var MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
@@ -163,6 +165,30 @@ function monthRank(v) {
   if (!m) return -1;
   var idx = MONTHS.indexOf(m[1]);
   return idx < 0 ? -1 : (Number(m[2]) * 12 + idx);
+}
+
+/**
+ * Does an invoice row's paid period include the given month?
+ *
+ * A quarterly payment made in September covers Sep, Oct and Nov but is filed
+ * under a single Month of "Sep 2026". Comparing Month alone would mark that
+ * student unpaid in October and November and send them a dunning email for
+ * fees they have already paid — so the Covers_Until column is what decides.
+ *
+ * Rows written before quarterly existed have no Covers_Until at all; they were
+ * all single-month, so an empty value falls back to Month and behaves exactly
+ * as before.
+ */
+function invoiceCoversMonth(row, targetMonth) {
+  var start = monthRank(row[INV_COL.MONTH]);
+  if (start < 0) return false;
+  var endRaw = row[INV_COL.COVERS_UNTIL];
+  var end = (endRaw === undefined || endRaw === null || String(endRaw).trim() === "")
+    ? start
+    : monthRank(endRaw);
+  if (end < start) end = start;   // malformed → treat as single month, never negative coverage
+  var t = monthRank(targetMonth);
+  return t >= start && t <= end;
 }
 
 /**
@@ -552,7 +578,8 @@ function setupSpreadsheet() {
 
   var paymentHeaders = [
     "Timestamp", "Invoice_No", "Student_ID", "Student_Name",
-    "Batch", "Amount", "Month", "Payment_Mode", "Status"
+    "Batch", "Amount", "Month", "Payment_Mode", "Status",
+    "Screenshot", "Cycle", "Covers_Until"
   ];
 
   Object.keys(SHEETS.PAYMENTS).forEach(function(centre) {
@@ -757,10 +784,13 @@ function onFeeFormSubmit(e) {
   var studentID = findOrCreateStudent(name, mobile, email, centre, batchClean);
   var invoiceNo = generateInvoiceNo(centre);
 
+  // The legacy Google Form has no quarterly option, so these rows are always
+  // MONTHLY covering their own month. Written explicitly rather than left
+  // blank so the columns line up with rows from bbashuttle.com/fees.
   appendMonthSafeRow(getSheet(SHEETS.INVOICES), [
     invoiceNo, dateStr, studentID, name,
     centre, month, batchClean, amount,
-    payMode, "", coach, screenshot, ""
+    payMode, "", coach, screenshot, "", "MONTHLY", month
   ], INV_COL.MONTH);
 
   var payTab = SHEETS.PAYMENTS[centre] || SHEETS.PAYMENTS[centre.trim()];
@@ -768,7 +798,7 @@ function onFeeFormSubmit(e) {
     appendMonthSafeRow(getSheet(payTab), [
       timestamp, invoiceNo, studentID, name,
       batchClean, amount, month, payMode,
-      "Pending Verification"
+      "Pending Verification", screenshot || "", "MONTHLY", month
     ], PAY_COL.MONTH);
   } else {
     adminLog("WARNING", name, centre, "No Payments tab found for: " + centre);
@@ -920,7 +950,7 @@ function runMonthlyFeeCheck() {
 
   var headers = [
     "Centre", "Student_ID", "Student_Name", "Batch",
-    "Expected_Fee", "Paid", "Invoice_No", "Month"
+    "Expected_Fee", "Paid", "Invoice_No", "Month", "Paid_Through"
   ];
   statusSheet.appendRow(headers);
   statusSheet.setFrozenRows(1);
@@ -931,13 +961,16 @@ function runMonthlyFeeCheck() {
   var invoices = getSheet(SHEETS.INVOICES).getDataRange().getValues().slice(1);
   var config   = getSheet(SHEETS.CONFIG).getDataRange().getValues();
 
-  // canonicalMonth on BOTH sides. The v6 raw === here is why every student
-  // who paid through the website still showed as unpaid.
+  // Coverage-aware: a quarterly payment counts for all three of its months.
+  // (canonicalMonth on BOTH sides — the v6 raw === here is why every student
+  // who paid through the website still showed as unpaid.)
   var target  = canonicalMonth(month);
   var paidMap = {};
+  var cycleMap = {};
   invoices.forEach(function(row) {
-    if (canonicalMonth(row[INV_COL.MONTH]) === target) {
-      paidMap[row[INV_COL.STUDENT_ID]] = row[INV_COL.INVOICE];
+    if (invoiceCoversMonth(row, target)) {
+      paidMap[row[INV_COL.STUDENT_ID]]  = row[INV_COL.INVOICE];
+      cycleMap[row[INV_COL.STUDENT_ID]] = canonicalMonth(row[INV_COL.COVERS_UNTIL]) || target;
     }
   });
 
@@ -962,7 +995,8 @@ function runMonthlyFeeCheck() {
       expectedFee ? "₹" + expectedFee : "—",
       invoiceNo ? "YES" : "NO",
       invoiceNo || "—",
-      month
+      month,
+      invoiceNo ? (cycleMap[studentID] || month) : "—"
     ]);
   });
 
@@ -1297,9 +1331,9 @@ function archiveFeeStatus(monthLabel) {
   if (!archive) {
     archive = ss.insertSheet("Fee_Status_Archive");
     archive.appendRow(["Centre", "Student_ID", "Student_Name", "Batch",
-                       "Expected_Fee", "Paid", "Invoice_No", "Month"]);
+                       "Expected_Fee", "Paid", "Invoice_No", "Month", "Paid_Through"]);
     archive.setFrozenRows(1);
-    archive.getRange(1, 1, 1, 8)
+    archive.getRange(1, 1, 1, 9)
            .setBackground(HEADER_BG).setFontColor(HEADER_FG).setFontWeight("bold");
   }
 
@@ -1576,4 +1610,204 @@ function retryFailedSyncs() {
   SpreadsheetApp.getUi().alert(
     "Retry complete.\nAttempted: " + retryCount +
     "\nSucceeded: " + successCount + "\nStill failing: " + failCount);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+//  LEGACY GOOGLE FORM TOOLING
+//
+//  Restored: these were present in v6 and dropped when v7 was rewritten.
+//  None are trigger-invoked and nothing calls them automatically, but
+//  createForms() is the only way to rebuild the legacy Forms (e.g. if
+//  Bandra is ever reactivated), and BATCHES is the fee list those forms
+//  are built from.
+//
+//  NOTE: BATCHES drives the legacy Google Forms ONLY. The live site's
+//  prices come from Firestore (batches.frequencyPlans) and, for Ruia,
+//  SLOT_PLANS in shared/src/types/slotBooking.ts. Quarterly pricing is
+//  derived from those, never from this list — editing it here does not
+//  change what anyone actually pays on bbashuttle.com/fees.
+// ═══════════════════════════════════════════════════════════════════════
+
+var BATCHES = {
+  "Dadar": [
+    { label: "2 Days / Week  —  ₹2,500 / month",  value: "2-Day"  },
+    { label: "3 Days / Week  —  ₹3,500 / month",  value: "3-Day"  },
+    { label: "4 Days / Week  —  ₹4,000 / month",  value: "4-Day"  },
+    { label: "5 Days / Week  —  ₹5,000 / month",  value: "5-Day"  }
+  ],
+  "Ruia College": [
+    { label: "2 Days / Week  —  ₹3,000 / month",              value: "2-Day"     },
+    { label: "3 Days / Week  —  ₹4,000 / month",              value: "3-Day"     },
+    { label: "Games Day Only (Saturdays)  —  ₹1,500 / month", value: "Games Day" },
+    { label: "Complete Bundle (3 Days + Games Day)  —  ₹5,500 / month", value: "Bundle" }
+  ],
+  "Bandra Gymkhana": [
+    { label: "3 Days / Week  —  ₹2,349 / month  (Summer Camp — June only)", value: "3-Day" },
+    { label: "5 Days / Week  —  ₹2,949 / month  (Summer Camp — June only)", value: "5-Day" }
+  ],
+  "RBI Colony": [
+    { label: "2 Days / Week  —  ₹2,000 / month", value: "2-Day" },
+    { label: "3 Days / Week  —  ₹3,000 / month", value: "3-Day" },
+    { label: "4 Days / Week  —  ₹4,000 / month", value: "4-Day" }
+  ]
+};
+
+var CENTRES = Object.keys(BATCHES);
+
+function createForms() {
+  var regUrl = createRegistrationForm();
+  var feeUrl = createFeeForm();
+  var msg =
+    "✅ Both forms created successfully!\n\n" +
+    "Registration Form:\n" + regUrl + "\n\n" +
+    "Fee Payment Form:\n" + feeUrl + "\n\n" +
+    "Both are linked to this spreadsheet.\n" +
+    "Response sheets: Reg_Responses and Fee_Responses";
+  Logger.log(msg);
+  SpreadsheetApp.getUi().alert(msg);
+}
+
+function createRegistrationForm() {
+  var form = FormApp.create("BBA Sports Academy — Student Registration");
+  form.setDescription(
+    "Register as a new student at BBA Sports Academy. " +
+    "For queries contact Prathamesh: " + CONTACT_MOBILE + " | " + WEBSITE
+  );
+  form.setConfirmationMessage(
+    "Thank you for registering with BBA Sports Academy! 🏸\n\n" +
+    "Your coach will confirm your batch timing shortly.\n" +
+    "For queries contact Prathamesh: " + CONTACT_MOBILE + "\n" +
+    "Visit: " + WEBSITE
+  );
+  form.setCollectEmail(false);
+  form.setTitle("BBA Sports Academy — Student Registration");
+
+  form.addTextItem().setTitle("Student Name").setRequired(true);
+  form.addTextItem().setTitle("Mobile Number").setHelpText("10-digit mobile number").setRequired(true);
+  form.addTextItem().setTitle("Email Address")
+    .setHelpText("Welcome email and fee invoices will be sent here").setRequired(true);
+  form.addDateItem().setTitle("Date of Birth").setRequired(false);
+  form.addTextItem().setTitle("Emergency Contact Name").setRequired(false);
+  form.addTextItem().setTitle("Emergency Contact Mobile").setRequired(false);
+  form.addMultipleChoiceItem().setTitle("How did you hear about us?")
+    .setChoiceValues(["Friend / Family", "Social Media", "Coach", "Walked in", "Other"]).setRequired(false);
+  form.addTextItem().setTitle("Registered by — Coach / Staff Name").setRequired(false);
+
+  var centreItem = form.addMultipleChoiceItem();
+  centreItem.setTitle("Which centre are you joining?").setRequired(true);
+
+  var centreChoices = [];
+  CENTRES.forEach(function(centre) {
+    var section = form.addPageBreakItem();
+    section.setTitle(centre + " — Batch Selection");
+    section.setHelpText("Select the coaching plan that works best for you.");
+    var batchChoices = BATCHES[centre].map(function(b) { return b.label; });
+    form.addMultipleChoiceItem().setTitle("Select your batch").setChoiceValues(batchChoices).setRequired(true);
+    centreChoices.push(centreItem.createChoice(centre, section));
+  });
+  centreItem.setChoices(centreChoices);
+
+  form.setDestination(FormApp.DestinationType.SPREADSHEET, SpreadsheetApp.getActiveSpreadsheet().getId());
+  SpreadsheetApp.flush();
+  renameLatestResponseSheet("Reg_Responses");
+  Logger.log("Registration form created: " + form.getEditUrl());
+  return form.getPublishedUrl();
+}
+
+function createFeeForm() {
+  var form = FormApp.create("BBA Sports Academy — Fee Payment");
+  form.setDescription(
+    "Submit your monthly fee payment confirmation. " +
+    "Your invoice will be emailed to you within minutes."
+  );
+  form.setConfirmationMessage(
+    "Thank you! Your payment has been submitted. 🏸\n\n" +
+    "You will receive your invoice on your email within a few minutes.\n" +
+    "For queries contact Prathamesh: " + CONTACT_MOBILE + "\n" +
+    "Visit: " + WEBSITE
+  );
+  form.setCollectEmail(false);
+
+  form.addTextItem().setTitle("Email Address")
+    .setHelpText("Your fee invoice will be sent to this email").setRequired(true);
+  form.addTextItem().setTitle("Student Name").setRequired(true);
+  form.addTextItem().setTitle("Mobile Number").setHelpText("10-digit mobile number").setRequired(true);
+
+  var centreItem = form.addMultipleChoiceItem();
+  centreItem.setTitle("Which centre do you train at?").setRequired(true);
+
+  var centreChoices = [];
+  CENTRES.forEach(function(centre) {
+    var section = form.addPageBreakItem();
+    section.setTitle(centre + " — Payment Details");
+    var batchChoices = BATCHES[centre].map(function(b) { return b.label; });
+    form.addMultipleChoiceItem().setTitle("Select your batch").setChoiceValues(batchChoices).setRequired(true);
+    form.addTextItem().setTitle("Amount Paid (₹)")
+      .setHelpText("Enter the exact amount — e.g. 2500").setRequired(true);
+    form.addMultipleChoiceItem().setTitle("Payment Mode")
+      .setChoiceValues(["UPI", "Cash", "Bank Transfer"]).setRequired(true);
+    form.addTextItem().setTitle("Payment Screenshot Link")
+      .setHelpText(
+        "Upload your payment screenshot to Google Drive, set sharing to 'Anyone with link can view', " +
+        "then paste the link here. OR WhatsApp your screenshot to " + CONTACT_MOBILE + " after submitting."
+      ).setRequired(false);
+    form.addTextItem().setTitle("Coach Name").setRequired(false);
+    centreChoices.push(centreItem.createChoice(centre, section));
+  });
+  centreItem.setChoices(centreChoices);
+
+  form.setDestination(FormApp.DestinationType.SPREADSHEET, SpreadsheetApp.getActiveSpreadsheet().getId());
+  SpreadsheetApp.flush();
+  renameLatestResponseSheet("Fee_Responses");
+  Logger.log("Fee form created: " + form.getEditUrl());
+  return form.getPublishedUrl();
+}
+
+function renameLatestResponseSheet(targetName) {
+  Utilities.sleep(3000);
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = ss.getSheets();
+  for (var i = sheets.length - 1; i >= 0; i--) {
+    if (sheets[i].getName().indexOf("Form Responses") !== -1) {
+      if (ss.getSheetByName(targetName)) ss.deleteSheet(sheets[i]);
+      else sheets[i].setName(targetName);
+      return;
+    }
+  }
+}
+
+function logResponseHeaders() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ["Reg_Responses", "Fee_Responses"].forEach(function (name) {
+    var sheet = ss.getSheetByName(name);
+    if (!sheet) return;
+    Logger.log("=== " + name + " headers ===");
+    sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+      .forEach(function (h, i) { Logger.log(i + ": " + h); });
+  });
+}
+
+function testFeeForm() {
+  var r = new Array(28).fill("");
+  r[0]  = new Date().toString();
+  r[1]  = "prdeshpande2504@gmail.com";
+  r[2]  = "Test Student";
+  r[3]  = "9022102921";
+  r[4]  = "RBI Colony";
+  r[20] = "3 Days / Week  —  ₹3,000 / month";
+  r[21] = "3000";
+  r[22] = "UPI";
+  r[23] = "";
+  r[24] = "Coach Aakash";
+  onFeeFormSubmit({ values: r });
+}
+
+function testRegistrationForm() {
+  onRegistrationFormSubmit({
+    values: [
+      new Date().toString(), "New Test Student", "8888888888", "youremail@gmail.com",
+      "01-Jan-2000", "Parent Name", "7777777777", "Friend", "Aakash", "RBI Colony", "2-Day"
+    ]
+  });
 }
