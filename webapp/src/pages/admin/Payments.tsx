@@ -68,6 +68,7 @@ import {
 import { getAllBatches } from '@/services/batchService';
 import { getAllStudents } from '@/services/studentService';
 import { PaymentCard } from '@/components/payments/PaymentCard';
+import { RenewalsTab } from '@/components/payments/RenewalsTab';
 import { PaymentForm } from '@/components/payments/PaymentForm';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
@@ -92,7 +93,7 @@ import type {
 } from '@bba/shared';
 import type { PaymentFormValues } from '@/lib/schemas/paymentSchema';
 
-type PageTab = 'payments' | 'slotBookings' | 'launchCheck';
+type PageTab = 'payments' | 'slotBookings' | 'renewals' | 'launchCheck';
 type Mode = 'list' | 'create' | 'edit';
 type ViewMode = 'card' | 'table' | 'detail';
 type SortField = 'month' | 'status' | 'total' | 'dueDate' | 'student';
@@ -1473,6 +1474,17 @@ export default function PaymentsPage() {
         </button>
         <button
           type="button"
+          onClick={() => setPageTab('renewals')}
+          className={cn(
+            'flex-1 rounded-md py-2 text-sm font-medium transition-colors',
+            pageTab === 'renewals' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700',
+          )}
+        >
+          <CalendarDays size={14} className="inline mr-1" />
+          Renewals
+        </button>
+        <button
+          type="button"
           onClick={() => setPageTab('launchCheck')}
           className={cn(
             'flex-1 rounded-md py-2 text-sm font-medium transition-colors',
@@ -1484,7 +1496,14 @@ export default function PaymentsPage() {
         </button>
       </div>
 
-      {pageTab === 'launchCheck' ? (
+      {pageTab === 'renewals' ? (
+        <RenewalsTab
+          payments={payments}
+          centres={centres}
+          students={students}
+          currentMonth={monthFilter || currentMonth()}
+        />
+      ) : pageTab === 'launchCheck' ? (
         <LaunchCheckTab centres={centres} profile={profile} />
       ) : pageTab === 'slotBookings' ? (
         <SlotBookingsTab centres={centres} profile={profile} />
