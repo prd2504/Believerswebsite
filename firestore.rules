@@ -235,6 +235,17 @@ service cloud.firestore {
       allow delete: if isSuperAdmin() || (managerOwnsRow() && resource.data.status == 'PENDING');
     }
 
+    // ── /feeAttendanceReports/{reportId} ─────────────────────────────────────────────────
+    // "Who attended but hasn't paid" — a collections worklist, not finance
+    // data: it carries fees owed and session counts, but no revenue, profit,
+    // payroll or partner figures. A centre manager needs it to chase payments,
+    // so admin-like may read. Written only by the Cloud Function (admin SDK,
+    // which bypasses rules), so nothing may write from a client.
+    match /feeAttendanceReports/{reportId} {
+      allow read: if isAdminLike();
+      allow write: if false;
+    }
+
     // ── /recurringExpenses/{templateId} — SUPER_ADMIN ONLY ───────────────────────────────
     // Templates for fixed monthly costs (rent, utilities). Same finance-only
     // sensitivity as centreExpenses, which is what they post into.

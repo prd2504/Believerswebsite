@@ -137,5 +137,6 @@ export const COLLECTIONS = {
   slotBookingConfig: 'slotBookingConfig',
   staff: 'staff',
   payrollRuns: 'payrollRuns',
+  feeAttendanceReports: 'feeAttendanceReports',
   counters: 'counters',
 } as const;

@@ -12,6 +12,7 @@ export * from './enrollment.js';
 export * from './student.js';
 export * from './attendance.js';
 export * from './payment.js';
+export * from './feeAttendance.js';
 export * from './progress.js';
 export * from './notification.js';
 export * from './parentFeedback.js';

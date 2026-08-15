@@ -69,6 +69,7 @@ import { getAllBatches } from '@/services/batchService';
 import { getAllStudents } from '@/services/studentService';
 import { PaymentCard } from '@/components/payments/PaymentCard';
 import { RenewalsTab } from '@/components/payments/RenewalsTab';
+import { PendingFeesTab } from '@/components/payments/PendingFeesTab';
 import { PaymentForm } from '@/components/payments/PaymentForm';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
@@ -93,7 +94,7 @@ import type {
 } from '@bba/shared';
 import type { PaymentFormValues } from '@/lib/schemas/paymentSchema';
 
-type PageTab = 'payments' | 'slotBookings' | 'renewals' | 'launchCheck';
+type PageTab = 'payments' | 'slotBookings' | 'renewals' | 'pendingFees' | 'launchCheck';
 type Mode = 'list' | 'create' | 'edit';
 type ViewMode = 'card' | 'table' | 'detail';
 type SortField = 'month' | 'status' | 'total' | 'dueDate' | 'student';
@@ -1485,6 +1486,17 @@ export default function PaymentsPage() {
         </button>
         <button
           type="button"
+          onClick={() => setPageTab('pendingFees')}
+          className={cn(
+            'flex-1 rounded-md py-2 text-sm font-medium transition-colors',
+            pageTab === 'pendingFees' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700',
+          )}
+        >
+          <AlertTriangle size={14} className="inline mr-1" />
+          Pending Fees
+        </button>
+        <button
+          type="button"
           onClick={() => setPageTab('launchCheck')}
           className={cn(
             'flex-1 rounded-md py-2 text-sm font-medium transition-colors',
@@ -1496,7 +1508,9 @@ export default function PaymentsPage() {
         </button>
       </div>
 
-      {pageTab === 'renewals' ? (
+      {pageTab === 'pendingFees' ? (
+        <PendingFeesTab month={monthFilter || currentMonth()} />
+      ) : pageTab === 'renewals' ? (
         <RenewalsTab
           payments={payments}
           centres={centres}

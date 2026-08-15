@@ -44,3 +44,9 @@ export { backfillEnrollments } from './fees/backfillEnrollments.js';
 
 // --- Fee invoice email (on payment marked PAID with paymentSource) -----------------------
 export { onFeePaymentCreated } from './fees/onFeePaymentCreated.js';
+
+// --- Fee vs attendance reconciliation (monthly report + email) -----------------------------
+export {
+  scheduledFeeAttendanceReport,
+  generateFeeAttendanceReport,
+} from './fees/feeAttendanceReport.js';
