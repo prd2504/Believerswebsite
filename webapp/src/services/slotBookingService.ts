@@ -77,6 +77,12 @@ function configFromFirestore(id: string, data: DocumentData): SlotBookingConfig 
     // can be set by hand in the console without breaking the page. Absent or
     // unparseable → null → no scheduled gate (fails open, never locks out).
     openAt: toIso(data.openAt) ?? (typeof data.openAt === 'string' ? data.openAt : null),
+    openAtByMonth: (data.openAtByMonth && typeof data.openAtByMonth === 'object')
+      ? data.openAtByMonth
+      : null,
+    autoOpenEnabled: data.autoOpenEnabled ?? null,
+    autoOpenDayOfMonth: data.autoOpenDayOfMonth ?? null,
+    autoOpenTime: data.autoOpenTime ?? null,
     updatedAt: toIso(data.updatedAt) ?? new Date().toISOString(),
     updatedBy: data.updatedBy ?? null,
   };

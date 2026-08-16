@@ -50,3 +50,9 @@ export {
   scheduledFeeAttendanceReport,
   generateFeeAttendanceReport,
 } from './fees/feeAttendanceReport.js';
+
+// --- Slot booking window auto-scheduling ---------------------------------------------------
+export {
+  scheduledSlotWindow,
+  scheduleSlotWindowNow,
+} from './slots/scheduleSlotWindow.js';

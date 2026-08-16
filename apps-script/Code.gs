@@ -227,6 +227,7 @@ function onOpen() {
     .addItem("Rebuild a tab as a plain sheet…", "promptRebuildTab")
     .addItem("Clear one centre's month…", "promptClearCentreMonth")
     .addSeparator()
+    .addItem("Back up now", "runBackupNow")
     .addItem("Retry failed Firebase syncs", "retryFailedSyncs")
     .addItem("One-time setup (new spreadsheet)", "setupSpreadsheet")
     .addToUi();
@@ -1079,23 +1080,41 @@ function runMonthlyFeeCheck() {
 
 
 // ═══════════════════════════════════════════════════════════════════════
-//  FEE REMINDERS — daily from the 8th
+//  FEE REMINDERS
+//
+//  Fees are due on the 7th, with a ₹250 late fee after that. Reminders go
+//  out on three fixed days only — the 8th, 15th and 25th.
+//
+//  This deliberately does NOT send "every day from the 8th", which is what
+//  the previous version did: on a daily trigger an unpaid parent received an
+//  email every single day until month end, roughly 23 of them. Three firm
+//  reminders is a collections process; twenty-three is harassment and gets
+//  the sending domain marked as spam, which would then silently break
+//  invoice delivery too.
+//
+//  Quarterly payers are never chased: runMonthlyFeeCheck is coverage-aware,
+//  so someone paid through November shows Paid=YES in October.
 // ═══════════════════════════════════════════════════════════════════════
 
+var REMINDER_DAYS = [8, 15, 25];
+
 function sendFeeReminders() {
-  var REMINDERS_PAUSED = true; // ← flip to false when ready to re-enable
-  if (REMINDERS_PAUSED) { Logger.log("Reminders paused — skipping."); return; }
-
   var today = new Date();
-  if (today.getDate() < 8) return;
+  var dom   = today.getDate();
 
-  // Rebuild the snapshot first — a stale one would email someone who has paid.
+  if (REMINDER_DAYS.indexOf(dom) === -1) {
+    Logger.log("Not a reminder day (" + dom + ") — skipping.");
+    return;
+  }
+
+  // Rebuild the snapshot first — a stale one would email someone who has
+  // already paid, or whose Student_ID was corrected since the last run.
   runMonthlyFeeCheck();
 
   var month     = getMonthLabel();
   var tabName   = "Fee_Status_" + month.replace(" ", "_");
   var statSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(tabName);
-  if (!statSheet) { Logger.log("Run runMonthlyFeeCheck first."); return; }
+  if (!statSheet) { Logger.log("No Fee_Status tab — aborting."); return; }
 
   var data    = statSheet.getDataRange().getValues();
   var headers = data[0];
@@ -1105,34 +1124,136 @@ function sendFeeReminders() {
   var idCol     = headers.indexOf("Student_ID");
   var nameCol   = headers.indexOf("Student_Name");
   var paidCol   = headers.indexOf("Paid");
+  var feeCol    = headers.indexOf("Expected_Fee");
+
+  // Idempotency: if the trigger fires twice in a day, or someone runs this
+  // by hand after it has already run, nobody is emailed twice.
+  var todayKey = Utilities.formatDate(today, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  var alreadySentToday = {};
+  getSheet(SHEETS.ADMIN).getDataRange().getValues().forEach(function (r) {
+    if (r[1] !== "Fee reminder sent") return;
+    var when = r[0] instanceof Date
+      ? Utilities.formatDate(r[0], Session.getScriptTimeZone(), "yyyy-MM-dd")
+      : String(r[0]).slice(0, 10);
+    if (when === todayKey) alreadySentToday[String(r[4])] = true;  // notes col holds the Student_ID
+  });
 
   var contactMap = {};
   getSheet(SHEETS.PLAYERS).getDataRange().getValues().slice(1).forEach(function(p) {
     contactMap[p[0]] = { email: p[3], mobile: p[2] };
   });
 
+  var sent = 0, skipped = 0, failed = 0;
+
   rows.forEach(function(row) {
     if (row[paidCol] === "YES") return;
 
-    var contact = contactMap[row[idCol]];
-    if (!contact || !contact.email) return;
+    var studentID = row[idCol];
+    if (alreadySentToday[studentID]) { skipped++; return; }
+
+    var contact = contactMap[studentID];
+    if (!contact || !contact.email) { skipped++; return; }
+
+    var isLate  = dom > 7;
+    var feeText = row[feeCol] && row[feeCol] !== "—" ? " of " + row[feeCol] : "";
 
     try {
-      var subject = "Coaching Fee Pending — " + month + " | BBA Sports Academy";
+      var subject = (isLate ? "Overdue: " : "") +
+        "Coaching Fee — " + month + " | BBA Sports Academy";
       var body =
         "Hi " + row[nameCol] + ",\n\n" +
-        "Your coaching fee for " + month + " is still pending.\n\n" +
-        "Please make the payment at your earliest to avoid any interruption to your sessions.\n\n" +
+        "Your coaching fee" + feeText + " for " + month + " is still pending.\n\n" +
+        (isLate
+          ? "Fees were due on the 7th. A late fee of ₹250 applies to payments after the due date.\n\n"
+          : "") +
         "Pay here: " + FEE_URL + "\n\n" +
+        "Already paid? Please make sure you filled the form at " + FEE_URL +
+        " — a payment that isn't logged there is not recorded against your name.\n\n" +
         "For queries contact " + CONTACT_NAME + " at " + CONTACT_MOBILE + ".\n\n" +
         "Regards,\n" + CONTACT_NAME + "\nBBA Sports Academy";
 
       GmailApp.sendEmail(contact.email, subject, body, { from: "hello@bbashuttle.com" });
-      adminLog("Fee reminder sent", row[nameCol], row[centreCol], month);
+      // Student_ID goes in the notes column — that is what the idempotency
+      // check above reads back.
+      adminLog("Fee reminder sent", row[nameCol], row[centreCol], String(studentID));
+      sent++;
     } catch (err) {
       adminLog("Reminder FAILED", row[nameCol], row[centreCol], err.toString());
+      failed++;
     }
   });
+
+  adminLog("Fee reminders run", "All centres", month,
+    "Day " + dom + " · sent " + sent + " · skipped " + skipped + " · failed " + failed);
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+//  MONTHLY BACKUP
+//
+//  Takes a dated copy of the whole spreadsheet into a "BBA Backups" Drive
+//  folder before the rollover deletes anything.
+//
+//  Ordering is the entire point: the rollover permanently removes rows from
+//  the Payments tabs. Invoice_Log keeps the permanent record, but a bad paste
+//  or a mis-run clear had no undo beyond Google's version history. The copy
+//  is taken FIRST, and if it fails the rollover is abandoned rather than
+//  proceeding unprotected.
+//
+//  Keeps the most recent BACKUP_RETENTION copies and trashes older ones, so
+//  Drive doesn't fill with years of snapshots.
+// ═══════════════════════════════════════════════════════════════════════
+
+var BACKUP_FOLDER_NAME = "BBA Backups";
+var BACKUP_RETENTION   = 12;   // ~1 year of monthly snapshots
+
+function getOrCreateBackupFolder() {
+  var it = DriveApp.getFoldersByName(BACKUP_FOLDER_NAME);
+  return it.hasNext() ? it.next() : DriveApp.createFolder(BACKUP_FOLDER_NAME);
+}
+
+/**
+ * Copy the spreadsheet into the backups folder.
+ * Returns the new file's name, or throws so the caller can abort.
+ */
+function createMonthlyBackup(tag) {
+  var ss     = SpreadsheetApp.getActiveSpreadsheet();
+  var folder = getOrCreateBackupFolder();
+  var stamp  = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd_HHmm");
+  var name   = "BBA Master — " + (tag ? tag + " — " : "") + stamp;
+
+  var copy = DriveApp.getFileById(ss.getId()).makeCopy(name, folder);
+
+  // Prune oldest beyond retention. Iterating the folder rather than trusting
+  // names, so a manually-added copy is counted too.
+  var files = [];
+  var it = folder.getFiles();
+  while (it.hasNext()) {
+    var f = it.next();
+    files.push({ file: f, when: f.getDateCreated().getTime() });
+  }
+  files.sort(function (a, b) { return b.when - a.when; });
+  var trashed = 0;
+  for (var i = BACKUP_RETENTION; i < files.length; i++) {
+    files[i].file.setTrashed(true);
+    trashed++;
+  }
+
+  adminLog("Backup created", "—", "—",
+    name + " · kept " + Math.min(files.length, BACKUP_RETENTION) + " · trashed " + trashed);
+  return name;
+}
+
+/** Menu-driven manual backup. */
+function runBackupNow() {
+  var ui = SpreadsheetApp.getUi();
+  try {
+    var name = createMonthlyBackup("manual");
+    ui.alert("Backup created\n\n" + name + "\n\nIn Drive folder: " + BACKUP_FOLDER_NAME);
+  } catch (e) {
+    adminLog("Backup FAILED", "—", "—", e.toString());
+    ui.alert("Backup failed\n\n" + e.message);
+  }
 }
 
 
@@ -1283,6 +1404,17 @@ function promptClearCentreMonth() {
 function monthlyRollover() {
   var ss           = SpreadsheetApp.getActiveSpreadsheet();
   var currentRank  = monthRank(getMonthLabel());
+
+  // Back up BEFORE deleting anything. If the copy fails we abandon the run —
+  // clearing rows with no snapshot behind them is the one outcome with no
+  // way back.
+  try {
+    createMonthlyBackup(getMonthLabel());
+  } catch (e) {
+    adminLog("ROLLOVER ABORTED", "All centres", getMonthLabel(),
+      "Backup failed, nothing was cleared: " + e.toString());
+    throw new Error("Backup failed — rollover aborted so no data is lost. " + e.message);
+  }
   var pendingRanks = {};
 
   // Collect every distinct month still present across the Payments tabs

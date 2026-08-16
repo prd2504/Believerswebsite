@@ -286,6 +286,7 @@ export default function FeesPortal() {
   const [slotConfig, setSlotConfig] = useState({
     weekdayCapacity: 9, saturdayCapacity: 15,
     isOpen: true, openAt: null as string | null,
+    openAtByMonth: null as Record<string, string> | null,
   });
   // Which weekdays the participant will attend — only asked when the plan
   // leaves a choice (2-day, 4-day); derived silently otherwise.
@@ -312,6 +313,7 @@ export default function FeesPortal() {
       setSlotConfig({
         weekdayCapacity: cfg.weekdayCapacity, saturdayCapacity: cfg.saturdayCapacity,
         isOpen: cfg.isOpen, openAt: cfg.openAt,
+        openAtByMonth: cfg.openAtByMonth ?? null,
       });
     });
     return () => { unsub1(); unsub2(); };
@@ -403,7 +405,7 @@ export default function FeesPortal() {
   const monthIsAhead = monthRank(month) > monthRank(currentBillingMonth);
 
   // ── Booking window + day plan ────────────────────────────────────────────
-  const bookingOpen = isBookingWindowOpen(slotConfig, now);
+  const bookingOpen = isBookingWindowOpen(slotConfig, now, month);
   const planDays = selectedPlanType ? getSlotPlanDays(selectedPlanType as SlotPlanType) : null;
 
   // Fixed-day plans (3-day, Games Day, Bundle) have nothing to choose — set

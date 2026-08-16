@@ -96,6 +96,27 @@ export interface SlotBookingConfig {
    * window; it is not a security boundary.
    */
   openAt: string | null;
+
+  /**
+   * Per-month opening times, e.g. { '2026-10': '2026-09-25T21:30:00+05:30' }.
+   *
+   * `openAt` alone cannot express a recurring monthly window: it is a single
+   * global timestamp, so setting a future one to gate October would also
+   * block September bookings that should still be open. Keying by the month
+   * being booked scopes the gate to exactly that month.
+   *
+   * Populated automatically — see the scheduled slot-window function. A month
+   * with no entry falls back to `openAt`, so existing behaviour is unchanged.
+   */
+  openAtByMonth?: Record<string, string> | null;
+
+  /** Auto-schedule the next month's window. Off unless explicitly enabled. */
+  autoOpenEnabled?: boolean | null;
+  /** Day of the PRECEDING month that bookings open. Defaults to 25. */
+  autoOpenDayOfMonth?: number | null;
+  /** Opening time on that day, "HH:mm" IST. Defaults to "21:30". */
+  autoOpenTime?: string | null;
+
   updatedAt: string;
   updatedBy: string | null;
 }
@@ -118,15 +139,45 @@ export const DEFAULT_SLOT_CONFIG: Omit<SlotBookingConfig, 'centreId' | 'updatedA
  * typo can never lock everyone out.
  */
 export function isBookingWindowOpen(
-  config: { isOpen: boolean; openAt: string | null } | null | undefined,
+  config:
+    | { isOpen: boolean; openAt: string | null; openAtByMonth?: Record<string, string> | null }
+    | null
+    | undefined,
   now: Date = new Date(),
+  targetMonth?: string,
 ): boolean {
   if (!config) return true;             // config not loaded yet — don't block
   if (!config.isOpen) return false;     // manual kill switch wins
-  if (!config.openAt) return true;      // no scheduled gate
-  const opens = new Date(config.openAt);
+
+  // A month-specific gate wins over the global one, so scheduling October's
+  // opening can never close September.
+  const perMonth = targetMonth ? config.openAtByMonth?.[targetMonth] : undefined;
+  const gate = perMonth ?? config.openAt;
+
+  if (!gate) return true;               // no scheduled gate
+  const opens = new Date(gate);
   if (isNaN(opens.getTime())) return true; // unparseable → treat as no gate
   return now.getTime() >= opens.getTime();
+}
+
+/**
+ * When bookings for `bookingMonth` should open, given the auto-open rule.
+ * Returns an IST ISO timestamp on the configured day of the PRECEDING month —
+ * the same day /fees starts filing bookings under the new month.
+ */
+export function computeAutoOpenAt(
+  bookingMonth: string,
+  dayOfMonth = 25,
+  time = '21:30',
+): string {
+  const [y, m] = bookingMonth.split('-').map(Number);
+  // Preceding month.
+  const prev = new Date(y, m - 2, 1);
+  const day = Math.min(28, Math.max(1, dayOfMonth));
+  const [hh, mm] = time.split(':');
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${prev.getFullYear()}-${pad(prev.getMonth() + 1)}-${pad(day)}` +
+         `T${pad(Number(hh) || 0)}:${pad(Number(mm) || 0)}:00+05:30`;
 }
 
 /**
