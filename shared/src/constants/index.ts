@@ -138,5 +138,8 @@ export const COLLECTIONS = {
   staff: 'staff',
   payrollRuns: 'payrollRuns',
   feeAttendanceReports: 'feeAttendanceReports',
+  courtBookings: 'courtBookings',
+  courtRentalConfig: 'courtRentalConfig',
+  courtRentalPlans: 'courtRentalPlans',
   counters: 'counters',
 } as const;

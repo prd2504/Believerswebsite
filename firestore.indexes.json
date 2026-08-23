@@ -475,6 +475,20 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "courtBookings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "centreId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -18,6 +18,7 @@ import {
   MessageSquare,
   Wallet,
   Receipt,
+  Clock,
   Banknote,
   AlertTriangle,
   BellRing,
@@ -57,6 +58,7 @@ const NAV_ITEMS: NavItem[] = [
   // Expense submission carries no revenue or profit data, so a centre manager
   // sees it. Financials (revenue, profit, payouts) stays super-admin only.
   { to: paths.admin.expenses, label: 'Centre Expenses', icon: <Receipt size={18} /> },
+  { to: paths.admin.courtHours, label: 'Court Hours', icon: <Clock size={18} /> },
   { to: paths.admin.financials, label: 'Financials', icon: <Wallet size={18} />, superAdminOnly: true },
   { to: paths.admin.payroll, label: 'Payroll', icon: <Banknote size={18} />, superAdminOnly: true },
   { to: paths.admin.issues, label: 'Issues', icon: <AlertTriangle size={18} /> },

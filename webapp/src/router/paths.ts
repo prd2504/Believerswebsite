@@ -28,6 +28,7 @@ export const paths = {
     parentFeedback: '/admin/parent-feedback',
     financials: '/admin/financials',
     expenses: '/admin/expenses',
+    courtHours: '/admin/court-hours',
     issues: '/admin/issues',
     notifications: '/admin/notifications',
     payroll: '/admin/payroll',

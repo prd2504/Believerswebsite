@@ -235,6 +235,34 @@ service cloud.firestore {
       allow delete: if isSuperAdmin() || (managerOwnsRow() && resource.data.status == 'PENDING');
     }
 
+    // ── /courtBookings/{bookingId} ───────────────────────────────────────────────────────
+    // Court hour bookings. Public create so an unlisted booking link works
+    // without an account, mirroring slotBookings — but with tighter shape
+    // checks, and HELD only, so nothing can be self-confirmed. Reads are
+    // admin-only: unlike slotBookings there is no public "who's booked" view,
+    // and these carry a member of the public's name and phone.
+    match /courtBookings/{bookingId} {
+      allow read: if isAdminLike();
+      allow create: if
+        request.resource.data.bookerName is string &&
+        request.resource.data.bookerName.size() > 0 &&
+        request.resource.data.bookerPhone is string &&
+        request.resource.data.bookerPhone.size() >= 10 &&
+        request.resource.data.status == 'HELD' &&
+        request.resource.data.verifiedBy == null &&
+        request.resource.data.amountPaise is number &&
+        request.resource.data.amountPaise >= 0;
+      allow update, delete: if isAdminLike();
+    }
+
+    // ── /courtRentalConfig/{centreId} ────────────────────────────────────────────────────
+    // Public read so the booking page can show real availability; only an
+    // admin may change rates, windows or open/close an hour.
+    match /courtRentalConfig/{centreId} {
+      allow read: if true;
+      allow write: if isAdminLike();
+    }
+
     // ── /feeAttendanceReports/{reportId} ─────────────────────────────────────────────────
     // "Who attended but hasn't paid" — a collections worklist, not finance
     // data: it carries fees owed and session counts, but no revenue, profit,

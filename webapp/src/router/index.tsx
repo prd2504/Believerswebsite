@@ -47,6 +47,7 @@ const AdminNotifications = lazy(() => import('@/pages/admin/Notifications'));
 const AdminPayroll = lazy(() => import('@/pages/admin/Payroll'));
 const AdminSettings = lazy(() => import('@/pages/admin/Settings'));
 const AdminCentreExpenses = lazy(() => import('@/pages/admin/CentreExpenses'));
+const AdminCourtBookings = lazy(() => import('@/pages/admin/CourtBookings'));
 
 const CoachDashboard = lazy(() => import('@/pages/coach/Dashboard'));
 const CoachBatches = lazy(() => import('@/pages/coach/Batches'));
@@ -126,6 +127,8 @@ const routes: RouteObject[] = [
               // and carries no revenue or profit data, so a CENTRE_MANAGER may
               // reach it. Approval stays on the SUPER_ADMIN Financials page.
               { path: '/admin/expenses', element: <Lazy><AdminCentreExpenses /></Lazy> },
+              // Court hours — a manager runs this day to day, so admin-like.
+              { path: '/admin/court-hours', element: <Lazy><AdminCourtBookings /></Lazy> },
               // Financials & Payroll expose salaries, expenses, partner payouts
               // and profit — SUPER_ADMIN only, never CENTRE_MANAGER. Nested guard
               // so a manager can't reach them by typing the URL directly.
