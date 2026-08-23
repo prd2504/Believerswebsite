@@ -50,8 +50,14 @@ export interface SlotBookingDocument {
   coversMonths: YearMonth[];
 
   participantName: string;
-  participantPhone: string;
-  participantEmail: string | null;
+  /**
+   * Phone and email are NOT here — they live in the private subcollection
+   * below. This document is world-readable so /fees can show live slot counts
+   * and who's booked, which meant every parent's phone number and email were
+   * readable by anyone who queried the collection.
+   *
+   * A name on a public booking list is the feature; a phone number is not.
+   */
 
   planType: SlotPlanType;
   timeSlot: string;
@@ -74,6 +80,25 @@ export interface SlotBookingDocument {
 
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Contact details for a booking — stored at
+ * `slotBookings/{id}/private/contact`, readable only by an admin.
+ *
+ * A subcollection rather than fields on the parent because Firestore rules
+ * are all-or-nothing per document: there is no way to allow reading some
+ * fields of a document and not others. Splitting the document is the only
+ * way to keep the public slot list working while protecting the PII.
+ */
+export interface SlotBookingContact {
+  participantPhone: string;
+  participantEmail: string | null;
+}
+
+/** Path of the private contact document for a booking. */
+export function slotBookingContactPath(bookingId: string): string {
+  return `slotBookings/${bookingId}/private/contact`;
 }
 
 export interface SlotBookingConfig {

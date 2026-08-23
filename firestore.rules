@@ -327,17 +327,29 @@ service cloud.firestore {
     }
 
     // ── /slotBookings/{bookingId} — PUBLIC booking portal ────────────────────────────────
+    // ── /slotBookings/{bookingId} ────────────────────────────────────────────────────────
+    // Public read is deliberate: /fees shows live slot counts and who has
+    // booked. But this document used to carry participantPhone and
+    // participantEmail too, which meant anyone who queried the collection
+    // could dump every parent's contact details.
+    //
+    // Firestore rules are all-or-nothing per document — a rule cannot expose a
+    // name while hiding a phone number. So contact details now live in the
+    // private subcollection below, and creation moved to the createSlotBooking
+    // Cloud Function (admin SDK, bypasses these rules) so a client never needs
+    // write access to either document.
     match /slotBookings/{bookingId} {
       allow read: if true;
-      allow create: if
-        request.resource.data.participantName is string &&
-        request.resource.data.participantName.size() > 0 &&
-        request.resource.data.participantPhone is string &&
-        request.resource.data.participantPhone.size() >= 10 &&
-        request.resource.data.planType in ['TWO_DAY', 'THREE_DAY', 'FOUR_DAY', 'GAMES_DAY', 'COMPLETE_BUNDLE'] &&
-        request.resource.data.status == 'PENDING_PAYMENT';
+      allow create: if false;          // createSlotBooking only
       allow update: if isAdminLike();
       allow delete: if isSuperAdmin();
+
+      // Phone and email. Never publicly readable, and no client writes it —
+      // the booking function creates it with the admin SDK.
+      match /private/{docId} {
+        allow read: if isAdminLike();
+        allow write: if false;
+      }
     }
 
     // ── /paymentMonthlySummaries/{summaryId} — admin-only monthly rollups ─────────────────

@@ -52,6 +52,7 @@ import {
   deleteBooking,
   subscribeToConfig,
   updateBookingConfig,
+  getBookingContacts,
 } from '@/services/slotBookingService';
 import {
   getMonthlySummary,
@@ -308,6 +309,9 @@ function bookingSlotCount(bookings: SlotBookingDocument[], slot: string): number
 
 function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; profile: { id: string } | null }) {
   const [bookings, setBookings] = useState<SlotBookingDocument[]>([]);
+  // Phone/email live in a private subcollection now, so they're fetched
+  // separately — an admin-only read that the public page never performs.
+  const [contacts, setContacts] = useState<Map<string, { participantPhone: string; participantEmail: string | null }>>(new Map());
   const [portalConfig, setPortalConfig] = useState<SlotBookingConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedCentre, setSelectedCentre] = useState(RUIA_SLOT_BOOKING_CENTRE_ID);
@@ -360,6 +364,7 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
     try {
       const data = await getBookingsForMonth(selectedCentre, month);
       setBookings(data);
+      setContacts(await getBookingContacts(data.map((b) => b.id)));
     } catch (err) {
       console.error(err);
       toast.error('Failed to load slot bookings');
@@ -832,7 +837,9 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
               {filtered.map((b) => (
                 <tr key={b.id} className="transition hover:bg-gray-50">
                   <td className="px-4 py-2.5 font-medium text-brand-secondary">{b.participantName}</td>
-                  <td className="px-4 py-2.5 text-gray-600">{b.participantPhone}</td>
+                  <td className="px-4 py-2.5 text-gray-600">
+                    {contacts.get(b.id)?.participantPhone ?? '—'}
+                  </td>
                   <td className="hidden px-4 py-2.5 text-gray-600 md:table-cell">{planLabel(b.planType)}</td>
                   <td className="hidden px-4 py-2.5 text-gray-500 lg:table-cell">{b.timeSlot}</td>
                   <td className="px-4 py-2.5 text-right font-semibold text-brand-secondary">

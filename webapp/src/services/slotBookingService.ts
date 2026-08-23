@@ -22,6 +22,7 @@ import {
   DEFAULT_SLOT_CONFIG,
   type SlotBookingDocument,
   type SlotBookingConfig,
+  type SlotBookingContact,
   type SlotPlanType,
 } from '@bba/shared';
 
@@ -48,8 +49,6 @@ function fromFirestore(id: string, data: DocumentData): SlotBookingDocument {
       ? data.coversMonths
       : (data.month ? [data.month] : []),
     participantName: data.participantName ?? '',
-    participantPhone: data.participantPhone ?? '',
-    participantEmail: data.participantEmail ?? null,
     planType: data.planType ?? 'THREE_DAY',
     timeSlot: data.timeSlot ?? '',
     // Bookings taken before day-capture existed have no selectedDays — treat
@@ -197,29 +196,27 @@ export interface CreateBookingInput {
   amountPaise: number;
 }
 
+const FUNCTIONS_BASE = import.meta.env.VITE_FUNCTIONS_BASE_URL
+  || `https://${import.meta.env.VITE_FUNCTIONS_REGION || 'asia-south1'}-${import.meta.env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net`;
+
+/**
+ * Create a booking via the Cloud Function.
+ *
+ * Written server-side because the phone number goes into a private
+ * subcollection the client is not allowed to touch — the client can no longer
+ * write either document, so the shape is validated there instead of trusted.
+ */
 export async function createBooking(input: CreateBookingInput): Promise<string> {
-  const ref = await addDoc(collection(db, COL), {
-    centreId: input.centreId,
-    month: input.month,
-    coversMonths: input.coversMonths && input.coversMonths.length > 0
-      ? input.coversMonths
-      : [input.month],
-    participantName: input.participantName,
-    participantPhone: input.participantPhone,
-    participantEmail: input.participantEmail || null,
-    planType: input.planType,
-    timeSlot: input.timeSlot,
-    selectedDays: input.selectedDays ?? [],
-    amountPaise: input.amountPaise,
-    status: SlotBookingStatus.PENDING_PAYMENT,
-    upiTransactionId: null,
-    verifiedBy: null,
-    verifiedAt: null,
-    rejectionReason: null,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+  const res = await fetch(`${FUNCTIONS_BASE}/createSlotBooking`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
   });
-  return ref.id;
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || `Booking failed (HTTP ${res.status})`);
+  }
+  return data.bookingId as string;
 }
 
 // ── Admin operations ──────────────────────────────────────────────────────────
@@ -285,21 +282,32 @@ export async function deleteBooking(bookingId: string): Promise<void> {
   await deleteDoc(doc(db, COL, bookingId));
 }
 
+/**
+ * Has this phone already booked this plan for this month?
+ *
+ * Server-side now: the phone lives in a private subcollection, so the old
+ * client query (`where('participantPhone','==',phone)`) is no longer possible
+ * — which is the point. Fails OPEN, because a checker that errors must not
+ * turn away someone trying to pay; a duplicate is recoverable, a lost booking
+ * is not.
+ */
 export async function checkDuplicatePhone(
   phone: string,
   centreId: string,
   month: string,
   planType: SlotPlanType,
 ): Promise<boolean> {
-  const q = query(
-    collection(db, COL),
-    where('participantPhone', '==', phone),
-    where('centreId', '==', centreId),
-    where('month', '==', month),
-    where('planType', '==', planType),
-  );
-  const snap = await getDocs(q);
-  return !snap.empty;
+  try {
+    const res = await fetch(`${FUNCTIONS_BASE}/checkSlotBookingDuplicate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, centreId, month, planType }),
+    });
+    const data = await res.json().catch(() => null);
+    return data?.duplicate === true;
+  } catch {
+    return false;
+  }
 }
 
 // ── Config management (admin) ─────────────────────────────────────────────────
@@ -319,4 +327,40 @@ export async function updateBookingConfig(
     },
     { merge: true },
   );
+}
+
+
+// ── Contact details (admin only) ─────────────────────────────────────────────
+
+/**
+ * Phone and email for a booking, from the private subcollection.
+ *
+ * Rules reject this for anyone who isn't admin-like, so the public page never
+ * calls it. Returns null rather than throwing when unreadable or absent, so a
+ * missing contact shows as "—" instead of breaking the whole table.
+ */
+export async function getBookingContact(bookingId: string): Promise<SlotBookingContact | null> {
+  try {
+    const snap = await getDoc(doc(db, COL, bookingId, 'private', 'contact'));
+    if (!snap.exists()) return null;
+    const d = snap.data();
+    return {
+      participantPhone: d.participantPhone ?? '',
+      participantEmail: d.participantEmail ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Contacts for many bookings at once, keyed by booking id. */
+export async function getBookingContacts(
+  bookingIds: string[],
+): Promise<Map<string, SlotBookingContact>> {
+  const out = new Map<string, SlotBookingContact>();
+  const results = await Promise.all(
+    bookingIds.map(async (id) => [id, await getBookingContact(id)] as const),
+  );
+  results.forEach(([id, c]) => { if (c) out.set(id, c); });
+  return out;
 }

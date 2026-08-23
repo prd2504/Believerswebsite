@@ -57,3 +57,10 @@ export {
   scheduleSlotWindowNow,
 } from './slots/scheduleSlotWindow.js';
 export { onCourtBookingConfirmed } from './slots/onCourtBookingConfirmed.js';
+
+// --- Slot booking writes (moved server-side to keep phone numbers private) ------------------
+export {
+  checkSlotBookingDuplicate,
+  createSlotBooking,
+  backfillSlotBookingContacts,
+} from './slots/slotBookingApi.js';
