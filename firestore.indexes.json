@@ -357,24 +357,6 @@
       ]
     },
     {
-      "collectionGroup": "slotBookings",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "participantPhone",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "centreId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "month",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "payrollRuns",
       "queryScope": "COLLECTION",
       "fields": [
@@ -467,16 +449,6 @@
       ]
     },
     {
-      "collectionGroup": "records",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
-        {
-          "fieldPath": "sessionDate",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
       "collectionGroup": "courtBookings",
       "queryScope": "COLLECTION",
       "fields": [
@@ -503,27 +475,26 @@
           "order": "ASCENDING"
         }
       ]
-    },
+    }
+  ],
+  "fieldOverrides": [
     {
-      "collectionGroup": "courtBookings",
-      "queryScope": "COLLECTION",
-      "fields": [
+      "collectionGroup": "records",
+      "fieldPath": "sessionDate",
+      "indexes": [
         {
-          "fieldPath": "planId",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "courtBookings",
-      "queryScope": "COLLECTION",
-      "fields": [
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION"
+        },
         {
-          "fieldPath": "date",
-          "order": "ASCENDING"
+          "order": "DESCENDING",
+          "queryScope": "COLLECTION"
+        },
+        {
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
         }
       ]
     }
-  ],
-  "fieldOverrides": []
+  ]
 }
