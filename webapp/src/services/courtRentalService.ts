@@ -85,6 +85,7 @@ function configFrom(id: string, d: DocumentData): CourtRentalConfig {
     windows: d.windows ?? DEFAULT_COURT_CONFIG.windows,
     coachingWindows: d.coachingWindows ?? DEFAULT_COURT_CONFIG.coachingWindows,
     dateOverrides: d.dateOverrides ?? {},
+    nextMonthOpensOnDay: d.nextMonthOpensOnDay ?? DEFAULT_COURT_CONFIG.nextMonthOpensOnDay,
     updatedAt: toIso(d.updatedAt) ?? new Date().toISOString(),
     updatedBy: d.updatedBy ?? null,
   };
@@ -339,6 +340,7 @@ export interface CourtRentalPlan {
   centreId: string;
   bookerName: string;
   bookerPhone: string;
+  bookerEmail?: string | null;
   /** 0=Sun … 6=Sat. */
   weekday: number;
   startHour: string;
@@ -347,6 +349,11 @@ export interface CourtRentalPlan {
   yearMonth: string;
   hourlyRatePaise: number;
   active: boolean;
+  /** Dates actually claimed, and any that were already taken — recorded on the
+   *  plan so the reason a customer got four Saturdays instead of five survives
+   *  the phone call that follows. */
+  bookedDates?: string[];
+  clashDates?: string[];
   createdAt: string;
   createdBy: string | null;
 }
@@ -502,6 +509,11 @@ export interface PublicSlot {
 export interface PublicAvailability {
   /** The court's clock, not the device's — see istNow() in shared. */
   now: { date: string; time: string };
+  /**
+   * Last date currently on sale. Next month opens on the 25th of this one, so
+   * before then this is the end of the current month.
+   */
+  horizon: string;
   isOpen: boolean;
   hourlyRatePaise: number;
   planHourlyRatePaise: number;
@@ -574,4 +586,20 @@ export async function createCourtPlanPublic(input: PublicPlanInput): Promise<Pla
     throw new Error(body?.error ?? 'Could not create the plan');
   }
   return { planId: body.planId, booked: body.booked, clashes: body.clashes, totalPaise: body.totalPaise };
+}
+
+/** Live monthly plans for a centre and month — drives the admin panel. */
+export function subscribeToCourtPlans(
+  centreId: string,
+  yearMonth: string,
+  cb: (plans: CourtRentalPlan[]) => void,
+): () => void {
+  return onSnapshot(
+    query(
+      collection(db, PLANS),
+      where('centreId', '==', centreId),
+      where('yearMonth', '==', yearMonth),
+    ),
+    (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as CourtRentalPlan)),
+  );
 }

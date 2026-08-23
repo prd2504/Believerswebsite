@@ -25,6 +25,7 @@ import { logger } from 'firebase-functions';
 import { db } from '../admin.js';
 import { sendMail } from '../fees/mailer.js';
 import { COURT_RULES, describeAddOns } from '@bba/shared';
+import { logoImg } from '../fees/brand.js';
 
 const REGION = 'asia-south1';
 
@@ -86,8 +87,13 @@ function bookingEmailHtml(b: Record<string, any>, confirmed: boolean): string {
 <body style="margin:0;padding:20px;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
 <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08)">
   <div style="background:#0A0A0A;padding:20px 24px">
-    <h2 style="margin:0;font-size:17px;color:#fff">BBA Sports Academy</h2>
-    <p style="margin:4px 0 0;font-size:12px;color:#E84C1E">${confirmed ? 'Booking confirmed' : 'Booking received'}</p>
+    <table role="presentation" style="border-collapse:collapse"><tr>
+      <td style="padding-right:12px;vertical-align:middle">${logoImg(40)}</td>
+      <td style="vertical-align:middle">
+        <h2 style="margin:0;font-size:17px;color:#fff">BBA Sports Academy</h2>
+        <p style="margin:4px 0 0;font-size:12px;color:#E84C1E">${confirmed ? 'Booking confirmed' : 'Booking received'}</p>
+      </td>
+    </tr></table>
   </div>
 
   <div style="background:${confirmed ? '#f0fdf4' : '#fff8f5'};padding:14px 24px;border-bottom:1px solid #e2e8f0">

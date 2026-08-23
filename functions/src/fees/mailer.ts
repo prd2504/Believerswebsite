@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { BBA_LOGO_CID, BBA_LOGO_PNG_BASE64 } from './brand.js';
 
 export interface SendMailResult {
   messageId: string;
@@ -36,7 +37,21 @@ export async function sendMail(opts: { to: string; subject: string; html: string
   const transporter = nodemailer.createTransport({
     host, port: portNum, secure: portNum === 465, auth: { user, pass },
   });
-  const info = await transporter.sendMail({ from, to: opts.to, cc: opts.cc, subject: opts.subject, html: opts.html });
+  // Attach the logo only when the template actually references it, so a
+  // plain internal email doesn't gain a pointless 12KB attachment — and so no
+  // client shows a stray paperclip on a message with no visible image.
+  const attachments = opts.html.includes(`cid:${BBA_LOGO_CID}`)
+    ? [{
+        filename: 'bba-logo.png',
+        content: Buffer.from(BBA_LOGO_PNG_BASE64, 'base64'),
+        cid: BBA_LOGO_CID,
+        contentType: 'image/png',
+      }]
+    : undefined;
+
+  const info = await transporter.sendMail({
+    from, to: opts.to, cc: opts.cc, subject: opts.subject, html: opts.html, attachments,
+  });
   return {
     messageId: info.messageId ?? '',
     accepted: (info.accepted ?? []).map(String),

@@ -1,3 +1,4 @@
+import { logoImg } from './brand.js';
 const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
   'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
 const TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
@@ -70,7 +71,7 @@ export function buildInvoiceHtml(p: InvoiceEmailParams): string {
 
   <!-- Header (orange) -->
   <div style="background:#E84C1E;padding:24px 24px 20px;text-align:center">
-    <img src="https://bbashuttle.com/logo.png" alt="BBA Sports" width="120" style="display:block;margin:0 auto 12px;max-width:120px;height:auto" />
+    <div style="display:inline-block;margin:0 auto 12px;border-radius:12px;overflow:hidden;line-height:0">${logoImg(72)}</div>
     <h2 style="margin:0;font-size:18px;font-weight:700;color:#ffffff;letter-spacing:0.5px">BBA Sports Private Limited</h2>
     <p style="margin:4px 0 0;font-size:11px;color:#fde4dc">hello@bbashuttle.com</p>
   </div>

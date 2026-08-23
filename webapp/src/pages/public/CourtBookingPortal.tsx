@@ -216,10 +216,22 @@ export default function CourtBookingPortal() {
     }).catch(() => setLoading(false));
   }, [centreCode, load]);
 
+  /**
+   * Which months are on sale. Next month appears on the 25th of this one —
+   * the same day the slot-booking window drops, so a regular has one release
+   * date to remember rather than two. An empty next-month tab sitting there
+   * all month reads as a broken page, so it simply isn't offered until then.
+   */
   const months = useMemo(() => {
     const first = clock.date.slice(0, 7);
-    return [first, nextMonth(first)];
-  }, [clock.date]);
+    const second = nextMonth(first);
+    const horizon = avail?.horizon ?? '';
+    return horizon >= `${second}-01` ? [first, second] : [first];
+  }, [clock.date, avail?.horizon]);
+
+  useEffect(() => {
+    if (months.length > 0 && !months.includes(month)) setMonth(months[0]);
+  }, [months, month]);
 
   /**
    * An hour the server called free may have started since. Re-testing against
@@ -560,7 +572,7 @@ export default function CourtBookingPortal() {
           <label className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-brand-secondary">
             <Calendar size={14} /> Month
           </label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className={cn('grid gap-2', months.length > 1 ? 'grid-cols-2' : 'grid-cols-1')}>
             {months.map((m) => (
               <button
                 key={m}
@@ -576,6 +588,11 @@ export default function CourtBookingPortal() {
               </button>
             ))}
           </div>
+          {months.length === 1 && (
+            <p className="mt-1.5 text-[11px] text-gray-400">
+              {monthLabel(nextMonth(months[0]))} opens on the 25th.
+            </p>
+          )}
         </div>
 
         {mode === 'SLOT' ? (

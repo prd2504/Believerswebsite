@@ -1,14 +1,20 @@
 /**
- * Court hours — the weekend at a glance, with one-click open/close.
+ * Court hours — the month at a glance, with one-click open/close.
  *
- * Replaces coordinating availability over WhatsApp: every sellable hour for a
- * fortnight, what it's doing, and who has it. Bookings are live, so a booking
- * taken online appears here without a refresh.
+ * Replaces coordinating availability over WhatsApp: every sellable hour in the
+ * month, what it's doing, and who has it. Bookings are live, so one taken
+ * online appears here without a refresh.
+ *
+ * The grid runs a whole month at a time and steps freely, including backwards.
+ * The public page is capped — next month opens on the 25th of this one — but
+ * that cap is a sales rule, not a records one: Jaydeep arranges bookings ahead
+ * of the release date, and enters cash walk-ins after the fact.
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   CalendarDays, Lock, Unlock, Check, X, IndianRupee, Plus, Loader2,
+  ChevronLeft, ChevronRight, Repeat, Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
@@ -21,12 +27,19 @@ import {
   confirmCourtBooking,
   cancelCourtBooking,
   createCourtBooking,
+  subscribeToCourtPlans,
+  cancelCourtPlan,
   SlotUnavailableError,
+  type CourtRentalPlan,
 } from '@/services/courtRentalService';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
 import {
   formatINR,
   buildDayAvailability,
+  datesInMonth,
+  nextMonth,
+  endOfMonthDate,
+  istNow,
   DEFAULT_COURT_CONFIG,
   type CourtRentalConfig,
   type CourtBookingDocument,
@@ -34,16 +47,18 @@ import {
 } from '@bba/shared';
 import type { CentreDocument } from '@bba/shared';
 
-/** Next `count` days from today, as YYYY-MM-DD. */
-function upcomingDates(count: number): string[] {
-  const out: string[] = [];
-  const d = new Date();
-  for (let i = 0; i < count; i++) {
-    const x = new Date(d.getFullYear(), d.getMonth(), d.getDate() + i);
-    out.push(`${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`);
-  }
-  return out;
+/** "2026-08" → "2026-07". */
+function prevMonth(yearMonth: string): string {
+  const [y, m] = yearMonth.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
 }
+
+function monthLabel(yearMonth: string): string {
+  const [y, m] = yearMonth.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+}
+
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function dayLabel(date: string): string {
   const [y, m, d] = date.split('-').map(Number);
@@ -58,6 +73,7 @@ const STATE_STYLE: Record<string, string> = {
   BOOKED: 'border-blue-200 bg-blue-50 text-blue-800',
   CLOSED: 'border-gray-200 bg-gray-50 text-gray-400',
   COACHING: 'border-gray-100 bg-gray-100/60 text-gray-400',
+  PAST: 'border-gray-100 bg-gray-50 text-gray-300',
 };
 
 export default function CourtBookingsPage() {
@@ -66,6 +82,8 @@ export default function CourtBookingsPage() {
   const [centreId, setCentreId] = useState('');
   const [config, setConfig] = useState<CourtRentalConfig | null>(null);
   const [bookings, setBookings] = useState<CourtBookingDocument[]>([]);
+  const [plans, setPlans] = useState<CourtRentalPlan[]>([]);
+  const [month, setMonth] = useState(() => istNow().date.slice(0, 7));
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -75,9 +93,9 @@ export default function CourtBookingsPage() {
   const [addPhone, setAddPhone] = useState('');
   const [addHours, setAddHours] = useState('1');
 
-  const dates = useMemo(() => upcomingDates(14), []);
-  const rangeStart = dates[0];
-  const rangeEnd = dates[dates.length - 1];
+  const dates = useMemo(() => datesInMonth(month), [month]);
+  const rangeStart = `${month}-01`;
+  const rangeEnd = endOfMonthDate(month);
 
   useEffect(() => {
     getAllCentres().then((c) => {
@@ -98,6 +116,11 @@ export default function CourtBookingsPage() {
     if (!centreId) return;
     return subscribeToBookingsInRange(centreId, rangeStart, rangeEnd, setBookings);
   }, [centreId, rangeStart, rangeEnd]);
+
+  useEffect(() => {
+    if (!centreId) return;
+    return subscribeToCourtPlans(centreId, month, setPlans);
+  }, [centreId, month]);
 
   const effectiveConfig = config ?? { centreId, ...DEFAULT_COURT_CONFIG, updatedAt: '', updatedBy: null };
 
@@ -176,9 +199,38 @@ export default function CourtBookingsPage() {
     } finally { setBusy(false); }
   }
 
+  async function handleCancelPlan(plan: CourtRentalPlan) {
+    if (!profile) return;
+    if (!confirm(
+      `Cancel ${plan.bookerName}'s ${WEEKDAY_NAMES[plan.weekday]} ${plan.startHour} plan?\n\n`
+      + 'Every hour it still holds this month becomes available again.',
+    )) return;
+    setBusy(true);
+    try {
+      const freed = await cancelCourtPlan(plan.id, profile.id);
+      toast.success(`Plan cancelled — ${freed} hour${freed === 1 ? '' : 's'} freed`);
+    } catch { toast.error('Failed to cancel the plan'); } finally { setBusy(false); }
+  }
+
   const bookingById = useMemo(
     () => new Map(bookings.map((b) => [b.id, b])), [bookings],
   );
+
+  /**
+   * Plan revenue is already inside `bookings` — a plan is materialised as real
+   * bookings, which is what makes the availability grid and the P&L work
+   * without knowing plans exist. Counting it again here would double it, so
+   * this panel reports sessions and status, not a second revenue figure.
+   */
+  const planRows = useMemo(() => plans.map((p) => {
+    const held = bookings.filter((b) => b.planId === p.id && b.status !== 'CANCELLED');
+    return {
+      plan: p,
+      remaining: held.length,
+      confirmed: held.filter((b) => b.status === 'CONFIRMED').length,
+      valuePaise: held.reduce((t, b) => t + b.amountPaise, 0),
+    };
+  }), [plans, bookings]);
 
   if (loading) {
     return <div><h1 className="mb-6 text-xl font-bold text-brand-secondary">Court Hours</h1><CardSkeleton count={3} /></div>;
@@ -189,15 +241,39 @@ export default function CourtBookingsPage() {
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-brand-secondary">Court Hours</h1>
-          <p className="text-sm text-gray-500">Next 14 days · {formatINR(effectiveConfig.hourlyRatePaise, { withDecimals: false })}/hour</p>
+          <p className="text-sm text-gray-500">
+            {formatINR(effectiveConfig.hourlyRatePaise, { withDecimals: false })}/hour ·{' '}
+            {formatINR(effectiveConfig.planHourlyRatePaise, { withDecimals: false })}/hour on a plan
+          </p>
         </div>
-        <select
-          value={centreId}
-          onChange={(e) => setCentreId(e.target.value)}
-          className="input w-auto py-2 text-sm"
-        >
-          {centres.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1">
+            <button
+              onClick={() => setMonth(prevMonth(month))}
+              className="rounded p-1.5 text-gray-500 hover:bg-gray-100"
+              title="Previous month"
+            >
+              <ChevronLeft size={15} />
+            </button>
+            <span className="min-w-[110px] text-center text-sm font-semibold text-brand-secondary">
+              {monthLabel(month)}
+            </span>
+            <button
+              onClick={() => setMonth(nextMonth(month))}
+              className="rounded p-1.5 text-gray-500 hover:bg-gray-100"
+              title="Next month"
+            >
+              <ChevronRight size={15} />
+            </button>
+          </div>
+          <select
+            value={centreId}
+            onChange={(e) => setCentreId(e.target.value)}
+            className="input w-auto py-2 text-sm"
+          >
+            {centres.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
       </div>
 
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -231,10 +307,65 @@ export default function CourtBookingsPage() {
         </div>
       </div>
 
+      {planRows.length > 0 && (
+        <div className="card mb-5">
+          <h2 className="mb-3 flex items-center gap-1.5 text-sm font-bold text-brand-secondary">
+            <Repeat size={14} /> Monthly plans · {monthLabel(month)}
+          </h2>
+          <div className="space-y-2">
+            {planRows.map(({ plan, remaining, confirmed, valuePaise }) => (
+              <div
+                key={plan.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 bg-gray-50/60 px-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-brand-secondary">
+                    {plan.bookerName}
+                    {!plan.active && (
+                      <span className="ml-2 rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
+                        Cancelled
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {WEEKDAY_NAMES[plan.weekday]}s · {plan.startHour}
+                    {plan.hours > 1 ? ` for ${plan.hours}h` : ''} · {plan.bookerPhone}
+                  </p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <p className="text-xs text-gray-500">
+                      {confirmed}/{remaining} confirmed
+                    </p>
+                    <p className="text-sm font-bold text-brand-secondary">
+                      {formatINR(valuePaise, { withDecimals: false })}
+                    </p>
+                  </div>
+                  {plan.active && (
+                    <button
+                      onClick={() => handleCancelPlan(plan)}
+                      disabled={busy}
+                      title="Cancel plan and free every hour it holds"
+                      className="rounded p-1.5 text-red-500 hover:bg-red-50 disabled:opacity-40"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2.5 text-[11px] text-gray-400">
+            Plan hours are ordinary bookings underneath, so they already appear in the grid
+            and in the totals above — this panel is not extra revenue.
+          </p>
+        </div>
+      )}
+
       <div className="space-y-3">
         {days.length === 0 ? (
           <div className="card p-8 text-center text-sm text-gray-500">
-            No bookable hours configured for the next fortnight.
+            No bookable hours configured for {monthLabel(month)}.
           </div>
         ) : days.map(({ date, slots }) => (
           <div key={date} className="card">
@@ -278,7 +409,14 @@ export default function CourtBookingsPage() {
 
                     {b && (
                       <div className="mt-1">
-                        <p className="truncate font-medium">{b.bookerName}</p>
+                        <p className="truncate font-medium">
+                          {b.bookerName}
+                          {b.planId && (
+                            <span className="ml-1 rounded bg-white/70 px-1 py-px text-[9px] font-semibold uppercase tracking-wide">
+                              Plan
+                            </span>
+                          )}
+                        </p>
                         <p className="text-[10px] opacity-70">{b.bookerPhone}</p>
                         {b.amountPaise > 0 && (
                           <p className="text-[10px] font-semibold">{formatINR(b.amountPaise, { withDecimals: false })}</p>

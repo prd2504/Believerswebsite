@@ -144,6 +144,14 @@ export interface CourtRentalConfig {
    * a one-off holiday, or opening Sunday 3–4 for a particular weekend.
    */
   dateOverrides: Record<string, Record<string, boolean>>;
+  /**
+   * Day of the month on which NEXT month's dates become bookable.
+   *
+   * Before this day the page sells the current month only. It matches the
+   * slot-booking window, which drops on the 25th, so a regular is dealing with
+   * one release date across the whole academy rather than two.
+   */
+  nextMonthOpensOnDay: number;
   updatedAt: string;
   updatedBy: string | null;
 }
@@ -173,6 +181,7 @@ export const DEFAULT_COURT_CONFIG: Omit<CourtRentalConfig, 'centreId' | 'updated
     6: [{ start: '11:00', end: '15:00' }],
   },
   dateOverrides: {},
+  nextMonthOpensOnDay: 25,
 };
 
 /** Longest block anyone may book in one go. */
@@ -403,4 +412,30 @@ export function sellableWeekdays(
     .map(Number)
     .filter((dow) => (config.windows[dow] ?? []).some((w) => w.open))
     .sort((a, b) => a - b);
+}
+
+/**
+ * The last date currently on sale.
+ *
+ * Next month opens on the 25th of this one. Before then the page shows this
+ * month only; from the 25th it shows both. Without a rule like this, an empty
+ * next month sits there all month looking broken, and someone books a Saturday
+ * six weeks out that the coaching timetable hasn't been decided for yet.
+ *
+ * The admin grid is not subject to this — Jaydeep arranges things ahead of the
+ * public release date, which is rather the point of having one.
+ */
+export function publicBookingHorizon(
+  now: { date: string; time: string },
+  opensOnDay = 25,
+): string {
+  const month = now.date.slice(0, 7);
+  const day = Number(now.date.slice(8, 10));
+  return day >= opensOnDay ? endOfMonthDate(nextMonth(month)) : endOfMonthDate(month);
+}
+
+/** "2026-09" → "2026-09-30". */
+export function endOfMonthDate(yearMonth: string): string {
+  const [y, m] = yearMonth.split('-').map(Number);
+  return `${yearMonth}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
 }

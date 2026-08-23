@@ -31,6 +31,7 @@ import { db } from '../admin.js';
 import { checkRateLimit } from '../fees/rateLimiter.js';
 import { sendMail } from '../fees/mailer.js';
 import { notifyTeam, rulesHtml, fmtDate, fmtINR, hour12 } from './onCourtBookingCreated.js';
+import { logoImg } from '../fees/brand.js';
 import {
   DEFAULT_COURT_CONFIG,
   buildDayAvailability,
@@ -39,6 +40,7 @@ import {
   istNow,
   isHourPast,
   datesInMonth,
+  publicBookingHorizon,
   MAX_BOOKING_HOURS,
   type CourtRentalConfig,
   type CourtBookingDocument,
@@ -67,6 +69,7 @@ async function loadConfig(centreId: string): Promise<CourtRentalConfig> {
   return {
     centreId,
     isOpen: (d.isOpen as boolean) ?? DEFAULT_COURT_CONFIG.isOpen,
+    nextMonthOpensOnDay: (d.nextMonthOpensOnDay as number) ?? DEFAULT_COURT_CONFIG.nextMonthOpensOnDay,
     hourlyRatePaise: (d.hourlyRatePaise as number) ?? DEFAULT_COURT_CONFIG.hourlyRatePaise,
     planHourlyRatePaise: (d.planHourlyRatePaise as number) ?? DEFAULT_COURT_CONFIG.planHourlyRatePaise,
     windows: (d.windows as CourtRentalConfig['windows']) ?? DEFAULT_COURT_CONFIG.windows,
@@ -132,10 +135,15 @@ export const courtAvailability = onRequest(
       ]);
       const now = istNow();
 
+      // Next month is not on sale until the 25th. Clamping here rather than
+      // trusting the query means the rule holds however the page asks.
+      const horizon = publicBookingHorizon(now, cfg.nextMonthOpensOnDay);
+      const end = to < horizon ? to : horizon;
+
       // Walk the range day by day rather than by month, so a window that
       // spans three calendar months does not silently drop the middle one.
       const days: Record<string, { hour: string; endHour: string; state: string; ratePaise: number }[]> = {};
-      for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`); t += 86_400_000) {
+      for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${end}T00:00:00Z`); t += 86_400_000) {
         const date = new Date(t).toISOString().slice(0, 10);
         const slots = buildDayAvailability(cfg, date, bookings, now)
           .map(({ hour, endHour, state, ratePaise }) => ({ hour, endHour, state, ratePaise }));
@@ -145,6 +153,9 @@ export const courtAvailability = onRequest(
       res.status(200).json({
         ok: true,
         now,
+        // The page uses this to decide whether to offer a next-month tab at
+        // all, rather than showing an empty one.
+        horizon,
         isOpen: cfg.isOpen,
         hourlyRatePaise: cfg.hourlyRatePaise,
         planHourlyRatePaise: cfg.planHourlyRatePaise,
@@ -278,6 +289,12 @@ export const createCourtBookingPublic = onRequest(
       const now = istNow();
       const hours = Math.max(1, Math.min(MAX_BOOKING_HOURS, Number(b.hours) || 1));
 
+      const horizon = publicBookingHorizon(now, cfg.nextMonthOpensOnDay);
+      if (String(b.date) > horizon) {
+        res.status(409).json({ ok: false, error: 'That date isn\'t open for booking yet.' });
+        return;
+      }
+
       // Checked here and not only in the browser: a device clock is a
       // suggestion. Every hour of a multi-hour block is tested, not just the
       // first, so a block cannot straddle the current moment.
@@ -344,8 +361,13 @@ function planEmailHtml(p: {
 <body style="margin:0;padding:20px;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
 <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08)">
   <div style="background:#0A0A0A;padding:20px 24px">
-    <h2 style="margin:0;font-size:17px;color:#fff">BBA Sports Academy</h2>
-    <p style="margin:4px 0 0;font-size:12px;color:#E84C1E">Monthly court plan received</p>
+    <table role="presentation" style="border-collapse:collapse"><tr>
+      <td style="padding-right:12px;vertical-align:middle">${logoImg(40)}</td>
+      <td style="vertical-align:middle">
+        <h2 style="margin:0;font-size:17px;color:#fff">BBA Sports Academy</h2>
+        <p style="margin:4px 0 0;font-size:12px;color:#E84C1E">Monthly court plan received</p>
+      </td>
+    </tr></table>
   </div>
 
   <div style="background:#fff8f5;padding:14px 24px;border-bottom:1px solid #e2e8f0">
@@ -436,7 +458,13 @@ export const createCourtPlanPublic = onRequest(
       const yearMonth = String(b.yearMonth);
       const planId = `${b.centreId}_${yearMonth}_${weekday}_${String(b.startHour).replace(':', '')}`;
 
-      const candidates = datesInMonth(yearMonth).filter((d) => {
+      const horizon = publicBookingHorizon(now, cfg.nextMonthOpensOnDay);
+      if (`${yearMonth}-01` > horizon) {
+        res.status(409).json({ ok: false, error: 'That month isn\'t open for booking yet.' });
+        return;
+      }
+
+      const candidates = datesInMonth(yearMonth).filter((d) => d <= horizon).filter((d) => {
         const [y, m, dd] = d.split('-').map(Number);
         return new Date(y, m - 1, dd).getDay() === weekday
           && !bookingHours(String(b.startHour), hours).some((h) => isHourPast(d, h, now));

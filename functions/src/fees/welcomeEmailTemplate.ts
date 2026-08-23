@@ -1,3 +1,4 @@
+import { logoImg } from './brand.js';
 export interface WelcomeEmailParams {
   studentName: string;
   externalStudentId: string | null;
@@ -11,7 +12,7 @@ export function buildWelcomeHtml(p: WelcomeEmailParams): string {
 <body style="margin:0;padding:20px;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
 <div style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
   <div style="background:#E84C1E;padding:24px;text-align:center">
-    <img src="https://bbashuttle.com/logo.png" alt="BBA Sports" width="110" style="display:block;margin:0 auto 12px;max-width:110px;height:auto" />
+    <div style="display:inline-block;margin:0 auto 12px;border-radius:12px;overflow:hidden;line-height:0">${logoImg(68)}</div>
     <h2 style="margin:0;font-size:20px;font-weight:800;color:#fff">Welcome to BBA Sports! 🏸</h2>
   </div>
   <div style="padding:24px">
