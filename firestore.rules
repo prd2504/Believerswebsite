@@ -236,23 +236,21 @@ service cloud.firestore {
     }
 
     // ── /courtBookings/{bookingId} ───────────────────────────────────────────────────────
-    // Court hour bookings. Public create so an unlisted booking link works
-    // without an account, mirroring slotBookings — but with tighter shape
-    // checks, and HELD only, so nothing can be self-confirmed. Reads are
-    // admin-only: unlike slotBookings there is no public "who's booked" view,
-    // and these carry a member of the public's name and phone.
+    // Court hour bookings. Admin-only both ways: unlike slotBookings there is
+    // no public "who's booked" view to justify opening reads, and every
+    // document carries a member of the public's name and phone.
+    //
+    // That closes the door on the public booking page too — a Firestore
+    // transaction reads before it writes, so it could not even attempt a
+    // booking, and its availability query came back denied, which rendered as
+    // "nothing free" on every date. Both now go through Cloud Functions
+    // (courtAvailability / createCourtBookingPublic), which run with the admin
+    // SDK and return occupancy without any contact details attached.
+    //
+    // Admin create stays open: Jaydeep enters walk-ins from the court grid.
     match /courtBookings/{bookingId} {
       allow read: if isAdminLike();
-      allow create: if
-        request.resource.data.bookerName is string &&
-        request.resource.data.bookerName.size() > 0 &&
-        request.resource.data.bookerPhone is string &&
-        request.resource.data.bookerPhone.size() >= 10 &&
-        request.resource.data.status == 'HELD' &&
-        request.resource.data.verifiedBy == null &&
-        request.resource.data.amountPaise is number &&
-        request.resource.data.amountPaise >= 0;
-      allow update, delete: if isAdminLike();
+      allow create, update, delete: if isAdminLike();
     }
 
     // ── /courtRentalPlans/{planId} ───────────────────────────────────────────────────────

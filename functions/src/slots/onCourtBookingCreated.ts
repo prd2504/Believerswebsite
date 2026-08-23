@@ -28,20 +28,20 @@ import { COURT_RULES, describeAddOns } from '@bba/shared';
 
 const REGION = 'asia-south1';
 
-function fmtINR(paise: number): string {
+export function fmtINR(paise: number): string {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 0,
   }).format(Math.round(paise / 100));
 }
 
-function fmtDate(date: string): string {
+export function fmtDate(date: string): string {
   const [y, m, d] = date.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-IN', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 }
 
-function hour12(hhmm: string): string {
+export function hour12(hhmm: string): string {
   const [h] = hhmm.split(':').map(Number);
   const ampm = h < 12 ? 'AM' : 'PM';
   return `${h === 0 ? 12 : h > 12 ? h - 12 : h}${ampm}`;
@@ -53,7 +53,7 @@ function hour12(hhmm: string): string {
  * Best-effort by design: a booking must never fail because a notification
  * could not be delivered. Failures are logged and swallowed.
  */
-async function notifyTeam(text: string): Promise<void> {
+export async function notifyTeam(text: string): Promise<void> {
   const url = process.env.JARVIS_NOTIFY_URL;
   const secret = process.env.JARVIS_NOTIFY_SECRET;
   if (!url || !secret) {
@@ -75,7 +75,7 @@ async function notifyTeam(text: string): Promise<void> {
   }
 }
 
-function rulesHtml(): string {
+export function rulesHtml(): string {
   return COURT_RULES.map((r) =>
     `<li style="margin:0 0 7px;font-size:13px;color:#334155;line-height:1.5">${r}</li>`).join('');
 }
@@ -138,6 +138,12 @@ export const onCourtBookingCreated = onDocumentWritten(
     // extra per-hour rows of a multi-hour booking would otherwise send a
     // duplicate email and a duplicate Telegram line for the same person.
     if ((after.amountPaise ?? 0) <= 0) return;
+
+    // A monthly plan books four or five separate dates, each of which is a
+    // money-bearing document in its own right. Left alone, one plan would send
+    // five near-identical emails and five Telegram lines. The plan endpoint
+    // sends a single summary instead — see createCourtPlanPublic.
+    if (after.planId) return;
 
     const isNew = !before;
     const justConfirmed = before?.status !== 'CONFIRMED' && after.status === 'CONFIRMED';

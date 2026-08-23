@@ -479,3 +479,99 @@ export async function getCourtBookingsForMonth(yearMonth: string): Promise<Court
   ));
   return snap.docs.map((d) => bookingFrom(d.id, d.data()));
 }
+
+// ── Public (unauthenticated) path ────────────────────────────────────────────
+//
+// Everything above talks to Firestore directly, which works for the admin grid
+// because `courtBookings` is admin-read. The public booking page has no
+// account, so it cannot read that collection at all — its availability query
+// is denied, and a booking transaction fails on its own read before it ever
+// writes. These three go through Cloud Functions instead, which run with the
+// admin SDK and hand back occupancy with no names or phone numbers on it.
+
+const FUNCTIONS_BASE = import.meta.env.VITE_FUNCTIONS_BASE_URL
+  || `https://${import.meta.env.VITE_FUNCTIONS_REGION || 'asia-south1'}-${import.meta.env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net`;
+
+export interface PublicSlot {
+  hour: string;
+  endHour: string;
+  state: string;
+  ratePaise: number;
+}
+
+export interface PublicAvailability {
+  /** The court's clock, not the device's — see istNow() in shared. */
+  now: { date: string; time: string };
+  isOpen: boolean;
+  hourlyRatePaise: number;
+  planHourlyRatePaise: number;
+  /** 'YYYY-MM-DD' → slots. Dates with nothing sellable are absent. */
+  days: Record<string, PublicSlot[]>;
+}
+
+export async function getPublicAvailability(
+  centreId: string, from: string, to: string,
+): Promise<PublicAvailability> {
+  const res = await fetch(
+    `${FUNCTIONS_BASE}/courtAvailability?centreId=${encodeURIComponent(centreId)}`
+    + `&from=${from}&to=${to}`,
+  );
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.ok) throw new Error(body?.error ?? 'Could not load availability');
+  return body as PublicAvailability;
+}
+
+export interface PublicBookingInput {
+  centreId: string;
+  date: string;
+  startHour: string;
+  hours: number;
+  bookerName: string;
+  bookerPhone: string;
+  bookerEmail?: string;
+  addOns?: Record<string, number>;
+  screenshotUrl?: string | null;
+}
+
+export async function createCourtBookingPublic(input: PublicBookingInput): Promise<string> {
+  const res = await fetch(`${FUNCTIONS_BASE}/createCourtBookingPublic`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.ok) {
+    // 409 is the whole family of "that hour isn't yours to take" — someone
+    // else got there first, the hour elapsed while the form was open, or
+    // bookings closed. All of them mean: reload availability and pick again.
+    if (res.status === 409) throw new SlotUnavailableError(body?.error ?? 'That time is no longer available.');
+    throw new Error(body?.error ?? 'Could not create the booking');
+  }
+  return body.bookingId as string;
+}
+
+export interface PublicPlanInput {
+  centreId: string;
+  weekday: number;
+  startHour: string;
+  hours: number;
+  yearMonth: string;
+  bookerName: string;
+  bookerPhone: string;
+  bookerEmail?: string;
+  screenshotUrl?: string | null;
+}
+
+export async function createCourtPlanPublic(input: PublicPlanInput): Promise<PlanResult> {
+  const res = await fetch(`${FUNCTIONS_BASE}/createCourtPlanPublic`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.ok) {
+    if (res.status === 409) throw new SlotUnavailableError(body?.error ?? 'That weekly slot is taken.');
+    throw new Error(body?.error ?? 'Could not create the plan');
+  }
+  return { planId: body.planId, booked: body.booked, clashes: body.clashes, totalPaise: body.totalPaise };
+}

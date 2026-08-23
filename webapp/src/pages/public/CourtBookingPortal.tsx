@@ -6,6 +6,11 @@
  * discoverability choice, not a records one — the booking is stored and
  * reported for exactly what it is.
  *
+ * Availability and writes go through Cloud Functions, not Firestore: the
+ * `courtBookings` collection is admin-read (every document carries a member of
+ * the public's name and phone), so an anonymous visitor querying it directly
+ * was denied and saw "nothing free" on every date. See courtBookingApi.ts.
+ *
  * A slot is HELD on submit, not confirmed. Payment is verified by hand in
  * Admin → Court Hours, which is also what releases or cancels the hour.
  */
@@ -14,6 +19,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Clock, Calendar, Check, Loader2, AlertCircle, Copy, CheckCircle2, Upload, User, Phone, Mail,
+  CalendarDays, Repeat,
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { uploadObjectPath } from '../../lib/uploadPath';
@@ -21,22 +27,25 @@ import { storage } from '@/lib/firebase';
 import { cn } from '@/lib/cn';
 import { UpiQrCode } from '@/components/common/UpiQrCode';
 import {
-  getCourtConfig,
-  getBookingsForDate,
-  createCourtBooking,
+  getPublicAvailability,
+  createCourtBookingPublic,
+  createCourtPlanPublic,
   SlotUnavailableError,
+  type PublicAvailability,
+  type PublicSlot,
 } from '@/services/courtRentalService';
 import { getActiveCentres } from '@/services/centreService';
 import {
   formatINR,
   COMPANY,
-  buildDayAvailability,
-  DEFAULT_COURT_CONFIG,
   COURT_ADDONS,
   COURT_RULES,
+  MAX_BOOKING_HOURS,
   addOnsTotalPaise,
-  type CourtRentalConfig,
-  type CourtSlot,
+  istNow,
+  isHourPast,
+  nextMonth,
+  addHour,
 } from '@bba/shared';
 
 /** Slug → centre code. Only centres that actually sell court hours. */
@@ -44,19 +53,24 @@ const SLUG_TO_CODE: Record<string, string> = { dadar: 'DAD' };
 
 const UPI_ID = '85287401@ubin';
 
-function nextDates(count: number): string[] {
-  const out: string[] = [];
-  const now = new Date();
-  for (let i = 0; i < count; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
-    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
-  }
-  return out;
-}
+type Clock = { date: string; time: string };
+type Mode = 'SLOT' | 'PLAN';
+
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function dayLabel(date: string): string {
   const [y, m, d] = date.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function monthLabel(yearMonth: string): string {
+  const [y, m] = yearMonth.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+}
+
+function weekdayOfDate(date: string): number {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(y, m - 1, d).getDay();
 }
 
 function hour12(hhmm: string): string {
@@ -64,6 +78,36 @@ function hour12(hhmm: string): string {
   const ampm = h < 12 ? 'AM' : 'PM';
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
   return `${h12} ${ampm}`;
+}
+
+function clockLabel(c: Clock): string {
+  const [y, m, d] = c.date.split('-').map(Number);
+  const [hh, mm] = c.time.split(':').map(Number);
+  const dt = new Date(y, m - 1, d, hh, mm);
+  return dt.toLocaleString('en-IN', {
+    weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true,
+  });
+}
+
+/** Whole minutes between two wall clocks. */
+function clockDiffMinutes(a: Clock, b: Clock): number {
+  const toMs = (c: Clock) => {
+    const [y, m, d] = c.date.split('-').map(Number);
+    const [hh, mm] = c.time.split(':').map(Number);
+    return new Date(y, m - 1, d, hh, mm).getTime();
+  };
+  return Math.round((toMs(a) - toMs(b)) / 60_000);
+}
+
+function clockPlus(c: Clock, minutes: number): Clock {
+  const [y, m, d] = c.date.split('-').map(Number);
+  const [hh, mm] = c.time.split(':').map(Number);
+  const t = new Date(y, m - 1, d, hh, mm + minutes);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return {
+    date: `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`,
+    time: `${p(t.getHours())}:${p(t.getMinutes())}`,
+  };
 }
 
 async function copy(text: string) {
@@ -74,20 +118,43 @@ async function copy(text: string) {
   }
 }
 
+/** Last day of a month, as YYYY-MM-DD. */
+function endOfMonth(yearMonth: string): string {
+  const [y, m] = yearMonth.split('-').map(Number);
+  return `${yearMonth}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+}
+
 export default function CourtBookingPortal() {
   const { centreSlug } = useParams<{ centreSlug: string }>();
   const centreCode = centreSlug ? SLUG_TO_CODE[centreSlug.toLowerCase()] : undefined;
 
   const [centreId, setCentreId] = useState('');
   const [centreName, setCentreName] = useState('');
-  const [config, setConfig] = useState<CourtRentalConfig | null>(null);
-  const [date, setDate] = useState('');
-  const [slots, setSlots] = useState<CourtSlot[]>([]);
+  const [avail, setAvail] = useState<PublicAvailability | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadingSlots, setLoadingSlots] = useState(false);
+  const [loadErr, setLoadErr] = useState('');
 
+  /**
+   * The court's clock, not the device's.
+   *
+   * The server sends its own Asia/Kolkata time with the availability; the
+   * difference from this device's idea of Asia/Kolkata is kept as an offset
+   * and applied to every local tick. A phone with a wrong clock therefore
+   * still shows — and books against — the right hour, without needing a round
+   * trip every second.
+   */
+  const [offsetMin, setOffsetMin] = useState(0);
+  const [clock, setClock] = useState<Clock>(() => istNow());
+
+  const [mode, setMode] = useState<Mode>('SLOT');
+  const [month, setMonth] = useState('');
+  const [date, setDate] = useState('');
   const [picked, setPicked] = useState<string | null>(null);
   const [hours, setHours] = useState(1);
+
+  const [planWeekday, setPlanWeekday] = useState<number | null>(null);
+  const [planHour, setPlanHour] = useState<string | null>(null);
+
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -97,7 +164,7 @@ export default function CourtBookingPortal() {
   const [shotPreview, setShotPreview] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState<null | { kind: Mode; booked: string[]; clashes: string[] }>(null);
   const [copied, setCopied] = useState(false);
 
   // Keep this page out of search results. Set here rather than in index.html
@@ -110,64 +177,171 @@ export default function CourtBookingPortal() {
     return () => { document.head.removeChild(tag); };
   }, []);
 
+  // Tick. Every 15s is plenty for a clock showing minutes, and it is what
+  // retires an hour from the grid the moment it starts.
+  useEffect(() => {
+    const tick = () => setClock(clockPlus(istNow(), offsetMin));
+    tick();
+    const id = setInterval(tick, 15_000);
+    return () => clearInterval(id);
+  }, [offsetMin]);
+
+  const load = useCallback(async (id: string) => {
+    const serverGuess = istNow();
+    const from = serverGuess.date;
+    // Two months: this one and the next. Anyone planning further out than
+    // that is arranging it with Jaydeep anyway.
+    const to = endOfMonth(nextMonth(serverGuess.date.slice(0, 7)));
+    const a = await getPublicAvailability(id, from, to);
+    setAvail(a);
+    setOffsetMin(clockDiffMinutes(a.now, istNow()));
+    setClock(a.now);
+    setMonth((m) => m || a.now.date.slice(0, 7));
+    return a;
+  }, []);
+
   useEffect(() => {
     if (!centreCode) { setLoading(false); return; }
     getActiveCentres().then(async (centres) => {
       const c = centres.find((x) => x.centreCode === centreCode);
-      if (c) {
-        setCentreId(c.id);
-        setCentreName(c.name);
-        setConfig(await getCourtConfig(c.id));
+      if (!c) { setLoading(false); return; }
+      setCentreId(c.id);
+      setCentreName(c.name);
+      try {
+        await load(c.id);
+      } catch {
+        setLoadErr('Could not load availability. Please refresh.');
       }
       setLoading(false);
     }).catch(() => setLoading(false));
-  }, [centreCode]);
+  }, [centreCode, load]);
 
-  const cfg = config ?? { centreId, ...DEFAULT_COURT_CONFIG, updatedAt: '', updatedBy: null };
+  const months = useMemo(() => {
+    const first = clock.date.slice(0, 7);
+    return [first, nextMonth(first)];
+  }, [clock.date]);
 
-  /** Only offer days that actually sell hours. */
-  const dates = useMemo(
-    () => nextDates(14).filter((d) => buildDayAvailability(cfg, d, []).length > 0),
-    [cfg],
+  /**
+   * An hour the server called free may have started since. Re-testing against
+   * the ticking clock is what stops a page left open on a table from selling
+   * an hour that is already underway.
+   */
+  const slotState = useCallback((d: string, s: PublicSlot): string => (
+    s.state === 'AVAILABLE' && isHourPast(d, s.hour, clock) ? 'PAST' : s.state
+  ), [clock]);
+
+  /** Dates in the chosen month with at least one hour still sellable. */
+  const dates = useMemo(() => {
+    if (!avail) return [];
+    return Object.keys(avail.days)
+      .filter((d) => d.startsWith(month) && d >= clock.date)
+      .filter((d) => avail.days[d].some((s) => slotState(d, s) === 'AVAILABLE'))
+      .sort();
+  }, [avail, month, clock.date, slotState]);
+
+  useEffect(() => {
+    if (dates.length === 0) { setDate(''); return; }
+    if (!dates.includes(date)) setDate(dates[0]);
+  }, [dates, date]);
+
+  const daySlots = useMemo(
+    () => (avail && date ? avail.days[date] ?? [] : []),
+    [avail, date],
   );
 
-  useEffect(() => { if (!date && dates.length > 0) setDate(dates[0]); }, [dates, date]);
+  /** Only hours worth showing: free, or free-but-elapsed so the clock reads true. */
+  const shownSlots = useMemo(
+    () => daySlots
+      .map((s) => ({ ...s, state: slotState(date, s) }))
+      .filter((s) => s.state === 'AVAILABLE' || s.state === 'PAST'),
+    [daySlots, date, slotState],
+  );
 
-  const loadSlots = useCallback(async () => {
-    if (!centreId || !date) return;
-    setLoadingSlots(true);
-    try {
-      setSlots(buildDayAvailability(cfg, date, await getBookingsForDate(centreId, date)));
-    } finally {
-      setLoadingSlots(false);
-    }
-  }, [centreId, date, cfg]);
+  const hasAvailable = shownSlots.some((s) => s.state === 'AVAILABLE');
 
-  useEffect(() => { loadSlots(); setPicked(null); }, [loadSlots]);
-
-  const rate = cfg.hourlyRatePaise;
-  const courtTotal = rate * hours;
-  const extrasTotal = addOnsTotalPaise(addOns);
-  const total = courtTotal + extrasTotal;
+  useEffect(() => { setPicked(null); }, [date, mode]);
 
   /** Longest run of free hours from the picked one — caps the duration list. */
   const maxHours = useMemo(() => {
     if (!picked) return 1;
-    const byHour = new Map(slots.map((s) => [s.hour, s]));
+    const byHour = new Map(shownSlots.map((s) => [s.hour, s]));
     let n = 0;
     let cur = picked;
-    while (byHour.get(cur)?.state === 'AVAILABLE' && n < 4) {
+    while (byHour.get(cur)?.state === 'AVAILABLE' && n < MAX_BOOKING_HOURS) {
       n++;
-      const [h, m] = cur.split(':').map(Number);
-      cur = `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      cur = addHour(cur);
     }
     return Math.max(1, n);
-  }, [picked, slots]);
+  }, [picked, shownSlots]);
 
   useEffect(() => { if (hours > maxHours) setHours(maxHours); }, [maxHours, hours]);
 
+  // ── Monthly plan ───────────────────────────────────────────────────────────
+
+  /** Weekdays this month that still have a sellable hour. */
+  const planWeekdays = useMemo(() => {
+    if (!avail) return [];
+    const set = new Set<number>();
+    Object.entries(avail.days).forEach(([d, slots]) => {
+      if (!d.startsWith(month) || d < clock.date) return;
+      if (slots.some((s) => slotState(d, s) === 'AVAILABLE')) set.add(weekdayOfDate(d));
+    });
+    return Array.from(set).sort();
+  }, [avail, month, clock.date, slotState]);
+
+  useEffect(() => {
+    if (planWeekdays.length === 0) { setPlanWeekday(null); return; }
+    if (planWeekday === null || !planWeekdays.includes(planWeekday)) setPlanWeekday(planWeekdays[0]);
+  }, [planWeekdays, planWeekday]);
+
+  /** Every remaining date in the month falling on the chosen weekday. */
+  const planDates = useMemo(() => {
+    if (!avail || planWeekday === null) return [];
+    return Object.keys(avail.days)
+      .filter((d) => d.startsWith(month) && d >= clock.date && weekdayOfDate(d) === planWeekday)
+      .sort();
+  }, [avail, month, clock.date, planWeekday]);
+
+  /**
+   * Hours free on EVERY remaining date of that weekday.
+   *
+   * A plan is one hour repeated weekly, so an hour that is taken on the third
+   * Saturday is not a plan hour — offering it and then part-booking it is how
+   * you end up owing someone a refund.
+   */
+  const planHourOptions = useMemo(() => {
+    if (!avail || planDates.length === 0) return [];
+    const counts = new Map<string, number>();
+    planDates.forEach((d) => {
+      (avail.days[d] ?? []).forEach((s) => {
+        if (slotState(d, s) === 'AVAILABLE') counts.set(s.hour, (counts.get(s.hour) ?? 0) + 1);
+      });
+    });
+    return Array.from(counts.entries())
+      .filter(([, n]) => n === planDates.length)
+      .map(([h]) => h)
+      .sort();
+  }, [avail, planDates, slotState]);
+
+  useEffect(() => {
+    if (planHourOptions.length === 0) { setPlanHour(null); return; }
+    if (planHour === null || !planHourOptions.includes(planHour)) setPlanHour(planHourOptions[0]);
+  }, [planHourOptions, planHour]);
+
+  // ── Money ──────────────────────────────────────────────────────────────────
+
+  const rate = avail?.hourlyRatePaise ?? 0;
+  const planRate = avail?.planHourlyRatePaise ?? 0;
+  const extrasTotal = addOnsTotalPaise(addOns);
+
+  const total = mode === 'SLOT'
+    ? rate * hours + extrasTotal
+    : planRate * planDates.length;
+
   const upiUrl = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent('BBA Sports')}` +
     `&am=${Math.round(total / 100)}&cu=INR&tn=${encodeURIComponent('Court booking')}`;
+
+  const readyToPay = mode === 'SLOT' ? !!picked : (planWeekday !== null && !!planHour && planDates.length > 0);
 
   function onShot(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -178,8 +352,13 @@ export default function CourtBookingPortal() {
     r.readAsDataURL(f);
   }
 
+  function resetForm() {
+    setDone(null); setPicked(null); setName(''); setPhone(''); setEmail('');
+    setAddOns({}); setRulesAccepted(false); setShot(null); setShotPreview(null);
+  }
+
   async function submit() {
-    if (!picked || !centreId) return;
+    if (!centreId || !readyToPay) return;
     if (name.trim().length < 2) { setError('Please enter your name.'); return; }
     if (phone.replace(/\D/g, '').length !== 10) { setError('Please enter a 10-digit phone number.'); return; }
     if (!rulesAccepted) { setError('Please confirm you have read the court rules.'); return; }
@@ -201,24 +380,30 @@ export default function CourtBookingPortal() {
         } catch { /* proceed without it */ }
       }
 
-      await createCourtBooking({
-        centreId,
-        date,
-        startHour: picked,
-        hours,
+      const booker = {
         bookerName: name.trim(),
         bookerPhone: phone.replace(/\D/g, ''),
         bookerEmail: email.trim() || undefined,
-        addOns,
-        source: 'ONLINE',
         screenshotUrl,
-      });
-      setDone(true);
+      };
+
+      if (mode === 'SLOT') {
+        await createCourtBookingPublic({
+          centreId, date, startHour: picked!, hours, addOns, ...booker,
+        });
+        setDone({ kind: 'SLOT', booked: [date], clashes: [] });
+      } else {
+        const res = await createCourtPlanPublic({
+          centreId, weekday: planWeekday!, startHour: planHour!, hours: 1,
+          yearMonth: month, ...booker,
+        });
+        setDone({ kind: 'PLAN', booked: res.booked, clashes: res.clashes });
+      }
     } catch (err) {
       setError(err instanceof SlotUnavailableError
         ? err.message
         : 'Something went wrong. Please try again.');
-      await loadSlots();   // someone else may have just taken it
+      try { await load(centreId); } catch { /* keep the message we already have */ }
     } finally {
       setSubmitting(false);
     }
@@ -244,7 +429,19 @@ export default function CourtBookingPortal() {
     );
   }
 
-  if (!cfg.isOpen) {
+  if (loadErr || !avail) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
+        <div className="text-center">
+          <AlertCircle size={44} className="mx-auto text-gray-300" />
+          <h1 className="mt-4 text-lg font-bold text-gray-700">Can&apos;t load times</h1>
+          <p className="mt-1 text-sm text-gray-500">{loadErr || 'Please refresh and try again.'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!avail.isOpen) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
         <div className="text-center">
@@ -263,18 +460,41 @@ export default function CourtBookingPortal() {
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
             <CheckCircle2 size={32} className="text-green-600" />
           </div>
-          <h1 className="mt-5 text-xl font-bold text-brand-secondary">Slot requested</h1>
-          <p className="mt-2 text-sm text-gray-500">
-            {dayLabel(date)} · {hour12(picked!)} for {hours} hour{hours > 1 ? 's' : ''}
-          </p>
+          <h1 className="mt-5 text-xl font-bold text-brand-secondary">
+            {done.kind === 'PLAN' ? 'Monthly plan requested' : 'Slot requested'}
+          </h1>
+
+          {done.kind === 'SLOT' ? (
+            <p className="mt-2 text-sm text-gray-500">
+              {dayLabel(done.booked[0])} · {hour12(picked ?? '')} for {hours} hour{hours > 1 ? 's' : ''}
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-gray-500">
+              {WEEKDAY_NAMES[planWeekday ?? 0]}s at {hour12(planHour ?? '')} ·{' '}
+              {done.booked.length} session{done.booked.length > 1 ? 's' : ''} in {monthLabel(month)}
+            </p>
+          )}
+
+          {done.clashes.length > 0 && (
+            <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-3 text-left">
+              <p className="text-xs font-semibold text-orange-900">
+                {done.clashes.length} date{done.clashes.length > 1 ? 's' : ''} couldn&apos;t be booked
+              </p>
+              <p className="mt-1 text-xs text-orange-800">
+                {done.clashes.map(dayLabel).join(', ')} — someone took {done.clashes.length > 1 ? 'those hours' : 'that hour'}
+                {' '}first. We&apos;ll call you to sort out the difference before charging for {done.clashes.length > 1 ? 'them' : 'it'}.
+              </p>
+            </div>
+          )}
+
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left">
             <p className="text-xs text-amber-800">
-              Your slot is held. It&apos;s confirmed once we verify the payment — you&apos;ll get a
-              call if anything is unclear. Questions: {COMPANY.supportEmail}
+              Your {done.kind === 'PLAN' ? 'hours are' : 'slot is'} held. Confirmed once we verify the
+              payment — you&apos;ll get a call if anything is unclear. Questions: {COMPANY.supportEmail}
             </p>
           </div>
           <button
-            onClick={() => { setDone(false); setPicked(null); setName(''); setPhone(''); setEmail(''); setAddOns({}); setRulesAccepted(false); setShot(null); setShotPreview(null); loadSlots(); }}
+            onClick={() => { resetForm(); load(centreId).catch(() => {}); }}
             className="mt-4 w-full rounded-xl border border-gray-200 bg-white py-3 text-sm font-medium text-gray-600"
           >
             Book another slot
@@ -284,78 +504,154 @@ export default function CourtBookingPortal() {
     );
   }
 
-  const available = slots.filter((s) => s.state === 'AVAILABLE');
-
   return (
     <div className="min-h-screen bg-gray-50 pb-10">
       <header className="border-b border-gray-100 bg-white px-4 py-4">
         <div className="mx-auto flex max-w-lg items-center gap-3">
           <img src="/logo.png" alt="" className="h-9 w-9 rounded-lg object-contain" />
-          <div>
+          <div className="min-w-0 flex-1">
             <h1 className="text-sm font-bold text-brand-secondary">{centreName}</h1>
             <p className="text-xs text-gray-500">Court booking · {formatINR(rate, { withDecimals: false })}/hour</p>
+          </div>
+          {/* The court's clock, so nobody is booking against a phone that
+              thinks it's in another timezone. */}
+          <div className="shrink-0 text-right">
+            <p className="flex items-center justify-end gap-1 text-[10px] uppercase tracking-wide text-gray-400">
+              <Clock size={10} /> Court time
+            </p>
+            <p className="text-xs font-semibold tabular-nums text-brand-secondary">{clockLabel(clock)}</p>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-lg space-y-5 px-4 pt-5">
-        {/* Date */}
+        {/* Single slot vs monthly plan */}
+        <div className="grid grid-cols-2 gap-2 rounded-xl bg-gray-100 p-1">
+          {([
+            { key: 'SLOT' as Mode, label: 'Single slot', icon: CalendarDays },
+            { key: 'PLAN' as Mode, label: 'Monthly plan', icon: Repeat },
+          ]).map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              onClick={() => { setMode(key); setError(''); }}
+              className={cn(
+                'flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold transition',
+                mode === key ? 'bg-white text-brand-primary shadow-sm' : 'text-gray-500',
+              )}
+            >
+              <Icon size={13} /> {label}
+            </button>
+          ))}
+        </div>
+
+        {mode === 'PLAN' && (
+          <div className="rounded-xl border border-brand-primary/20 bg-brand-primary/5 p-3">
+            <p className="text-xs leading-relaxed text-brand-secondary">
+              Book the same hour every week for a month at{' '}
+              <strong>{formatINR(planRate, { withDecimals: false })}/hour</strong> instead of{' '}
+              {formatINR(rate, { withDecimals: false })}. The hour is reserved for you all month —
+              a week you can&apos;t make isn&apos;t credited, because nobody else could take it.
+            </p>
+          </div>
+        )}
+
+        {/* Month */}
         <div>
           <label className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-brand-secondary">
-            <Calendar size={14} /> Pick a date
+            <Calendar size={14} /> Month
           </label>
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {dates.map((d) => (
+          <div className="grid grid-cols-2 gap-2">
+            {months.map((m) => (
               <button
-                key={d}
-                onClick={() => setDate(d)}
+                key={m}
+                onClick={() => { setMonth(m); setError(''); }}
                 className={cn(
-                  'shrink-0 rounded-lg border px-3 py-2 text-xs font-medium transition',
-                  date === d
+                  'rounded-lg border py-2 text-xs font-medium transition',
+                  month === m
                     ? 'border-brand-primary bg-brand-primary text-white'
-                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300',
+                    : 'border-gray-200 bg-white text-gray-600',
                 )}
               >
-                {dayLabel(d)}
+                {monthLabel(m)}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Hours */}
-        <div>
-          <label className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-brand-secondary">
-            <Clock size={14} /> Pick a time
-          </label>
-          {loadingSlots ? (
-            <div className="flex justify-center py-6"><Loader2 size={20} className="animate-spin text-gray-400" /></div>
-          ) : available.length === 0 ? (
-            <p className="rounded-xl border border-gray-200 bg-white p-4 text-center text-sm text-gray-500">
-              Nothing free on {dayLabel(date)}. Try another date.
-            </p>
-          ) : (
-            <div className="grid grid-cols-3 gap-2">
-              {available.map((s) => (
-                <button
-                  key={s.hour}
-                  onClick={() => { setPicked(s.hour); setHours(1); }}
-                  className={cn(
-                    'rounded-lg border-2 py-2.5 text-xs font-semibold transition',
-                    picked === s.hour
-                      ? 'border-brand-primary bg-brand-primary/5 text-brand-primary'
-                      : 'border-gray-100 bg-white text-gray-600 hover:border-gray-200',
-                  )}
-                >
-                  {hour12(s.hour)}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {picked && (
+        {mode === 'SLOT' ? (
           <>
-            {maxHours > 1 && (
+            {/* Date */}
+            <div>
+              <label className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-brand-secondary">
+                <CalendarDays size={14} /> Pick a date
+              </label>
+              {dates.length === 0 ? (
+                <p className="rounded-xl border border-gray-200 bg-white p-4 text-center text-sm text-gray-500">
+                  Nothing left in {monthLabel(month)}. Try the other month.
+                </p>
+              ) : (
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {dates.map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => setDate(d)}
+                      className={cn(
+                        'shrink-0 rounded-lg border px-3 py-2 text-xs font-medium transition',
+                        date === d
+                          ? 'border-brand-primary bg-brand-primary text-white'
+                          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300',
+                      )}
+                    >
+                      {dayLabel(d)}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Hours */}
+            {date && (
+              <div>
+                <label className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-brand-secondary">
+                  <Clock size={14} /> Pick a time
+                </label>
+                {!hasAvailable ? (
+                  <p className="rounded-xl border border-gray-200 bg-white p-4 text-center text-sm text-gray-500">
+                    Nothing free on {dayLabel(date)}. Try another date.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2">
+                    {shownSlots.map((s) => {
+                      const past = s.state === 'PAST';
+                      return (
+                        <button
+                          key={s.hour}
+                          disabled={past}
+                          onClick={() => { setPicked(s.hour); setHours(1); }}
+                          className={cn(
+                            'rounded-lg border-2 py-2.5 text-xs font-semibold transition',
+                            past
+                              ? 'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-300 line-through'
+                              : picked === s.hour
+                                ? 'border-brand-primary bg-brand-primary/5 text-brand-primary'
+                                : 'border-gray-100 bg-white text-gray-600 hover:border-gray-200',
+                          )}
+                        >
+                          {hour12(s.hour)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {shownSlots.some((s) => s.state === 'PAST') && (
+                  <p className="mt-1.5 text-[11px] text-gray-400">
+                    Crossed-out hours have already started.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {picked && maxHours > 1 && (
               <div>
                 <label className="mb-1.5 block text-sm font-semibold text-brand-secondary">How long?</label>
                 <div className="grid grid-cols-4 gap-2">
@@ -376,7 +672,95 @@ export default function CourtBookingPortal() {
                 </div>
               </div>
             )}
+          </>
+        ) : (
+          <>
+            {/* Weekday */}
+            <div>
+              <label className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-brand-secondary">
+                <Repeat size={14} /> Which day, every week?
+              </label>
+              {planWeekdays.length === 0 ? (
+                <p className="rounded-xl border border-gray-200 bg-white p-4 text-center text-sm text-gray-500">
+                  Nothing left in {monthLabel(month)}. Try the other month.
+                </p>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  {planWeekdays.map((w) => (
+                    <button
+                      key={w}
+                      onClick={() => setPlanWeekday(w)}
+                      className={cn(
+                        'rounded-lg border py-2 text-xs font-medium transition',
+                        planWeekday === w
+                          ? 'border-brand-primary bg-brand-primary text-white'
+                          : 'border-gray-200 bg-white text-gray-600',
+                      )}
+                    >
+                      {WEEKDAY_NAMES[w]}s
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
+            {/* Hour, restricted to those free on every remaining occurrence */}
+            {planWeekday !== null && (
+              <div>
+                <label className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-brand-secondary">
+                  <Clock size={14} /> Which hour?
+                </label>
+                {planHourOptions.length === 0 ? (
+                  <p className="rounded-xl border border-gray-200 bg-white p-4 text-center text-sm text-gray-500">
+                    No single hour is free on every {WEEKDAY_NAMES[planWeekday]} left this month.
+                    Book single slots instead, or try the other month.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2">
+                    {planHourOptions.map((h) => (
+                      <button
+                        key={h}
+                        onClick={() => setPlanHour(h)}
+                        className={cn(
+                          'rounded-lg border-2 py-2.5 text-xs font-semibold transition',
+                          planHour === h
+                            ? 'border-brand-primary bg-brand-primary/5 text-brand-primary'
+                            : 'border-gray-100 bg-white text-gray-600',
+                        )}
+                      >
+                        {hour12(h)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {planHour && planDates.length > 0 && (
+              <div className="rounded-xl border border-gray-100 bg-white p-4">
+                <p className="text-sm font-semibold text-brand-secondary">
+                  {planDates.length} session{planDates.length > 1 ? 's' : ''} in {monthLabel(month)}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {planDates.map((d) => (
+                    <span key={d} className="rounded-md bg-gray-50 px-2 py-1 text-[11px] text-gray-600">
+                      {dayLabel(d)}
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs text-gray-500">
+                  {planDates.length} × {formatINR(planRate, { withDecimals: false })} ={' '}
+                  <strong className="text-brand-secondary">{formatINR(total, { withDecimals: false })}</strong>
+                  {' — you save '}
+                  {formatINR((rate - planRate) * planDates.length, { withDecimals: false })}
+                </p>
+              </div>
+            )}
+          </>
+        )}
+
+        {readyToPay && (
+          <>
             <div className="space-y-3 rounded-xl border border-gray-100 bg-white p-4">
               <div>
                 <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
@@ -404,37 +788,40 @@ export default function CourtBookingPortal() {
               </div>
             </div>
 
-            {/* Extras */}
-            <div className="rounded-xl border border-gray-100 bg-white p-4">
-              <p className="mb-2 text-sm font-semibold text-brand-secondary">Need anything?</p>
-              <div className="space-y-2">
-                {COURT_ADDONS.map((a) => {
-                  const qty = addOns[a.key] ?? 0;
-                  return (
-                    <div key={a.key} className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm text-gray-700">{a.label}</p>
-                        <p className="text-xs text-gray-400">{formatINR(a.pricePaise, { withDecimals: false })} each</p>
+            {/* Extras — a single slot only. Shuttles across a whole month are
+                sorted on the day, not pre-paid five weeks ahead. */}
+            {mode === 'SLOT' && (
+              <div className="rounded-xl border border-gray-100 bg-white p-4">
+                <p className="mb-2 text-sm font-semibold text-brand-secondary">Need anything?</p>
+                <div className="space-y-2">
+                  {COURT_ADDONS.map((a) => {
+                    const qty = addOns[a.key] ?? 0;
+                    return (
+                      <div key={a.key} className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm text-gray-700">{a.label}</p>
+                          <p className="text-xs text-gray-400">{formatINR(a.pricePaise, { withDecimals: false })} each</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setAddOns((p) => ({ ...p, [a.key]: Math.max(0, (p[a.key] ?? 0) - 1) }))}
+                            disabled={qty === 0}
+                            className="h-8 w-8 rounded-lg border border-gray-200 text-gray-600 disabled:opacity-30"
+                          >−</button>
+                          <span className="w-5 text-center text-sm font-semibold">{qty}</span>
+                          <button
+                            type="button"
+                            onClick={() => setAddOns((p) => ({ ...p, [a.key]: Math.min(10, (p[a.key] ?? 0) + 1) }))}
+                            className="h-8 w-8 rounded-lg border border-gray-200 text-gray-600"
+                          >+</button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setAddOns((p) => ({ ...p, [a.key]: Math.max(0, (p[a.key] ?? 0) - 1) }))}
-                          disabled={qty === 0}
-                          className="h-8 w-8 rounded-lg border border-gray-200 text-gray-600 disabled:opacity-30"
-                        >−</button>
-                        <span className="w-5 text-center text-sm font-semibold">{qty}</span>
-                        <button
-                          type="button"
-                          onClick={() => setAddOns((p) => ({ ...p, [a.key]: Math.min(10, (p[a.key] ?? 0) + 1) }))}
-                          className="h-8 w-8 rounded-lg border border-gray-200 text-gray-600"
-                        >+</button>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Rules — shown before payment, and repeated in the email, so what
                 someone agreed to on the page is what reaches their inbox. */}
@@ -457,7 +844,7 @@ export default function CourtBookingPortal() {
                   className="mt-0.5"
                 />
                 <span className="text-xs font-medium text-amber-900">
-                  I've read and agree to the court rules
+                  I&apos;ve read and agree to the court rules
                 </span>
               </label>
             </div>
@@ -470,11 +857,13 @@ export default function CourtBookingPortal() {
                   {formatINR(total, { withDecimals: false })}
                 </p>
                 <p className="text-[11px] text-gray-400">
-                  {dayLabel(date)} · {hour12(picked)} · {hours} hour{hours > 1 ? 's' : ''}
+                  {mode === 'SLOT'
+                    ? `${dayLabel(date)} · ${hour12(picked!)} · ${hours} hour${hours > 1 ? 's' : ''}`
+                    : `${WEEKDAY_NAMES[planWeekday!]}s at ${hour12(planHour!)} · ${planDates.length} session${planDates.length > 1 ? 's' : ''}`}
                 </p>
-                {extrasTotal > 0 && (
+                {mode === 'SLOT' && extrasTotal > 0 && (
                   <p className="mt-1 text-[11px] text-gray-500">
-                    Court {formatINR(courtTotal, { withDecimals: false })}
+                    Court {formatINR(rate * hours, { withDecimals: false })}
                     {' + extras '}{formatINR(extrasTotal, { withDecimals: false })}
                   </p>
                 )}
@@ -523,10 +912,12 @@ export default function CourtBookingPortal() {
               disabled={submitting}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 py-3.5 text-sm font-bold text-white disabled:opacity-60"
             >
-              {submitting ? <><Loader2 size={16} className="animate-spin" /> Booking…</> : 'Confirm booking'}
+              {submitting
+                ? <><Loader2 size={16} className="animate-spin" /> Booking…</>
+                : mode === 'PLAN' ? 'Confirm monthly plan' : 'Confirm booking'}
             </button>
             <p className="text-center text-[11px] text-gray-400">
-              Your slot is held straight away and confirmed once payment is verified.
+              Your {mode === 'PLAN' ? 'hours are' : 'slot is'} held straight away and confirmed once payment is verified.
             </p>
           </>
         )}

@@ -175,6 +175,51 @@ export const DEFAULT_COURT_CONFIG: Omit<CourtRentalConfig, 'centreId' | 'updated
   dateOverrides: {},
 };
 
+/** Longest block anyone may book in one go. */
+export const MAX_BOOKING_HOURS = 4;
+
+// ── The clock ────────────────────────────────────────────────────────────────
+
+/**
+ * Wall-clock now at the court, regardless of whose device is asking.
+ *
+ * A booking page is opened on phones whose timezone is whatever the traveller,
+ * the SIM, or a manual setting last left it at. `new Date().getHours()` on one
+ * of those would call an hour past that hasn't happened, or — worse — sell an
+ * hour that is already underway. The court is in Mumbai, so the only clock
+ * that matters is Asia/Kolkata, and Intl gives it to us from any device.
+ *
+ * Returns wall-clock strings rather than a Date because everything downstream
+ * (window bounds, booking ids, availability keys) is already wall-clock text.
+ */
+export function istNow(at: Date = new Date()): { date: string; time: string } {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(at);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
+  // en-GB gives hour "24" for midnight in some runtimes; normalise it.
+  const hh = get('hour') === '24' ? '00' : get('hour');
+  return {
+    date: `${get('year')}-${get('month')}-${get('day')}`,
+    time: `${hh}:${get('minute')}`,
+  };
+}
+
+/**
+ * Has this hour already started?
+ *
+ * An hour is spent the moment it begins — 10:00–11:00 stops being sellable at
+ * 10:00, not at 11:00. Someone arriving at 10:30 for an hour that ends in
+ * thirty minutes is a refund conversation, not a booking.
+ */
+export function isHourPast(date: string, hour: string, now: { date: string; time: string }): boolean {
+  if (date < now.date) return true;
+  if (date > now.date) return false;
+  return hourToMinutes(hour) <= hourToMinutes(now.time);
+}
+
 // ── Time helpers ─────────────────────────────────────────────────────────────
 // "HH:mm" sorts lexically, so plain string comparison is safe and avoids
 // dragging timezones into what is purely a wall-clock schedule.
@@ -207,7 +252,7 @@ export function weekdayOf(date: string): number {
   return new Date(y, m - 1, d).getDay();
 }
 
-export type SlotState = 'AVAILABLE' | 'HELD' | 'BOOKED' | 'CLOSED' | 'COACHING';
+export type SlotState = 'AVAILABLE' | 'HELD' | 'BOOKED' | 'CLOSED' | 'COACHING' | 'PAST';
 
 export interface CourtSlot {
   hour: string;
@@ -224,11 +269,21 @@ export interface CourtSlot {
  * Coaching wins over everything: an hour inside a coaching window can never be
  * sold, and a date override cannot open it. That guard is deliberate — the
  * failure mode is a paying stranger arriving mid-session.
+ *
+ * Pass `now` (from istNow()) to mark elapsed hours PAST. It is optional
+ * because the admin grid deliberately does NOT pass it: Jaydeep records a
+ * cash walk-in after the fact, and a grid that refuses yesterday would make
+ * that impossible. The public page always passes it, and the server checks it
+ * again on write — a browser clock is a suggestion, not an authority.
+ *
+ * An hour that is already booked stays BOOKED even once it has elapsed. PAST
+ * only ever replaces a free hour, so history still reads as history.
  */
 export function buildDayAvailability(
   config: Pick<CourtRentalConfig, 'windows' | 'coachingWindows' | 'dateOverrides' | 'hourlyRatePaise'>,
   date: string,
   bookings: Pick<CourtBookingDocument, 'id' | 'date' | 'startHour' | 'hours' | 'status' | 'bookerName'>[],
+  now?: { date: string; time: string },
 ): CourtSlot[] {
   const dow = weekdayOf(date);
   const windows = config.windows?.[dow] ?? [];
@@ -271,10 +326,11 @@ export function buildDayAvailability(
       // Override beats the window default, so a normally-closed hour can be
       // opened for one date and vice versa.
       const isOpen = overrides[hour] ?? w.open;
+      const past = now ? isHourPast(date, hour, now) : false;
       slots.push({
         hour,
         endHour: addHour(hour),
-        state: isOpen ? 'AVAILABLE' : 'CLOSED',
+        state: past ? 'PAST' : isOpen ? 'AVAILABLE' : 'CLOSED',
         bookingId: null,
         bookerName: null,
         ratePaise: config.hourlyRatePaise,
@@ -299,4 +355,52 @@ export function canBook(slots: CourtSlot[], startHour: string, hours: number): b
     if (!s || s.state !== 'AVAILABLE') return false;
   }
   return true;
+}
+
+// ── Month navigation ─────────────────────────────────────────────────────────
+
+/** "2026-08" → every date in it, as YYYY-MM-DD. */
+export function datesInMonth(yearMonth: string): string[] {
+  const [y, m] = yearMonth.split('-').map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return Array.from({ length: last }, (_, i) => `${yearMonth}-${String(i + 1).padStart(2, '0')}`);
+}
+
+/** "2026-08" → "2026-09". */
+export function nextMonth(yearMonth: string): string {
+  const [y, m] = yearMonth.split('-').map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+}
+
+/**
+ * The dates in a month that can still be booked.
+ *
+ * "Can still" is doing the work: a date with no windows at all (a weekday,
+ * here) never appears, and neither does one whose sellable hours have all
+ * elapsed. Without the second test, Saturday morning stays in the picker
+ * until midnight, and anyone tapping it finds an empty grid and assumes the
+ * page is broken.
+ */
+export function bookableDatesInMonth(
+  config: Pick<CourtRentalConfig, 'windows' | 'coachingWindows' | 'dateOverrides' | 'hourlyRatePaise'>,
+  yearMonth: string,
+  now: { date: string; time: string },
+): string[] {
+  return datesInMonth(yearMonth)
+    .filter((d) => d >= now.date)
+    .filter((d) => buildDayAvailability(config, d, [], now).some((s) => s.state === 'AVAILABLE'));
+}
+
+/**
+ * Which weekdays this centre ever sells hours on — the choices in a monthly
+ * plan. Derived from the config rather than hard-coded to Sat/Sun, so a
+ * weekday evening window added later shows up on its own.
+ */
+export function sellableWeekdays(
+  config: Pick<CourtRentalConfig, 'windows' | 'coachingWindows'>,
+): number[] {
+  return Object.keys(config.windows ?? {})
+    .map(Number)
+    .filter((dow) => (config.windows[dow] ?? []).some((w) => w.open))
+    .sort((a, b) => a - b);
 }

@@ -66,3 +66,11 @@ export {
   createSlotBooking,
   backfillSlotBookingContacts,
 } from './slots/slotBookingApi.js';
+
+// --- Court booking reads + writes (courtBookings is admin-read, so the public
+//     page cannot query it directly; see courtBookingApi.ts) ------------------
+export {
+  courtAvailability,
+  createCourtBookingPublic,
+  createCourtPlanPublic,
+} from './slots/courtBookingApi.js';
