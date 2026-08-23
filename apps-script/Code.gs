@@ -64,8 +64,14 @@ var SHEETS = {
   ADMIN      : "admin_logs",
   // Court hire. Deliberately NOT in PAYMENTS below: the rollover clears those
   // tabs monthly, whereas rental rows are the permanent record of what was
-  // sold. Written by the onCourtBookingConfirmed Cloud Function.
+  // sold. Written by the onCourtBookingSheetSync Cloud Function, which
+  // upserts one row per booking keyed on Booking_ID — so a row is updated as
+  // a booking moves from held to confirmed, never appended twice.
   COURT      : "Court_Rentals",
+  // The monthly-plan arrangements themselves. The sessions a plan books show
+  // up in Court_Rentals like any other booking; this tab is what says the
+  // five of them were one purchase.
+  COURT_PLANS: "Court_Plans",
   PAYMENTS   : {
     "Dadar"            : "Payments_Dadar",
     "Ruia College"     : "Payments_Ruia",
@@ -73,6 +79,20 @@ var SHEETS = {
     "RBI Colony"       : "Payments_RBI"
   }
 };
+
+// Court tab headers. The Cloud Function writes rows in exactly this order and
+// keys on the last column of Court_Rentals / the second of Court_Plans, so a
+// change here is a change there — see functions/src/slots/courtSheetSync.ts.
+var COURT_HEADERS = [
+  "Synced_At", "Date", "Start", "Hours", "Booker", "Phone", "Email",
+  "Rate", "Court_Amount", "Extras", "Extras_Amount", "Total",
+  "Source", "Plan_ID", "Status", "Verified_At", "Screenshot", "Booking_ID"
+];
+var COURT_PLAN_HEADERS = [
+  "Synced_At", "Plan_ID", "Month", "Weekday", "Hour", "Hours",
+  "Booker", "Phone", "Email", "Rate", "Sessions", "Total",
+  "Status", "Booked_Dates", "Clash_Dates"
+];
 
 // Column indexes, named so an off-by-one is visible rather than buried.
 var PAY_COL   = { TIMESTAMP:0, INVOICE:1, STUDENT_ID:2, NAME:3, BATCH:4, AMOUNT:5, MONTH:6, MODE:7, STATUS:8,
@@ -317,7 +337,8 @@ function applySafeStyling() {
     return { name: SHEETS.PAYMENTS[c], monthIdx: PAY_COL.MONTH };
   });
   targets.push({ name: SHEETS.INVOICES, monthIdx: INV_COL.MONTH });
-  targets.push({ name: SHEETS.COURT,    monthIdx: -1 });
+  targets.push({ name: SHEETS.COURT,       monthIdx: -1 });
+  targets.push({ name: SHEETS.COURT_PLANS, monthIdx: -1 });
   targets.push({ name: SHEETS.PLAYERS,  monthIdx: -1 });
   targets.push({ name: SHEETS.ADMIN,    monthIdx: -1 });
 
@@ -371,6 +392,41 @@ function applySafeStyling() {
 //  Data rows are never touched at all.
 // ───────────────────────────────────────────────────────────────────────
 
+/**
+ * Create a court tab, or bring an existing one's headers up to date.
+ *
+ * Court_Rentals shipped with 11 columns and now has 18, so this has to widen
+ * an existing tab rather than only creating a new one — and it must do so
+ * without touching a single data row, because those rows are the permanent
+ * record of what was sold.
+ *
+ * textCols are 1-based columns holding a date or month LABEL. They are forced
+ * to plain text: the Cloud Function already writes them apostrophe-prefixed,
+ * but a later paste or manual edit would otherwise be silently re-parsed into
+ * a serial number, which is exactly how the monthly rollover broke before.
+ */
+function ensureCourtTab(ss, tabName, headers, textCols) {
+  var sheet = ss.getSheetByName(tabName);
+  var created = false;
+  if (!sheet) {
+    sheet = ss.insertSheet(tabName);
+    created = true;
+  }
+
+  sheet.getRange(1, 1, 1, headers.length)
+       .setValues([headers])
+       .setBackground(HEADER_BG).setFontColor(HEADER_FG).setFontWeight("bold");
+  sheet.setFrozenRows(1);
+
+  (textCols || []).forEach(function (col) {
+    sheet.getRange(2, col, Math.max(sheet.getMaxRows() - 1, 1), 1).setNumberFormat("@");
+  });
+
+  Logger.log((created ? "Created: " : "Headers ensured: ") + tabName);
+  return created;
+}
+
+
 function ensureNewColumnHeaders() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var changed = [];
@@ -406,6 +462,12 @@ function ensureNewColumnHeaders() {
        .setNumberFormat("@");
     if (n) changed.push(SHEETS.INVOICES + " (" + n + ")");
   }
+
+  // Court tabs too — Court_Rentals gained seven columns (email, the add-on
+  // split, plan id, verified-at, screenshot) and Court_Plans is new.
+  ensureCourtTab(ss, SHEETS.COURT,       COURT_HEADERS,      [2]);
+  ensureCourtTab(ss, SHEETS.COURT_PLANS, COURT_PLAN_HEADERS, [3]);
+  changed.push(SHEETS.COURT + " + " + SHEETS.COURT_PLANS);
 
   adminLog("Column headers ensured", "—", "—", changed.join(", ") || "already correct");
   SpreadsheetApp.getUi().alert(
@@ -669,21 +731,11 @@ function setupSpreadsheet() {
          .setNumberFormat("@");
   });
 
-  // Court_Rentals — created here so the Cloud Function has somewhere to append.
-  var courtSheet = ss.getSheetByName(SHEETS.COURT);
-  if (!courtSheet) {
-    courtSheet = ss.insertSheet(SHEETS.COURT);
-    courtSheet.appendRow([
-      "Synced_At", "Date", "Start", "Hours", "Booker", "Phone",
-      "Rate", "Amount", "Source", "Status", "Booking_ID"
-    ]);
-    courtSheet.setFrozenRows(1);
-    courtSheet.getRange(1, 1, 1, 11)
-              .setBackground(HEADER_BG).setFontColor(HEADER_FG).setFontWeight("bold");
-    // Date column stays text so it can't be re-parsed into a serial.
-    courtSheet.getRange(2, 2, courtSheet.getMaxRows() - 1, 1).setNumberFormat("@");
-    Logger.log("Created: " + SHEETS.COURT);
-  }
+  // Court_Rentals and Court_Plans — created here so the Cloud Functions have
+  // somewhere to append. Both are safe to re-run: an existing tab has its
+  // headers brought up to date and its data left alone.
+  ensureCourtTab(ss, SHEETS.COURT,       COURT_HEADERS,      [2]);
+  ensureCourtTab(ss, SHEETS.COURT_PLANS, COURT_PLAN_HEADERS, [3]);
 
   var logSheet = ss.getSheetByName(SHEETS.ADMIN);
   if (!logSheet) {
