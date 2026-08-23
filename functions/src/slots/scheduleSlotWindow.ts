@@ -95,3 +95,45 @@ export const scheduleSlotWindowNow = onRequest(
     }
   },
 );
+
+
+/**
+ * Weekly nudge: who is booking often enough that a monthly plan would suit
+ * them better. Sent to the team, not to the customer — a plan reserves a
+ * specific weekly hour, which needs a conversation about which hour.
+ */
+export const weeklyPlanCandidates = onSchedule(
+  { schedule: '0 10 * * MON', timeZone: 'Asia/Kolkata', region: REGION },
+  async () => {
+    const { findMonthlyPlanCandidates } = await import('./onCourtBookingCreated.js');
+    const centres = await db.collection('courtRentalConfig').get();
+
+    for (const cfg of centres.docs) {
+      const candidates = await findMonthlyPlanCandidates(cfg.id);
+      if (candidates.length === 0) continue;
+
+      const lines = candidates.slice(0, 10).map(
+        (c) => `• ${c.name} (${c.phone}) — ${c.bookings} hours, ₹${Math.round(c.spentPaise / 100)}`,
+      );
+      const text =
+        `📅 Monthly plan candidates — last 28 days\n` +
+        `${candidates.length} regular${candidates.length > 1 ? 's' : ''} booking ad-hoc:\n\n` +
+        lines.join('\n') +
+        `\n\nA monthly plan is ₹700/hr vs ₹800 — worth offering.`;
+
+      const url = process.env.JARVIS_NOTIFY_URL;
+      const secret = process.env.JARVIS_NOTIFY_SECRET;
+      if (!url || !secret) { logger.info('[planCandidates] relay not configured', { text }); continue; }
+      try {
+        await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-jarvis-secret': secret },
+          body: JSON.stringify({ to: 'jaydeep', text, source: 'court-plan-candidates' }),
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch (err) {
+        logger.warn('[planCandidates] relay unreachable', { err: String(err) });
+      }
+    }
+  },
+);

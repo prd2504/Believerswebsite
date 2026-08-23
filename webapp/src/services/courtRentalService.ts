@@ -29,6 +29,7 @@ import {
   buildDayAvailability,
   canBook,
   bookingHours,
+  addOnsTotalPaise,
   type CourtBookingDocument,
   type CourtRentalConfig,
   type CourtBookingSource,
@@ -55,6 +56,11 @@ function bookingFrom(id: string, d: DocumentData): CourtBookingDocument {
     bookerPhone: d.bookerPhone ?? '',
     bookerEmail: d.bookerEmail ?? null,
     hourlyRatePaise: d.hourlyRatePaise ?? 0,
+    // Bookings taken before add-ons existed have neither field; court time was
+    // the whole amount, so reading them that way keeps past totals correct.
+    courtPaise: d.courtPaise ?? d.amountPaise ?? 0,
+    addOns: (d.addOns && typeof d.addOns === 'object') ? d.addOns : {},
+    addOnsPaise: d.addOnsPaise ?? 0,
     amountPaise: d.amountPaise ?? 0,
     status: d.status ?? 'HELD',
     source: d.source ?? 'ONLINE',
@@ -171,6 +177,8 @@ export interface CreateCourtBookingInput {
   bookerEmail?: string;
   source: CourtBookingSource;
   hourlyRatePaise?: number;
+  /** Add-on quantities by key, e.g. { SHUTTLE: 2 }. */
+  addOns?: Record<string, number>;
   planId?: string | null;
   screenshotUrl?: string | null;
   notes?: string | null;
@@ -206,6 +214,9 @@ export async function createCourtBooking(input: CreateCourtBookingInput): Promis
 
   const rate = input.hourlyRatePaise ?? cfg.hourlyRatePaise;
   const hours = Math.max(1, input.hours);
+  const addOns = input.addOns ?? {};
+  const addOnsPaise = addOnsTotalPaise(addOns);
+  const courtPaise = rate * hours;
   const bookingId = `${input.centreId}_${input.date}_${input.startHour.replace(':', '')}`;
 
   await runTransaction(db, async (tx) => {
@@ -235,7 +246,12 @@ export async function createCourtBooking(input: CreateCourtBookingInput): Promis
         bookerPhone: input.bookerPhone,
         bookerEmail: input.bookerEmail ?? null,
         hourlyRatePaise: rate,
-        amountPaise: i === 0 ? rate * hours : 0,
+        // Money and add-ons ride on the FIRST lock document only, so a
+        // two-hour booking isn't counted as two full-price bookings.
+        courtPaise: i === 0 ? courtPaise : 0,
+        addOns: i === 0 ? addOns : {},
+        addOnsPaise: i === 0 ? addOnsPaise : 0,
+        amountPaise: i === 0 ? courtPaise + addOnsPaise : 0,
         status: 'HELD',
         source: input.source,
         planId: input.planId ?? null,

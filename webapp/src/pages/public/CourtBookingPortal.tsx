@@ -13,7 +13,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  Clock, Calendar, Check, Loader2, AlertCircle, Copy, CheckCircle2, Upload, User, Phone,
+  Clock, Calendar, Check, Loader2, AlertCircle, Copy, CheckCircle2, Upload, User, Phone, Mail,
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '@/lib/firebase';
@@ -31,6 +31,9 @@ import {
   COMPANY,
   buildDayAvailability,
   DEFAULT_COURT_CONFIG,
+  COURT_ADDONS,
+  COURT_RULES,
+  addOnsTotalPaise,
   type CourtRentalConfig,
   type CourtSlot,
 } from '@bba/shared';
@@ -86,6 +89,9 @@ export default function CourtBookingPortal() {
   const [hours, setHours] = useState(1);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [addOns, setAddOns] = useState<Record<string, number>>({});
+  const [rulesAccepted, setRulesAccepted] = useState(false);
   const [shot, setShot] = useState<File | null>(null);
   const [shotPreview, setShotPreview] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -139,7 +145,9 @@ export default function CourtBookingPortal() {
   useEffect(() => { loadSlots(); setPicked(null); }, [loadSlots]);
 
   const rate = cfg.hourlyRatePaise;
-  const total = rate * hours;
+  const courtTotal = rate * hours;
+  const extrasTotal = addOnsTotalPaise(addOns);
+  const total = courtTotal + extrasTotal;
 
   /** Longest run of free hours from the picked one — caps the duration list. */
   const maxHours = useMemo(() => {
@@ -173,6 +181,7 @@ export default function CourtBookingPortal() {
     if (!picked || !centreId) return;
     if (name.trim().length < 2) { setError('Please enter your name.'); return; }
     if (phone.replace(/\D/g, '').length !== 10) { setError('Please enter a 10-digit phone number.'); return; }
+    if (!rulesAccepted) { setError('Please confirm you have read the court rules.'); return; }
     setSubmitting(true);
     setError('');
     try {
@@ -198,6 +207,8 @@ export default function CourtBookingPortal() {
         hours,
         bookerName: name.trim(),
         bookerPhone: phone.replace(/\D/g, ''),
+        bookerEmail: email.trim() || undefined,
+        addOns,
         source: 'ONLINE',
         screenshotUrl,
       });
@@ -262,7 +273,7 @@ export default function CourtBookingPortal() {
             </p>
           </div>
           <button
-            onClick={() => { setDone(false); setPicked(null); setName(''); setPhone(''); setShot(null); setShotPreview(null); loadSlots(); }}
+            onClick={() => { setDone(false); setPicked(null); setName(''); setPhone(''); setEmail(''); setAddOns({}); setRulesAccepted(false); setShot(null); setShotPreview(null); loadSlots(); }}
             className="mt-4 w-full rounded-xl border border-gray-200 bg-white py-3 text-sm font-medium text-gray-600"
           >
             Book another slot
@@ -381,6 +392,73 @@ export default function CourtBookingPortal() {
                   onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-brand-primary focus:outline-none" />
               </div>
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
+                  <Mail size={13} /> Email <span className="text-gray-400">(for your confirmation)</span>
+                </label>
+                <input value={email} type="email" inputMode="email"
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@email.com"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-brand-primary focus:outline-none" />
+              </div>
+            </div>
+
+            {/* Extras */}
+            <div className="rounded-xl border border-gray-100 bg-white p-4">
+              <p className="mb-2 text-sm font-semibold text-brand-secondary">Need anything?</p>
+              <div className="space-y-2">
+                {COURT_ADDONS.map((a) => {
+                  const qty = addOns[a.key] ?? 0;
+                  return (
+                    <div key={a.key} className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm text-gray-700">{a.label}</p>
+                        <p className="text-xs text-gray-400">{formatINR(a.pricePaise, { withDecimals: false })} each</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setAddOns((p) => ({ ...p, [a.key]: Math.max(0, (p[a.key] ?? 0) - 1) }))}
+                          disabled={qty === 0}
+                          className="h-8 w-8 rounded-lg border border-gray-200 text-gray-600 disabled:opacity-30"
+                        >−</button>
+                        <span className="w-5 text-center text-sm font-semibold">{qty}</span>
+                        <button
+                          type="button"
+                          onClick={() => setAddOns((p) => ({ ...p, [a.key]: Math.min(10, (p[a.key] ?? 0) + 1) }))}
+                          className="h-8 w-8 rounded-lg border border-gray-200 text-gray-600"
+                        >+</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Rules — shown before payment, and repeated in the email, so what
+                someone agreed to on the page is what reaches their inbox. */}
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-amber-800">
+                Court rules
+              </p>
+              <ul className="space-y-1.5">
+                {COURT_RULES.map((r) => (
+                  <li key={r} className="flex gap-2 text-xs leading-relaxed text-amber-900">
+                    <span className="mt-0.5 shrink-0">•</span>{r}
+                  </li>
+                ))}
+              </ul>
+              <label className="mt-3 flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={rulesAccepted}
+                  onChange={(e) => setRulesAccepted(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span className="text-xs font-medium text-amber-900">
+                  I've read and agree to the court rules
+                </span>
+              </label>
             </div>
 
             {/* Pay */}
@@ -393,6 +471,12 @@ export default function CourtBookingPortal() {
                 <p className="text-[11px] text-gray-400">
                   {dayLabel(date)} · {hour12(picked)} · {hours} hour{hours > 1 ? 's' : ''}
                 </p>
+                {extrasTotal > 0 && (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Court {formatINR(courtTotal, { withDecimals: false })}
+                    {' + extras '}{formatINR(extrasTotal, { withDecimals: false })}
+                  </p>
+                )}
               </div>
 
               <UpiQrCode upiUrl={upiUrl} className="border-gray-100" />

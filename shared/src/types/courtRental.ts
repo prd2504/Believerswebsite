@@ -32,6 +32,51 @@ export type CourtBookingSource = (typeof CourtBookingSource)[keyof typeof CourtB
 /** Statuses that occupy an hour. A cancelled booking frees it again. */
 export const OCCUPYING_STATUSES: readonly CourtBookingStatus[] = ['HELD', 'CONFIRMED'];
 
+/**
+ * Optional extras sold with an hour. Priced per unit and snapshotted onto the
+ * booking, so a later price change never rewrites what someone already paid.
+ */
+export interface CourtAddOn {
+  key: string;
+  label: string;
+  pricePaise: number;
+}
+
+export const COURT_ADDONS: CourtAddOn[] = [
+  { key: 'SHUTTLE', label: 'Mavis 350 shuttle', pricePaise: 10_000 },
+  { key: 'RACQUET', label: 'Extra racquet',     pricePaise: 10_000 },
+];
+
+/** Total for a set of add-on quantities, e.g. { SHUTTLE: 2, RACQUET: 1 }. */
+export function addOnsTotalPaise(qty: Record<string, number> | null | undefined): number {
+  if (!qty) return 0;
+  return COURT_ADDONS.reduce((t, a) => t + a.pricePaise * Math.max(0, qty[a.key] ?? 0), 0);
+}
+
+/** "2 x Mavis 350 shuttle, 1 x Extra racquet" — for emails and the admin grid. */
+export function describeAddOns(qty: Record<string, number> | null | undefined): string {
+  if (!qty) return '';
+  return COURT_ADDONS
+    .filter((a) => (qty[a.key] ?? 0) > 0)
+    .map((a) => `${qty[a.key]} × ${a.label}`)
+    .join(', ');
+}
+
+/**
+ * Court rules, shown at booking time AND repeated in the confirmation email.
+ *
+ * One list, two surfaces — a rule someone agreed to on the page must be the
+ * same rule that reaches their inbox, or the one they'll quote back is
+ * whichever was laxer.
+ */
+export const COURT_RULES: string[] = [
+  'Non-marking shoes are compulsory. You will not be allowed on court without them.',
+  'Your slot starts and ends on time. It cannot be extended — the next players need to start on time too.',
+  'Please arrive 5 minutes early and warm up off court, so play starts at the hour.',
+  'Leave the court clear at the end of your hour, including used shuttles and bottles.',
+  'Report any damaged equipment or net issues to the coach on duty before you leave.',
+];
+
 export interface CourtBookingDocument extends BaseDocument {
   id: string;
   centreId: string;
@@ -50,6 +95,13 @@ export interface CourtBookingDocument extends BaseDocument {
   /** Rate actually charged per hour — snapshotted so a later rate change
    *  never rewrites the value of a past booking. */
   hourlyRatePaise: number;
+  /** Court time only: hours × hourlyRatePaise. */
+  courtPaise: number;
+  /** Add-on quantities by key, e.g. { SHUTTLE: 2 }. */
+  addOns: Record<string, number>;
+  /** Add-ons subtotal, snapshotted at the prices charged. */
+  addOnsPaise: number;
+  /** What the booker pays: courtPaise + addOnsPaise. */
   amountPaise: number;
 
   status: CourtBookingStatus;

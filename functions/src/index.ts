@@ -55,8 +55,10 @@ export {
 export {
   scheduledSlotWindow,
   scheduleSlotWindowNow,
+  weeklyPlanCandidates,
 } from './slots/scheduleSlotWindow.js';
 export { onCourtBookingConfirmed } from './slots/onCourtBookingConfirmed.js';
+export { onCourtBookingCreated } from './slots/onCourtBookingCreated.js';
 
 // --- Slot booking writes (moved server-side to keep phone numbers private) ------------------
 export {
