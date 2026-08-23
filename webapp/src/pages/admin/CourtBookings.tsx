@@ -14,7 +14,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   CalendarDays, Lock, Unlock, Check, X, IndianRupee, Plus, Loader2,
-  ChevronLeft, ChevronRight, Repeat, Trash2,
+  ChevronLeft, ChevronRight, Repeat, Trash2, History,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
@@ -40,6 +40,7 @@ import {
   nextMonth,
   endOfMonthDate,
   istNow,
+  bookableDatesInMonth,
   DEFAULT_COURT_CONFIG,
   type CourtRentalConfig,
   type CourtBookingDocument,
@@ -83,7 +84,23 @@ export default function CourtBookingsPage() {
   const [config, setConfig] = useState<CourtRentalConfig | null>(null);
   const [bookings, setBookings] = useState<CourtBookingDocument[]>([]);
   const [plans, setPlans] = useState<CourtRentalPlan[]>([]);
+  /**
+   * Start on the month there is still work to do in.
+   *
+   * On the 30th, this month's last weekend has already gone and everything
+   * left to arrange is in the next one — opening on a grid of spent hours
+   * means a step before you can do anything. Falls back to the current month
+   * when the config is still loading, and is overridden the moment anyone
+   * touches the stepper.
+   */
   const [month, setMonth] = useState(() => istNow().date.slice(0, 7));
+  const [monthPinned, setMonthPinned] = useState(false);
+  /**
+   * Elapsed days are hidden by default. They matter — a cash walk-in gets
+   * entered after the fact — but they are not what anyone opens this page for,
+   * and by the end of a month they bury the days that are still live.
+   */
+  const [showPast, setShowPast] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -124,11 +141,40 @@ export default function CourtBookingsPage() {
 
   const effectiveConfig = config ?? { centreId, ...DEFAULT_COURT_CONFIG, updatedAt: '', updatedBy: null };
 
-  /** Only days that actually sell hours — weekdays would be empty noise. */
+  useEffect(() => {
+    if (monthPinned || !config) return;
+    const now = istNow();
+    const thisMonth = now.date.slice(0, 7);
+    if (bookableDatesInMonth(config, thisMonth, now).length === 0) setMonth(nextMonth(thisMonth));
+  }, [config, monthPinned]);
+
+  function stepMonth(to: string) {
+    setMonthPinned(true);
+    setMonth(to);
+  }
+
+  const today = istNow().date;
+
+  /**
+   * Only days that actually sell hours — weekdays would be empty noise — and,
+   * in the current month, only days that haven't gone yet unless asked.
+   *
+   * The filter applies to the current month alone: stepping back to a past
+   * month is a deliberate act with exactly one purpose, so hiding all of it
+   * would be perverse.
+   */
   const days = useMemo(() => dates
     .map((date) => ({ date, slots: buildDayAvailability(effectiveConfig, date, bookings) }))
-    .filter((d) => d.slots.length > 0),
-  [dates, effectiveConfig, bookings]);
+    .filter((d) => d.slots.length > 0)
+    .filter((d) => showPast || month !== today.slice(0, 7) || d.date >= today),
+  [dates, effectiveConfig, bookings, showPast, month, today]);
+
+  /** How many days the filter is holding back — so the toggle can say so. */
+  const hiddenPast = useMemo(() => {
+    if (showPast || month !== today.slice(0, 7)) return 0;
+    return dates.filter((d) => d < today
+      && buildDayAvailability(effectiveConfig, d, bookings).length > 0).length;
+  }, [dates, effectiveConfig, bookings, showPast, month, today]);
 
   const revenue = useMemo(() => {
     const confirmed = bookings.filter((b) => b.status === 'CONFIRMED');
@@ -249,7 +295,7 @@ export default function CourtBookingsPage() {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1">
             <button
-              onClick={() => setMonth(prevMonth(month))}
+              onClick={() => stepMonth(prevMonth(month))}
               className="rounded p-1.5 text-gray-500 hover:bg-gray-100"
               title="Previous month"
             >
@@ -259,13 +305,28 @@ export default function CourtBookingsPage() {
               {monthLabel(month)}
             </span>
             <button
-              onClick={() => setMonth(nextMonth(month))}
+              onClick={() => stepMonth(nextMonth(month))}
               className="rounded p-1.5 text-gray-500 hover:bg-gray-100"
               title="Next month"
             >
               <ChevronRight size={15} />
             </button>
           </div>
+          {(hiddenPast > 0 || showPast) && (
+            <button
+              onClick={() => setShowPast((v) => !v)}
+              className={cn(
+                'flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-medium transition',
+                showPast
+                  ? 'border-brand-primary bg-brand-primary/5 text-brand-primary'
+                  : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50',
+              )}
+              title="Elapsed days are still bookable here — that's how a cash walk-in gets recorded"
+            >
+              <History size={13} />
+              {showPast ? 'Hide past days' : `Show ${hiddenPast} past day${hiddenPast === 1 ? '' : 's'}`}
+            </button>
+          )}
           <select
             value={centreId}
             onChange={(e) => setCentreId(e.target.value)}
@@ -365,7 +426,9 @@ export default function CourtBookingsPage() {
       <div className="space-y-3">
         {days.length === 0 ? (
           <div className="card p-8 text-center text-sm text-gray-500">
-            No bookable hours configured for {monthLabel(month)}.
+            {hiddenPast > 0
+              ? `Nothing left to sell in ${monthLabel(month)} — step forward, or show the ${hiddenPast} day${hiddenPast === 1 ? '' : 's'} already played.`
+              : `No bookable hours configured for ${monthLabel(month)}.`}
           </div>
         ) : days.map(({ date, slots }) => (
           <div key={date} className="card">
