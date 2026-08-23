@@ -1,7 +1,7 @@
 import { sheets as sheetsApi, auth as sheetsAuth } from '@googleapis/sheets';
 import { logger } from 'firebase-functions';
 
-const SPREADSHEET_ID =
+export const SPREADSHEET_ID =
   process.env.GOOGLE_SHEETS_SPREADSHEET_ID || '10CHOa1P_NfP9KBdO7p3zxFk6BMTJTSEfCTbAppUqHuQ';
 
 const CENTRE_TAB: Record<string, string> = {
@@ -85,7 +85,7 @@ function normName(s: string | null | undefined): string {
   return (s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-function getSheets() {
+export function getSheets() {
   const auth = new sheetsAuth.GoogleAuth({
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
@@ -115,9 +115,9 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
   throw lastErr;
 }
 
-const svcAppend = (sheets: Sheets, params: any) => withRetry(() => sheets.spreadsheets.values.append(params));
-const svcGet = (sheets: Sheets, params: any) => withRetry(() => sheets.spreadsheets.values.get(params));
-const svcUpdate = (sheets: Sheets, params: any) => withRetry(() => sheets.spreadsheets.values.update(params));
+export const svcAppend = (sheets: Sheets, params: any) => withRetry(() => sheets.spreadsheets.values.append(params));
+export const svcGet = (sheets: Sheets, params: any) => withRetry(() => sheets.spreadsheets.values.get(params));
+export const svcUpdate = (sheets: Sheets, params: any) => withRetry(() => sheets.spreadsheets.values.update(params));
 const svcBatchUpdate = (sheets: Sheets, params: any) => withRetry(() => sheets.spreadsheets.values.batchUpdate(params));
 
 export interface PublicFeeSyncPayload {

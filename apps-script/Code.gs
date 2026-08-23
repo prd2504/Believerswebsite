@@ -62,6 +62,10 @@ var SHEETS = {
   PLAYERS    : "Player_Directory",
   INVOICES   : "Invoice_Log",
   ADMIN      : "admin_logs",
+  // Court hire. Deliberately NOT in PAYMENTS below: the rollover clears those
+  // tabs monthly, whereas rental rows are the permanent record of what was
+  // sold. Written by the onCourtBookingConfirmed Cloud Function.
+  COURT      : "Court_Rentals",
   PAYMENTS   : {
     "Dadar"            : "Payments_Dadar",
     "Ruia College"     : "Payments_Ruia",
@@ -313,6 +317,7 @@ function applySafeStyling() {
     return { name: SHEETS.PAYMENTS[c], monthIdx: PAY_COL.MONTH };
   });
   targets.push({ name: SHEETS.INVOICES, monthIdx: INV_COL.MONTH });
+  targets.push({ name: SHEETS.COURT,    monthIdx: -1 });
   targets.push({ name: SHEETS.PLAYERS,  monthIdx: -1 });
   targets.push({ name: SHEETS.ADMIN,    monthIdx: -1 });
 
@@ -663,6 +668,22 @@ function setupSpreadsheet() {
     sheet.getRange(2, PAY_COL.MONTH + 1, sheet.getMaxRows() - 1, 1)
          .setNumberFormat("@");
   });
+
+  // Court_Rentals — created here so the Cloud Function has somewhere to append.
+  var courtSheet = ss.getSheetByName(SHEETS.COURT);
+  if (!courtSheet) {
+    courtSheet = ss.insertSheet(SHEETS.COURT);
+    courtSheet.appendRow([
+      "Synced_At", "Date", "Start", "Hours", "Booker", "Phone",
+      "Rate", "Amount", "Source", "Status", "Booking_ID"
+    ]);
+    courtSheet.setFrozenRows(1);
+    courtSheet.getRange(1, 1, 1, 11)
+              .setBackground(HEADER_BG).setFontColor(HEADER_FG).setFontWeight("bold");
+    // Date column stays text so it can't be re-parsed into a serial.
+    courtSheet.getRange(2, 2, courtSheet.getMaxRows() - 1, 1).setNumberFormat("@");
+    Logger.log("Created: " + SHEETS.COURT);
+  }
 
   var logSheet = ss.getSheetByName(SHEETS.ADMIN);
   if (!logSheet) {

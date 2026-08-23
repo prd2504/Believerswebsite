@@ -56,3 +56,4 @@ export {
   scheduledSlotWindow,
   scheduleSlotWindowNow,
 } from './slots/scheduleSlotWindow.js';
+export { onCourtBookingConfirmed } from './slots/onCourtBookingConfirmed.js';

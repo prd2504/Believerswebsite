@@ -448,3 +448,18 @@ export async function cancelCourtPlan(planId: string, userId: string): Promise<n
   await updateDoc(doc(db, PLANS, planId), { active: false });
   return freed;
 }
+
+/**
+ * Every court booking in a month, across all centres — feeds the P&L.
+ *
+ * Date strings sort lexically, so a plain >= / <= range over YYYY-MM-DD works
+ * without needing a month field on the document.
+ */
+export async function getCourtBookingsForMonth(yearMonth: string): Promise<CourtBookingDocument[]> {
+  const snap = await getDocs(query(
+    collection(db, BOOKINGS),
+    where('date', '>=', `${yearMonth}-01`),
+    where('date', '<=', `${yearMonth}-31`),
+  ));
+  return snap.docs.map((d) => bookingFrom(d.id, d.data()));
+}

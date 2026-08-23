@@ -43,6 +43,7 @@ import {
 } from '@/services/centrePnlService';
 import { getAllPayments } from '@/services/paymentService';
 import { getAllCentres } from '@/services/centreService';
+import { getCourtBookingsForMonth } from '@/services/courtRentalService';
 import { getAllStudents } from '@/services/studentService';
 import { getAllBatches } from '@/services/batchService';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
@@ -59,6 +60,7 @@ import type {
   ExpenseCategory,
   PayoutStatus,
   RecurringExpenseDocument,
+  CourtBookingDocument,
 } from '@bba/shared';
 import { recurringAppliesTo, postedRecurringExpenseId } from '@bba/shared';
 
@@ -92,6 +94,8 @@ export default function FinancialsPage() {
   const [payouts, setPayouts] = useState<PartnerPayoutDocument[]>([]);
   const [prevPayouts, setPrevPayouts] = useState<PartnerPayoutDocument[]>([]);
   const [recurring, setRecurring] = useState<RecurringExpenseDocument[]>([]);
+  const [courtBookings, setCourtBookings] = useState<CourtBookingDocument[]>([]);
+  const [prevCourtBookings, setPrevCourtBookings] = useState<CourtBookingDocument[]>([]);
   const [postingRecurring, setPostingRecurring] = useState(false);
   const [pnlSort, setPnlSort] = useState<'net' | 'delta' | 'revenue'>('net');
 
@@ -155,14 +159,19 @@ export default function FinancialsPage() {
     try {
       setLoading(true);
       const prev = previousMonth(month);
-      const [expData, prevExpData, pmtData, cData, sData, bData] = await Promise.all([
-        getAllExpenses(month),
-        getAllExpenses(prev),
-        getAllPayments(),
-        getAllCentres(),
-        getAllStudents(),
-        getAllBatches(),
-      ]);
+      const [expData, prevExpData, pmtData, cData, sData, bData, courtData, prevCourtData] =
+        await Promise.all([
+          getAllExpenses(month),
+          getAllExpenses(prev),
+          getAllPayments(),
+          getAllCentres(),
+          getAllStudents(),
+          getAllBatches(),
+          getCourtBookingsForMonth(month),
+          getCourtBookingsForMonth(prev),
+        ]);
+      setCourtBookings(courtData);
+      setPrevCourtBookings(prevCourtData);
       setExpenses(expData);
       setPrevExpenses(prevExpData);
       setPayments(pmtData);
@@ -226,6 +235,8 @@ export default function FinancialsPage() {
     const rows = buildCentrePnl({
       centres,
       payments,
+      courtBookings,
+      prevCourtBookings,
       monthExpenses: expenses,
       prevMonthExpenses: prevExpenses,
       monthPayouts: payouts,
@@ -240,7 +251,8 @@ export default function FinancialsPage() {
       revenue: (a, b) => b.revenuePaise - a.revenuePaise,
     };
     return [...rows].sort(by[pnlSort]);
-  }, [centres, payments, expenses, prevExpenses, payouts, prevPayouts, month, pnlSort]);
+  }, [centres, payments, expenses, prevExpenses, payouts, prevPayouts,
+      courtBookings, prevCourtBookings, month, pnlSort]);
 
   const pnlTotals = useMemo(() => totalPnl(pnlRows), [pnlRows]);
 
@@ -705,6 +717,12 @@ export default function FinancialsPage() {
                 <div className="card p-4">
                   <p className="text-xs text-gray-500">Revenue</p>
                   <p className="text-lg font-bold text-green-600">{formatINR(pnlTotals.revenuePaise)}</p>
+                  {pnlTotals.rentalRevenuePaise > 0 && (
+                    <p className="mt-0.5 text-[10px] text-gray-400">
+                      fees {formatINR(pnlTotals.coachingRevenuePaise, { withDecimals: false })} ·
+                      court {formatINR(pnlTotals.rentalRevenuePaise, { withDecimals: false })}
+                    </p>
+                  )}
                 </div>
                 <div className="card p-4">
                   <p className="text-xs text-gray-500">Expenses</p>
@@ -738,6 +756,7 @@ export default function FinancialsPage() {
                     <tr>
                       <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Centre</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Revenue</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500 hidden lg:table-cell">of which court</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500 hidden sm:table-cell">Collected %</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">Expenses</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500 hidden lg:table-cell">of which salary</th>
@@ -751,6 +770,9 @@ export default function FinancialsPage() {
                       <tr key={r.centreId} className="hover:bg-gray-50">
                         <td className="px-4 py-2.5 font-medium text-brand-secondary">{r.centreName}</td>
                         <td className="px-4 py-2.5 text-right text-gray-700">{formatINR(r.revenuePaise)}</td>
+                        <td className="hidden px-4 py-2.5 text-right text-gray-400 lg:table-cell">
+                          {r.rentalRevenuePaise > 0 ? formatINR(r.rentalRevenuePaise, { withDecimals: false }) : '—'}
+                        </td>
                         <td className="hidden px-4 py-2.5 text-right sm:table-cell">
                           {r.collectionRate === null ? (
                             <span className="text-gray-300">—</span>

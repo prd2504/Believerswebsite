@@ -16,13 +16,23 @@ import type {
   PartnerPayoutDocument,
   PaymentDocument,
   CentreDocument,
+  CourtBookingDocument,
 } from '@bba/shared';
 
 export interface CentrePnlRow {
   centreId: string;
   centreName: string;
 
+  /** Coaching fees collected + court hire. What the centre actually took. */
   revenuePaise: number;
+  /** Coaching fees only — what the collection rate is measured against. */
+  coachingRevenuePaise: number;
+  /**
+   * Court hire, counted only once CONFIRMED. Reported as its own line rather
+   * than folded into fees: it is facility income, and blending it would show
+   * a coaching margin that isn't real.
+   */
+  rentalRevenuePaise: number;
   billedPaise: number;
   /** Collected ÷ billed for the month. Null when nothing was billed. */
   collectionRate: number | null;
@@ -37,6 +47,7 @@ export interface CentrePnlRow {
 
   // ── Prior month, and movement ──
   prevRevenuePaise: number;
+  prevRentalRevenuePaise: number;
   prevExpensesPaise: number;
   prevNetPaise: number;
   /** Net this month minus net last month. Positive = improved. */
@@ -53,6 +64,8 @@ export interface CentrePnlRow {
 export interface PnlInputs {
   centres: CentreDocument[];
   payments: PaymentDocument[];
+  courtBookings?: CourtBookingDocument[];
+  prevCourtBookings?: CourtBookingDocument[];
   monthExpenses: CentreExpenseDocument[];
   prevMonthExpenses: CentreExpenseDocument[];
   monthPayouts: PartnerPayoutDocument[];
@@ -75,6 +88,7 @@ export function previousMonth(yearMonth: string): string {
 export function buildCentrePnl(input: PnlInputs): CentrePnlRow[] {
   const {
     centres, payments,
+    courtBookings = [], prevCourtBookings = [],
     monthExpenses, prevMonthExpenses,
     monthPayouts, prevMonthPayouts,
     month, prevMonth,
@@ -87,9 +101,19 @@ export function buildCentrePnl(input: PnlInputs): CentrePnlRow[] {
     const curPayments = payments.filter((p) => p.centreId === centre.id && p.month === month);
     const prevPayments = payments.filter((p) => p.centreId === centre.id && p.month === prevMonth);
 
-    const revenuePaise = sum(curPayments.filter((p) => p.status === 'PAID'), (p) => p.totalAmountPaise);
+    const coachingRevenuePaise = sum(curPayments.filter((p) => p.status === 'PAID'), (p) => p.totalAmountPaise);
     const billedPaise = sum(curPayments, (p) => p.totalAmountPaise);
-    const prevRevenuePaise = sum(prevPayments.filter((p) => p.status === 'PAID'), (p) => p.totalAmountPaise);
+    const prevCoaching = sum(prevPayments.filter((p) => p.status === 'PAID'), (p) => p.totalAmountPaise);
+
+    // Only CONFIRMED hires count — a HELD slot is an unverified claim, and
+    // counting it would inflate revenue with money that may never arrive.
+    const rentalRevenuePaise = sum(
+      forCentre(courtBookings).filter((b) => b.status === 'CONFIRMED'), (b) => b.amountPaise);
+    const prevRentalRevenuePaise = sum(
+      forCentre(prevCourtBookings).filter((b) => b.status === 'CONFIRMED'), (b) => b.amountPaise);
+
+    const revenuePaise = coachingRevenuePaise + rentalRevenuePaise;
+    const prevRevenuePaise = prevCoaching + prevRentalRevenuePaise;
 
     // Pending and rejected submissions are excluded — an expense a manager has
     // raised but no one has approved is not yet a cost against profit.
@@ -110,14 +134,19 @@ export function buildCentrePnl(input: PnlInputs): CentrePnlRow[] {
       centreId: centre.id,
       centreName: centre.name,
       revenuePaise,
+      coachingRevenuePaise,
+      rentalRevenuePaise,
       billedPaise,
-      collectionRate: billedPaise > 0 ? revenuePaise / billedPaise : null,
+      // Measured against coaching only: court hire is paid up front and has
+      // no billed-but-unpaid concept, so including it would flatter the rate.
+      collectionRate: billedPaise > 0 ? coachingRevenuePaise / billedPaise : null,
       expensesPaise,
       salaryPaise,
       payoutsPaise,
       netPaise,
       marginPct: revenuePaise > 0 ? netPaise / revenuePaise : null,
       prevRevenuePaise,
+      prevRentalRevenuePaise,
       prevExpensesPaise,
       prevNetPaise,
       netDeltaPaise,
@@ -131,6 +160,8 @@ export function buildCentrePnl(input: PnlInputs): CentrePnlRow[] {
 
 export interface PnlTotals {
   revenuePaise: number;
+  coachingRevenuePaise: number;
+  rentalRevenuePaise: number;
   expensesPaise: number;
   salaryPaise: number;
   payoutsPaise: number;
@@ -142,6 +173,8 @@ export interface PnlTotals {
 export function totalPnl(rows: CentrePnlRow[]): PnlTotals {
   return {
     revenuePaise: sum(rows, (r) => r.revenuePaise),
+    coachingRevenuePaise: sum(rows, (r) => r.coachingRevenuePaise),
+    rentalRevenuePaise: sum(rows, (r) => r.rentalRevenuePaise),
     expensesPaise: sum(rows, (r) => r.expensesPaise),
     salaryPaise: sum(rows, (r) => r.salaryPaise),
     payoutsPaise: sum(rows, (r) => r.payoutsPaise),
