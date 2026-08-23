@@ -16,6 +16,7 @@ import {
   Clock, Calendar, Check, Loader2, AlertCircle, Copy, CheckCircle2, Upload, User, Phone, Mail,
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { uploadObjectPath } from '../../lib/uploadPath';
 import { storage } from '@/lib/firebase';
 import { cn } from '@/lib/cn';
 import { UpiQrCode } from '@/components/common/UpiQrCode';
@@ -188,7 +189,7 @@ export default function CourtBookingPortal() {
       let screenshotUrl: string | null = null;
       if (shot) {
         try {
-          const path = `court-bookings/${centreId}/${Date.now()}_${shot.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          const path = uploadObjectPath('court-bookings', centreId, shot.name);
           const r = ref(storage, path);
           // The screenshot is optional — never let a slow upload hold the
           // booking hostage, or the hour may be gone by the time it finishes.

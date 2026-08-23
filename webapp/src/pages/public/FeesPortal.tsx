@@ -30,6 +30,7 @@ import {
   type SlotPlanType, type SlotBookingDocument,
 } from '@bba/shared';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { uploadObjectPath } from '../../lib/uploadPath';
 import { storage } from '@/lib/firebase';
 import { UpiQrCode } from '@/components/common/UpiQrCode';
 import {
@@ -530,8 +531,7 @@ export default function FeesPortal() {
       if (screenshotFile) {
         try {
           const compressed = await compressImage(screenshotFile);
-          const safeName = screenshotFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-          const path = `fee-screenshots/${selectedCentre.id}/${Date.now()}_${safeName}`;
+          const path = uploadObjectPath('fee-screenshots', selectedCentre.id, screenshotFile.name);
           const storageRef = ref(storage, path);
           // The screenshot is optional, so it must never hold the payment
           // hostage on a slow/flaky mobile connection. Cap the whole

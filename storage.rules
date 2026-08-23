@@ -34,10 +34,30 @@ service firebase.storage {
       allow write: if false; // Cloud Functions admin SDK writes only
     }
 
-    // Fee payment screenshots: public upload + read (for the unauthenticated
-    // /fees page). The page is anonymous, so getDownloadURL() after upload
-    // needs public read. Object paths include a timestamp and are unguessable.
+    // Payment screenshots from the two anonymous pages: /fees and the
+    // unlisted /court booking page.
+    //
+    // Both uploaders are unauthenticated by design, so create must be open —
+    // and getDownloadURL() on the way back needs a matching read, which means
+    // the object path is the only access control there is. See
+    // webapp/src/lib/uploadPath.ts: paths are a random 128-bit id, not a
+    // timestamp, so there is nothing to enumerate. Whoever holds the URL can
+    // read it; nobody else can find it.
+    //
+    // update/delete stay closed so a screenshot can never be swapped for a
+    // different one after a payment has been recorded against it.
     match /fee-screenshots/{centreId}/{filename} {
+      allow read: if true;
+      allow create: if request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+
+    // Court booking screenshots. Previously absent, so every upload from the
+    // /court page hit the catch-all deny and was swallowed by the page's
+    // optional-screenshot fallback — bookings arrived with no proof of payment
+    // and no error anywhere.
+    match /court-bookings/{centreId}/{filename} {
       allow read: if true;
       allow create: if request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
