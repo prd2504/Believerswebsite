@@ -255,6 +255,14 @@ service cloud.firestore {
       allow update, delete: if isAdminLike();
     }
 
+    // ── /courtRentalPlans/{planId} ───────────────────────────────────────────────────────
+    // Recurring monthly court hires. Admin-only both ways — a plan is arranged
+    // directly, never self-served, and it carries a member of the public's
+    // contact details.
+    match /courtRentalPlans/{planId} {
+      allow read, write: if isAdminLike();
+    }
+
     // ── /courtRentalConfig/{centreId} ────────────────────────────────────────────────────
     // Public read so the booking page can show real availability; only an
     // admin may change rates, windows or open/close an hour.

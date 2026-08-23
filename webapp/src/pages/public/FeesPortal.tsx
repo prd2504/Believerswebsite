@@ -31,7 +31,7 @@ import {
 } from '@bba/shared';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '@/lib/firebase';
-import QRCode from 'qrcode';
+import { UpiQrCode } from '@/components/common/UpiQrCode';
 import {
   fetchActiveCentres,
   searchStudentsByCentre,
@@ -152,41 +152,6 @@ async function compressImage(file: File, maxDim = 1280, quality = 0.7): Promise<
   } catch {
     return file;
   }
-}
-
-/**
- * Renders a scannable UPI QR code, generated entirely client-side (no network
- * call, no third-party image host) from the exact same upi:// string as the
- * "Open UPI App" deep link — so they can never drift out of sync with each
- * other. Exists because the deep link alone isn't reliable: some UPI apps
- * (notably on certain Android/PhonePe/GPay combinations) reject it with
- * "receiver's VPA not available" even though the ID is valid — scanning a QR
- * for the same payee doesn't hit that failure mode. Also the only way to pay
- * for someone viewing the page on a desktop.
- */
-function UpiQrCode({ upiUrl }: { upiUrl: string }) {
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setFailed(false);
-    QRCode.toDataURL(upiUrl, { width: 220, margin: 1, color: { dark: '#0D1B2A', light: '#FFFFFF' } })
-      .then((url) => { if (!cancelled) setDataUrl(url); })
-      .catch(() => { if (!cancelled) setFailed(true); });
-    return () => { cancelled = true; };
-  }, [upiUrl]);
-
-  if (failed) return null; // deep-link button + manual UPI ID box still work
-
-  return (
-    <div className="flex flex-col items-center gap-2 rounded-xl border border-gray-700 bg-white p-4">
-      {dataUrl
-        ? <img src={dataUrl} alt="Scan to pay via UPI" width={180} height={180} className="h-[180px] w-[180px]" />
-        : <div className="flex h-[180px] w-[180px] items-center justify-center"><Loader2 size={24} className="animate-spin text-gray-400" /></div>}
-      <p className="text-center text-xs font-medium text-gray-600">Scan &amp; Pay</p>
-    </div>
-  );
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────

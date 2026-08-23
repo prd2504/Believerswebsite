@@ -304,3 +304,147 @@ export async function setCourtConfig(
     updatedBy: userId,
   }, { merge: true });
 }
+
+// ── Monthly plans ────────────────────────────────────────────────────────────
+
+/**
+ * A recurring weekly hour, sold for a month at the discounted rate.
+ *
+ * Materialised into real bookings rather than being a separate kind of
+ * reservation, so the availability grid, double-booking guard and revenue all
+ * work unchanged — a plan booking occupies an hour exactly like any other.
+ *
+ * The slot is HELD for the plan holder. A missed week is not credited: the
+ * hour was reserved for them and could not be resold, which is what they are
+ * paying the lower rate for.
+ */
+export interface CourtRentalPlan {
+  id: string;
+  centreId: string;
+  bookerName: string;
+  bookerPhone: string;
+  /** 0=Sun … 6=Sat. */
+  weekday: number;
+  startHour: string;
+  hours: number;
+  /** YYYY-MM this plan covers. */
+  yearMonth: string;
+  hourlyRatePaise: number;
+  active: boolean;
+  createdAt: string;
+  createdBy: string | null;
+}
+
+const PLANS = COLLECTIONS.courtRentalPlans;
+
+/** Every date in a month falling on the given weekday. */
+export function datesForWeekday(yearMonth: string, weekday: number): string[] {
+  const [y, m] = yearMonth.split('-').map(Number);
+  const last = new Date(y, m, 0).getDate();
+  const out: string[] = [];
+  for (let d = 1; d <= last; d++) {
+    if (new Date(y, m - 1, d).getDay() === weekday) {
+      out.push(`${yearMonth}-${String(d).padStart(2, '0')}`);
+    }
+  }
+  return out;
+}
+
+export async function getCourtPlans(centreId: string, yearMonth: string): Promise<CourtRentalPlan[]> {
+  const snap = await getDocs(query(
+    collection(db, PLANS),
+    where('centreId', '==', centreId),
+    where('yearMonth', '==', yearMonth),
+  ));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as CourtRentalPlan);
+}
+
+export interface PlanResult {
+  planId: string;
+  booked: string[];
+  clashes: string[];
+  totalPaise: number;
+}
+
+/**
+ * Create a plan and book every occurrence in the month.
+ *
+ * Clashes are reported rather than thrown: if one of five Saturdays is
+ * already taken, the other four should still be booked and the operator told
+ * which one needs sorting — failing the whole plan over one date would be
+ * worse than a partial booking they can see.
+ */
+export async function createCourtPlan(
+  input: {
+    centreId: string;
+    bookerName: string;
+    bookerPhone: string;
+    weekday: number;
+    startHour: string;
+    hours: number;
+    yearMonth: string;
+  },
+  userId: string,
+): Promise<PlanResult> {
+  const cfg = await getCourtConfig(input.centreId);
+  const rate = cfg.planHourlyRatePaise;
+  const planId = `${input.centreId}_${input.yearMonth}_${input.weekday}_${input.startHour.replace(':', '')}`;
+
+  await setDoc(doc(db, PLANS, planId), {
+    centreId: input.centreId,
+    bookerName: input.bookerName,
+    bookerPhone: input.bookerPhone,
+    weekday: input.weekday,
+    startHour: input.startHour,
+    hours: input.hours,
+    yearMonth: input.yearMonth,
+    hourlyRatePaise: rate,
+    active: true,
+    createdAt: serverTimestamp(),
+    createdBy: userId,
+  }, { merge: true });
+
+  const booked: string[] = [];
+  const clashes: string[] = [];
+
+  for (const date of datesForWeekday(input.yearMonth, input.weekday)) {
+    try {
+      await createCourtBooking({
+        centreId: input.centreId,
+        date,
+        startHour: input.startHour,
+        hours: input.hours,
+        bookerName: input.bookerName,
+        bookerPhone: input.bookerPhone,
+        source: 'MONTHLY_PLAN',
+        hourlyRatePaise: rate,
+        planId,
+      });
+      booked.push(date);
+    } catch (err) {
+      // Includes hours that are closed that week (e.g. Sunday 15:00) as well
+      // as genuine double-bookings — both need a human decision.
+      clashes.push(date);
+    }
+  }
+
+  return { planId, booked, clashes, totalPaise: booked.length * rate * Math.max(1, input.hours) };
+}
+
+/** Cancel a plan and free every hour it still holds for the month. */
+export async function cancelCourtPlan(planId: string, userId: string): Promise<number> {
+  const snap = await getDocs(query(collection(db, BOOKINGS), where('planId', '==', planId)));
+  let freed = 0;
+  for (const d of snap.docs) {
+    if (d.data().status === 'CANCELLED') continue;
+    await updateDoc(d.ref, {
+      status: 'CANCELLED',
+      notes: 'Plan cancelled',
+      updatedAt: serverTimestamp(),
+      updatedBy: userId,
+    });
+    freed++;
+  }
+  await updateDoc(doc(db, PLANS, planId), { active: false });
+  return freed;
+}

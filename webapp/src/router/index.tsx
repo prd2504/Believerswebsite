@@ -29,6 +29,7 @@ const RegisterPage = lazy(() => import('@/pages/auth/Register'));
 const PendingApprovalPage = lazy(() => import('@/pages/auth/PendingApproval'));
 const BookingRedirect = lazy(() => import('@/pages/public/BookingRedirect'));
 const FeesPortal = lazy(() => import('@/pages/public/FeesPortal'));
+const CourtBookingPortal = lazy(() => import('@/pages/public/CourtBookingPortal'));
 
 const AdminDashboard = lazy(() => import('@/pages/admin/Dashboard'));
 const CentresPage = lazy(() => import('@/pages/admin/Centres'));
@@ -91,6 +92,12 @@ const routes: RouteObject[] = [
   {
     path: '/fees',
     element: <Lazy><FeesPortal /></Lazy>,
+  },
+  // Unlisted on purpose — shared by direct link only. Not in any nav, not
+  // linked from /fees, and the page sets a noindex robots tag on mount.
+  {
+    path: '/court/:centreSlug',
+    element: <Lazy><CourtBookingPortal /></Lazy>,
   },
 
   // Root redirect — sends authenticated users to their role home, guests to /login
