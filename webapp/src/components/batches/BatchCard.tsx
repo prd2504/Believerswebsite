@@ -23,6 +23,13 @@ const LEVEL_STYLES: Record<string, string> = {
 interface BatchCardProps {
   batch: BatchDocument;
   centreName?: string;
+  /**
+   * Students who will actually train this month — ACTIVE enrollments minus
+   * those the family paused for the current month. Not the same thing as
+   * `batch.currentEnrolment`, which is total ACTIVE enrolments, and not the
+   * same again as the drifted historical counter this replaces.
+   */
+  attendingThisMonth?: number;
   onEdit: (batch: BatchDocument) => void;
   onDelete: (batch: BatchDocument) => void;
 }
@@ -41,9 +48,15 @@ function formatPlanRange(batch: BatchDocument): string {
   return `${formatINR(min, { withDecimals: false })} – ${formatINR(max, { withDecimals: false })}/mo`;
 }
 
-export function BatchCard({ batch, centreName, onEdit, onDelete }: BatchCardProps) {
+export function BatchCard({
+  batch, centreName, attendingThisMonth, onEdit, onDelete,
+}: BatchCardProps) {
   const occupancyPct =
     batch.maxCapacity > 0 ? Math.round((batch.currentEnrolment / batch.maxCapacity) * 100) : 0;
+  const attending = attendingThisMonth ?? batch.currentEnrolment;
+  // Someone paused for this month is enrolled but not on court, and that gap
+  // is exactly what a batch card is meant to make visible.
+  const pausedThisMonth = Math.max(0, batch.currentEnrolment - attending);
 
   return (
     <div className="card group relative transition-shadow hover:shadow-card-hover">
@@ -116,12 +129,21 @@ export function BatchCard({ batch, centreName, onEdit, onDelete }: BatchCardProp
         <div className="flex items-center gap-1 text-xs text-gray-500">
           <Users size={13} />
           <span>
+            {attending}
+            <span className="text-gray-400"> training</span>
+            <span className="mx-1 text-gray-300">·</span>
             {batch.currentEnrolment}/{batch.maxCapacity}
+            <span className="text-gray-400"> enrolled</span>
           </span>
           <span className="text-gray-300">({occupancyPct}%)</span>
         </div>
         <span className="text-sm font-semibold text-brand-secondary">{formatPlanRange(batch)}</span>
       </div>
+      {pausedThisMonth > 0 && (
+        <p className="mt-1 text-[11px] text-gray-400">
+          {pausedThisMonth} paused this month
+        </p>
+      )}
 
       {/* Occupancy bar */}
       <div className="mt-2 h-1.5 w-full rounded-full bg-gray-100">

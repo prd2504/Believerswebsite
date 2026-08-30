@@ -58,6 +58,11 @@ export {
   weeklyPlanCandidates,
 } from './slots/scheduleSlotWindow.js';
 export { onCourtBookingSheetSync, onCourtPlanSheetSync } from './slots/courtSheetSync.js';
+
+// --- Batch enrolment counter: rebuilt from source on every enrollment write
+//     (see enrollments/onEnrollmentWritten.ts for the drift history) ---------
+export { onEnrollmentWritten } from './enrollments/onEnrollmentWritten.js';
+export { backfillBatchCounters } from './enrollments/backfillBatchCounters.js';
 export { onCourtBookingCreated } from './slots/onCourtBookingCreated.js';
 
 // --- Slot booking writes (moved server-side to keep phone numbers private) ------------------

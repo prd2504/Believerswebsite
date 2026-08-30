@@ -8,6 +8,8 @@ import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { getAllBatches, createBatch, updateBatch, deleteBatch } from '@/services/batchService';
 import { getAllCentres } from '@/services/centreService';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { BatchCard } from '@/components/batches/BatchCard';
 import { BatchForm } from '@/components/batches/BatchForm';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -22,6 +24,13 @@ export default function BatchesPage() {
   const { profile } = useAuth();
   const [batches, setBatches] = useState<BatchDocument[]>([]);
   const [centres, setCentres] = useState<CentreDocument[]>([]);
+  /**
+   * Live "training this month" count per batch — ACTIVE enrollments minus
+   * those paused for the current YYYY-MM. Different from batch.currentEnrolment
+   * (which is all ACTIVE regardless of month), and different again from the
+   * old drifted counter. Keyed by batch id.
+   */
+  const [attendingByBatch, setAttendingByBatch] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<Mode>('list');
   const [editTarget, setEditTarget] = useState<BatchDocument | null>(null);
@@ -41,9 +50,28 @@ export default function BatchesPage() {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const [bData, cData] = await Promise.all([getAllBatches(), getAllCentres()]);
+      const [bData, cData, enrolSnap] = await Promise.all([
+        getAllBatches(),
+        getAllCentres(),
+        // One collection read for the whole page beats one per batch card.
+        // ACTIVE only, since a paused / ended enrollment is not a person on
+        // court this month.
+        getDocs(query(collection(db, 'enrollments'), where('status', '==', 'ACTIVE'))),
+      ]);
       setBatches(bData);
       setCentres(cData);
+
+      const ym = new Date().toISOString().slice(0, 7);
+      const counts: Record<string, number> = {};
+      enrolSnap.docs.forEach((d) => {
+        const e = d.data();
+        const paused = Array.isArray(e.pausedMonths) && e.pausedMonths.includes(ym);
+        if (paused) return;
+        const bid = String(e.batchId ?? '');
+        if (!bid) return;
+        counts[bid] = (counts[bid] ?? 0) + 1;
+      });
+      setAttendingByBatch(counts);
     } catch (err) {
       console.error(err);
       toast.error('Failed to load batches');
@@ -208,6 +236,7 @@ export default function BatchesPage() {
               key={b.id}
               batch={b}
               centreName={centreMap.get(b.centreId)}
+              attendingThisMonth={attendingByBatch[b.id] ?? 0}
               onEdit={handleEdit}
               onDelete={handleDelete}
             />

@@ -92,11 +92,11 @@ export async function autoEnrollIfMissing(
     notes: 'Auto-enrolled from a public /fees payment — verify the selected days match what the family actually attends.',
     createdAt: now, updatedAt: now, createdBy: 'PUBLIC_FEES_PAGE', updatedBy: 'PUBLIC_FEES_PAGE',
   });
-  writeBatch.update(batchDoc.ref, {
-    studentIds: FieldValue.arrayUnion(studentId),
-    currentEnrolment: FieldValue.increment(1),
-    updatedAt: now, updatedBy: 'PUBLIC_FEES_PAGE',
-  });
+  // No batch counter update here on purpose. The old +1 double-counted every
+  // renewal whose previous enrollment had ended, and arrayUnion masked the
+  // drift because it is idempotent while increment is not. The trigger on
+  // /enrollments/{id} now recomputes both fields from source — see
+  // enrollments/onEnrollmentWritten.ts.
   writeBatch.update(db.doc(`students/${studentId}`), {
     batchIds: FieldValue.arrayUnion(batchDoc.id), updatedAt: now,
   });

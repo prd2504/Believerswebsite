@@ -2,9 +2,11 @@
  * Enrollment service — Firestore operations for /enrollments/{enrollmentId}.
  *
  * Each enrollment ties one student to one batch with a chosen frequency plan and
- * the specific days they attend. Mutations also keep the denormalised mirrors on
- * the batch (`studentIds`, `currentEnrolment`) and student (`batchIds`) in sync via
- * a write batch — they're a single logical operation.
+ * the specific days they attend. The batch's denormalised mirrors
+ * (`studentIds`, `currentEnrolment`) are rebuilt from source by the
+ * onEnrollmentWritten Cloud Function whenever any enrollment changes — client
+ * writes only touch the student's `batchIds`, which is per-student and safe to
+ * mirror here.
  */
 
 import {
@@ -20,7 +22,6 @@ import {
   writeBatch,
   arrayUnion,
   arrayRemove,
-  increment,
   type DocumentData,
   type Timestamp,
 } from 'firebase/firestore';
@@ -78,8 +79,8 @@ export interface EnrollInput {
 }
 
 /**
- * Create an enrolment. Also mirrors to batch.studentIds / batch.currentEnrolment and
- * student.batchIds in a write batch so the three documents stay consistent.
+ * Create an enrolment. Mirrors student.batchIds in the same write batch;
+ * the batch's own counters are recomputed server-side by onEnrollmentWritten.
  */
 export async function enrollStudent(input: EnrollInput, userId: string): Promise<string> {
   if (input.selectedDays.length !== input.daysPerWeek) {
@@ -120,13 +121,11 @@ export async function enrollStudent(input: EnrollInput, userId: string): Promise
     updatedBy: userId,
   });
 
-  batch.update(batchRef, {
-    studentIds: arrayUnion(input.studentId),
-    currentEnrolment: increment(1),
-    updatedAt: serverTimestamp(),
-    updatedBy: userId,
-  });
-
+  // The batch's studentIds and currentEnrolment are rebuilt from source by the
+  // onEnrollmentWritten Cloud Function; a manual +1 here compounded with the
+  // trigger's SET would still be correct, but the years of drift the trigger
+  // has to fix all came from manual increments running when they shouldn't
+  // have. Better to have exactly one place that owns the count.
   batch.update(studentRef, {
     batchIds: arrayUnion(input.batchId),
     updatedAt: serverTimestamp(),
@@ -138,8 +137,10 @@ export async function enrollStudent(input: EnrollInput, userId: string): Promise
 }
 
 /**
- * End an enrolment. Marks status=ENDED, sets endDate, removes from denormalised mirrors.
- * The document is kept (not deleted) for historical attendance/payment correlation.
+ * End an enrolment. Marks status=ENDED, sets endDate, removes the batch from
+ * the student's batchIds. The document is kept (not deleted) for historical
+ * attendance/payment correlation; the batch counter is recomputed by
+ * onEnrollmentWritten.
  */
 export async function endEnrollment(
   enrollmentId: string,
@@ -151,7 +152,6 @@ export async function endEnrollment(
   if (!snap.exists()) throw new Error('Enrollment not found');
 
   const data = snap.data();
-  const batchRef = doc(db, COLLECTIONS.batches, data.batchId as string);
   const studentRef = doc(db, COLLECTIONS.students, data.studentId as string);
 
   const batch = writeBatch(db);
@@ -161,12 +161,7 @@ export async function endEnrollment(
     updatedAt: serverTimestamp(),
     updatedBy: userId,
   });
-  batch.update(batchRef, {
-    studentIds: arrayRemove(data.studentId as string),
-    currentEnrolment: increment(-1),
-    updatedAt: serverTimestamp(),
-    updatedBy: userId,
-  });
+  // Trigger owns the batch counters now (see enrollStudent above).
   batch.update(studentRef, {
     batchIds: arrayRemove(data.batchId as string),
     updatedAt: serverTimestamp(),
