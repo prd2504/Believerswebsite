@@ -122,6 +122,10 @@ export const createSlotBooking = onRequest(
         month: String(b.month),
         coversMonths,
         participantName: name,
+        // The link that lets a booking become an enrolment, appear on a batch
+        // roster, and be reconciled against fees. The /fees flow has always
+        // known it; it just wasn't written here.
+        studentId: b.studentId ? String(b.studentId) : null,
         planType: b.planType,
         timeSlot: String(b.timeSlot ?? ''),
         selectedDays: Array.isArray(b.selectedDays) ? b.selectedDays : [],

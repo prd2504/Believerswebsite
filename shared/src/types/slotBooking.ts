@@ -51,6 +51,21 @@ export interface SlotBookingDocument {
 
   participantName: string;
   /**
+   * The student this booking is for.
+   *
+   * The /fees flow has always known it — the payer picks their child from the
+   * autocomplete before paying — but it was not written here, which severed
+   * the booking from every other record about that student. Without it a Ruia
+   * booking cannot become an enrolment, cannot appear on a batch roster,
+   * cannot be marked present against a student, and cannot be reconciled
+   * against fees. Matching on name instead is how the wrong child gets
+   * credited.
+   *
+   * Null on bookings written before this field existed, and on any taken by
+   * hand for someone with no student record yet.
+   */
+  studentId: string | null;
+  /**
    * Phone and email are NOT here — they live in the private subcollection
    * below. This document is world-readable so /fees can show live slot counts
    * and who's booked, which meant every parent's phone number and email were
@@ -298,3 +313,124 @@ export const SLOT_PLANS: SlotPlanConfig[] = [
     includesSaturday: true,
   },
 ];
+
+// ── Bookings → batches ───────────────────────────────────────────────────────
+
+/**
+ * How many sessions a week each plan buys.
+ *
+ * The batch side of the house thinks in `daysPerWeek` frequency plans; the
+ * booking side thinks in plan types. This is the one place the two vocabularies
+ * are reconciled, so a mismatch shows up here rather than in four call sites.
+ *
+ * COMPLETE_BUNDLE is 3 weekday mornings PLUS Saturday, which is two different
+ * batches at Ruia, so it has no single answer — see resolveBookingBatchIds.
+ */
+export const SLOT_PLAN_DAYS_PER_WEEK: Record<string, number | null> = {
+  TWO_DAY: 2,
+  THREE_DAY: 3,
+  FOUR_DAY: 4,
+  GAMES_DAY: 1,
+  COMPLETE_BUNDLE: null,
+};
+
+/** Plans that include a Saturday Games Day session. */
+export const SLOT_PLANS_WITH_SATURDAY = new Set(['GAMES_DAY', 'COMPLETE_BUNDLE']);
+/** Plans that include weekday morning sessions. */
+export const SLOT_PLANS_WITH_WEEKDAYS = new Set(['TWO_DAY', 'THREE_DAY', 'FOUR_DAY', 'COMPLETE_BUNDLE']);
+
+export interface BatchLike {
+  id: string;
+  centreId: string;
+  status: string;
+  offeredDays: number[];
+  frequencyPlans: { daysPerWeek: number; monthlyFeePaise: number }[];
+  slotPlanTypes?: string[];
+  startTime: string;
+}
+
+export interface BookingLike {
+  planType: string;
+  timeSlot: string;
+  selectedDays: number[];
+}
+
+/**
+ * Which batch (or batches) a booking belongs in.
+ *
+ * Resolution order matters:
+ *
+ *  1. An explicit `slotPlanTypes` on the batch wins. That is an operator
+ *     saying "this batch takes these bookings", and it should never be
+ *     second-guessed by a heuristic.
+ *  2. Otherwise fall back to matching the plan's days-per-week against the
+ *     batch's frequency plans, split on the weekday/Saturday line so a Games
+ *     Day booking cannot land in a weekday batch.
+ *
+ * Returns EVERY match. A Complete Bundle genuinely belongs in two batches —
+ * weekday mornings and Saturday games — and collapsing that to one would drop
+ * the person off one of the two rosters they have paid for.
+ *
+ * An empty result is a real answer: no batch serves this plan. Callers should
+ * report it rather than picking the nearest thing.
+ */
+export function resolveBookingBatchIds(booking: BookingLike, batches: BatchLike[]): string[] {
+  const active = batches.filter((b) => b.status === 'ACTIVE');
+
+  const declared = active.filter((b) => (b.slotPlanTypes ?? []).includes(booking.planType));
+  if (declared.length > 0) return declared.map((b) => b.id);
+
+  const wantsSaturday = SLOT_PLANS_WITH_SATURDAY.has(booking.planType);
+  const wantsWeekdays = SLOT_PLANS_WITH_WEEKDAYS.has(booking.planType);
+  const days = SLOT_PLAN_DAYS_PER_WEEK[booking.planType] ?? null;
+  const tueThu = isTueThuSlot(booking.timeSlot);
+
+  const out: string[] = [];
+
+  if (wantsWeekdays) {
+    // Weekday batches run Mon–Fri; the Tue/Thu band is its own batch, so a
+    // Tue/Thu booking must not be offered a Mon-Wed-Fri batch and vice versa.
+    const weekdayBatches = active.filter((b) => b.offeredDays.some((d) => d >= 1 && d <= 5));
+    const matching = weekdayBatches.filter((b) => {
+      const servesTueThu = b.offeredDays.includes(2) && b.offeredDays.includes(4)
+        && !b.offeredDays.includes(1) && !b.offeredDays.includes(3);
+      if (tueThu !== servesTueThu) return false;
+      // Complete Bundle's weekday half is three mornings.
+      const want = days ?? 3;
+      return b.frequencyPlans.some((p) => p.daysPerWeek === want);
+    });
+    out.push(...matching.map((b) => b.id));
+  }
+
+  if (wantsSaturday) {
+    const satBatches = active.filter(
+      (b) => b.offeredDays.includes(6) && !b.offeredDays.some((d) => d >= 1 && d <= 5),
+    );
+    out.push(...satBatches.map((b) => b.id));
+  }
+
+  return Array.from(new Set(out));
+}
+
+/**
+ * The weekdays a booking actually attends in a given batch.
+ *
+ * A Complete Bundle carries Mon/Wed/Fri AND Saturday in one `selectedDays`,
+ * but the Saturday batch must not list them as attending on Wednesday. Split
+ * the booking's days by what the batch actually runs.
+ */
+export function bookingDaysForBatch(booking: BookingLike, batch: BatchLike): number[] {
+  const offered = new Set(batch.offeredDays);
+  const days = booking.selectedDays.filter((d) => offered.has(d));
+  // Games Day bookings often carry no explicit days — the plan IS Saturday.
+  if (days.length === 0 && SLOT_PLANS_WITH_SATURDAY.has(booking.planType) && offered.has(6)) {
+    return [6];
+  }
+  return days;
+}
+
+/** "06:00-07:00" / "06:00-07:00-tt" → "06:00". Null when there is no band. */
+export function slotStartTime(timeSlot: string): string | null {
+  const m = /^(\d{2}:\d{2})/.exec(timeSlot);
+  return m ? m[1] : null;
+}

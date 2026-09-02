@@ -14,7 +14,7 @@ import { BatchCard } from '@/components/batches/BatchCard';
 import { BatchForm } from '@/components/batches/BatchForm';
 import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
-import { paiseToRupees } from '@bba/shared';
+import { paiseToRupees, paymentCoversMonth } from '@bba/shared';
 import type { BatchDocument, CentreDocument } from '@bba/shared';
 import type { BatchFormValues } from '@/lib/schemas/batchSchema';
 
@@ -25,10 +25,18 @@ export default function BatchesPage() {
   const [batches, setBatches] = useState<BatchDocument[]>([]);
   const [centres, setCentres] = useState<CentreDocument[]>([]);
   /**
-   * Live "training this month" count per batch — ACTIVE enrollments minus
-   * those paused for the current YYYY-MM. Different from batch.currentEnrolment
-   * (which is all ACTIVE regardless of month), and different again from the
-   * old drifted counter. Keyed by batch id.
+   * How many people in each batch have actually paid for THIS month.
+   *
+   * The first attempt at this counted ACTIVE enrolments minus anyone with the
+   * current month in `pausedMonths` — but that is a flag an admin sets by
+   * hand, and nobody sets it, so the number came out identical to the
+   * enrolment count on every card and told you nothing.
+   *
+   * Nothing ends an enrolment when a family simply stops paying, so the
+   * enrolment roll only ever grows: that is why batches read 133%, 138%, 200%
+   * of capacity while the real roll is smaller. Payment coverage is the honest
+   * measure of who is currently training, and it is coverage-aware, so a
+   * quarterly payment made in September still counts its payer in November.
    */
   const [attendingByBatch, setAttendingByBatch] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -50,25 +58,48 @@ export default function BatchesPage() {
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const [bData, cData, enrolSnap] = await Promise.all([
+      const ym = new Date().toISOString().slice(0, 7);
+      // Far enough back to catch a quarterly payment that still covers this
+      // month. CYCLE_MONTHS tops out at 3, so two months back is enough.
+      const [y, m] = ym.split('-').map(Number);
+      const from = new Date(y, m - 3, 1);
+      const fromMonth = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}`;
+
+      const [bData, cData, enrolSnap, paySnap] = await Promise.all([
         getAllBatches(),
         getAllCentres(),
-        // One collection read for the whole page beats one per batch card.
-        // ACTIVE only, since a paused / ended enrollment is not a person on
-        // court this month.
+        // Two collection reads for the whole page, rather than one query per
+        // batch card.
         getDocs(query(collection(db, 'enrollments'), where('status', '==', 'ACTIVE'))),
+        getDocs(query(
+          collection(db, 'payments'),
+          where('month', '>=', fromMonth),
+          where('month', '<=', ym),
+        )),
       ]);
       setBatches(bData);
       setCentres(cData);
 
-      const ym = new Date().toISOString().slice(0, 7);
+      // Who is paid up for this month, coverage-aware.
+      const paidStudentIds = new Set<string>();
+      paySnap.docs.forEach((d) => {
+        const p = d.data();
+        if (p.status === 'REFUNDED') return;
+        if (!p.studentId) return;
+        if (!paymentCoversMonth(
+          { month: p.month, coverageMonths: p.coverageMonths, coverageEndMonth: p.coverageEndMonth },
+          ym,
+        )) return;
+        paidStudentIds.add(String(p.studentId));
+      });
+
       const counts: Record<string, number> = {};
       enrolSnap.docs.forEach((d) => {
         const e = d.data();
-        const paused = Array.isArray(e.pausedMonths) && e.pausedMonths.includes(ym);
-        if (paused) return;
         const bid = String(e.batchId ?? '');
         if (!bid) return;
+        if (Array.isArray(e.pausedMonths) && e.pausedMonths.includes(ym)) return;
+        if (!paidStudentIds.has(String(e.studentId ?? ''))) return;
         counts[bid] = (counts[bid] ?? 0) + 1;
       });
       setAttendingByBatch(counts);

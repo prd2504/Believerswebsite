@@ -62,6 +62,13 @@ export { onCourtBookingSheetSync, onCourtPlanSheetSync } from './slots/courtShee
 // --- Batch enrolment counter: rebuilt from source on every enrollment write
 //     (see enrollments/onEnrollmentWritten.ts for the drift history) ---------
 export { onEnrollmentWritten } from './enrollments/onEnrollmentWritten.js';
+// Ruia bookings are the source of truth for who attends there; enrolments are
+// their projection, so the rest of the app needs no Ruia special case.
+export {
+  onSlotBookingWritten,
+  monthlyBookingEnrollmentSync,
+  backfillBookingEnrollments,
+} from './slots/syncBookingEnrollments.js';
 export { backfillBatchCounters } from './enrollments/backfillBatchCounters.js';
 export { onCourtBookingCreated } from './slots/onCourtBookingCreated.js';
 

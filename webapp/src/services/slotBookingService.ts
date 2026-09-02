@@ -49,6 +49,7 @@ function fromFirestore(id: string, data: DocumentData): SlotBookingDocument {
       ? data.coversMonths
       : (data.month ? [data.month] : []),
     participantName: data.participantName ?? '',
+    studentId: data.studentId ?? null,
     planType: data.planType ?? 'THREE_DAY',
     timeSlot: data.timeSlot ?? '',
     // Bookings taken before day-capture existed have no selectedDays — treat
@@ -185,6 +186,13 @@ export interface CreateBookingInput {
   centreId: string;
   month: string;
   participantName: string;
+  /**
+   * The student this booking is for. The /fees flow knows it — the payer
+   * picks their child from the autocomplete — and passing it is what lets the
+   * booking become an enrolment, land on a batch roster, and be reconciled
+   * against fees. Without it the booking is just a name on a list.
+   */
+  studentId?: string;
   participantPhone: string;
   participantEmail?: string;
   planType: SlotPlanType;

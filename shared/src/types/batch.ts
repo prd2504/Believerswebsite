@@ -130,6 +130,20 @@ export interface BatchDocument extends BaseDocument {
   status: BatchStatus;
 
   /**
+   * Which slot-booking plans this batch serves, for centres that sell through
+   * the booking portal rather than by direct enrolment (Ruia today).
+   *
+   * Declared on the batch rather than inferred in code, because the mapping is
+   * an operational decision — which batch a "2 days / week" booking lands in
+   * depends on how the centre has chosen to group people, and that changes
+   * without any code changing. A booking whose plan matches no batch is
+   * reported, not guessed at.
+   *
+   * Empty or absent on every batch at a centre that doesn't use bookings.
+   */
+  slotPlanTypes?: string[];
+
+  /**
    * Optional sub-slots within the batch's overall startTime–endTime window.
    * Use when one continuous block (e.g. 6–9 AM) hosts multiple 1-hour groups.
    * Each enrolled student picks one slot; attendance view groups by slot.

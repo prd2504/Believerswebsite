@@ -563,8 +563,10 @@ export default function FeesPortal() {
         // Cash → the coach the payer handed it to; backend writes "Paid to <coach>"
         // into the payment note. Only meaningful for cash.
         coachName: method === 'CASH' && selectedCoach ? selectedCoach : undefined,
-        // Ruia tracks attendance via slotBookings, not batch enrollments — omit
-        // there. Elsewhere this lets the backend auto-enrol a student with no
+        // Ruia's enrolment comes from the booking below, via
+        // syncBookingToEnrollments — the booking carries the plan, the time
+        // band and the chosen days, which is more than daysPerWeek alone could
+        // say. Elsewhere this lets the backend auto-enrol a student with no
         // batch link yet (harmless no-op for an already-enrolled student).
         daysPerWeek: isRuia ? undefined : (selectedFreqDays ?? undefined),
         billingCycle: effectiveCycle,
@@ -581,6 +583,9 @@ export default function FeesPortal() {
             centreId: RUIA_BOOKING_CENTRE_ID,
             month,
             participantName: selectedStudent.name,
+            // Links the booking to the student, which is what lets it become
+            // an enrolment and reach every roster, register and report.
+            studentId: selectedStudent.studentId,
             participantPhone: slotPhone,
             planType: selectedPlanType as SlotPlanType,
             timeSlot: selectedTimeSlot,

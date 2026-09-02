@@ -24,10 +24,10 @@ interface BatchCardProps {
   batch: BatchDocument;
   centreName?: string;
   /**
-   * Students who will actually train this month — ACTIVE enrollments minus
-   * those the family paused for the current month. Not the same thing as
-   * `batch.currentEnrolment`, which is total ACTIVE enrolments, and not the
-   * same again as the drifted historical counter this replaces.
+   * Enrolled students whose fees cover THIS month — the people actually
+   * training. Not the same as `batch.currentEnrolment`, which counts every
+   * ACTIVE enrolment however long ago the family stopped paying, and which is
+   * why cards read well over capacity.
    */
   attendingThisMonth?: number;
   onEdit: (batch: BatchDocument) => void;
@@ -54,9 +54,10 @@ export function BatchCard({
   const occupancyPct =
     batch.maxCapacity > 0 ? Math.round((batch.currentEnrolment / batch.maxCapacity) * 100) : 0;
   const attending = attendingThisMonth ?? batch.currentEnrolment;
-  // Someone paused for this month is enrolled but not on court, and that gap
-  // is exactly what a batch card is meant to make visible.
-  const pausedThisMonth = Math.max(0, batch.currentEnrolment - attending);
+  // Enrolled but not paid up for this month: lapsed families still sitting on
+  // the roll. That gap is the whole reason a card can read over capacity, so
+  // it gets named rather than left for someone to work out.
+  const unpaidThisMonth = Math.max(0, batch.currentEnrolment - attending);
 
   return (
     <div className="card group relative transition-shadow hover:shadow-card-hover">
@@ -139,9 +140,9 @@ export function BatchCard({
         </div>
         <span className="text-sm font-semibold text-brand-secondary">{formatPlanRange(batch)}</span>
       </div>
-      {pausedThisMonth > 0 && (
-        <p className="mt-1 text-[11px] text-gray-400">
-          {pausedThisMonth} paused this month
+      {unpaidThisMonth > 0 && (
+        <p className="mt-1 text-[11px] text-amber-600">
+          {unpaidThisMonth} enrolled but not paid for this month
         </p>
       )}
 
