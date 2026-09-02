@@ -18,6 +18,7 @@ import {
   getDocs,
   setDoc,
   updateDoc,
+  writeBatch,
   serverTimestamp,
   query,
   where,
@@ -209,11 +210,39 @@ export interface AttendanceMarkInput {
   note?: string;
   /** Required when studentId is null (pure trial walk-in). */
   walkIn?: { name: string; phone: string; notes?: string };
+  /**
+   * Explicit record id, for attendees that are neither a student nor a
+   * phone-identified walk-in — Ruia's register is keyed by slot BOOKING id,
+   * because a booking is the only stable identifier that flow has.
+   *
+   * Without this the id falls back to the walk-in's phone, and every Ruia
+   * attendee (whose phone now lives in a private subcollection the client
+   * cannot read) would collide on a single `trial_` row.
+   */
+  recordId?: string;
 }
 
+/** Firestore caps a write batch at 500 operations. Leave room for the session row. */
+const MAX_BATCH_OPS = 450;
+
 /**
- * Save attendance marks for a session in a single batch write. Use this to persist the
- * coach's session — pass every attendee (regular roster + ad-hoc additions).
+ * Save every attendance mark for a session.
+ *
+ * ── Why this is one atomic commit ──
+ * This used to `await setDoc(...)` once per attendee inside a for-loop, then
+ * update the session. For a forty-student register that is forty-two
+ * sequential round trips: roughly ten seconds on a good mobile connection and
+ * well over a minute on a weak one, during which the Save button sits
+ * disabled and looks dead. Worse, it was not atomic — a coach who lost signal
+ * or navigated away halfway had half a register saved and no error anywhere.
+ *
+ * A write batch commits in ONE round trip, all-or-nothing. A register either
+ * saves completely or not at all, and the coach finds out which within a
+ * second.
+ *
+ * Registers larger than a batch allows are split into chunks. Those chunks are
+ * not atomic with each other, which is a real (if remote) limitation — but it
+ * beats the alternative of failing outright at 450 students.
  */
 export async function saveAttendanceMarks(
   batchId: string,
@@ -222,43 +251,68 @@ export async function saveAttendanceMarks(
   marks: AttendanceMarkInput[],
   userId: string,
 ): Promise<void> {
-  for (const mark of marks) {
-    // Record id strategy:
-    //   - student-linked records: id = studentId (one per student per session)
-    //   - pure trial walk-ins:    id = "trial_<phoneOrTimestamp>"  (auto-generated)
-    let recordId: string;
-    if (mark.studentId) {
-      recordId = mark.studentId;
-    } else {
-      const phoneSlug = (mark.walkIn?.phone ?? '').replace(/\D/g, '') || `${Date.now()}`;
-      recordId = `trial_${phoneSlug}`;
-    }
+  // Which records already exist, so an edit doesn't rewrite createdAt to now
+  // and lose when the register was first taken. One read for the whole save.
+  const existingIds = new Set(
+    (await getDocs(recordsCol(batchId, sessionId)).catch(() => null))?.docs.map((d) => d.id) ?? [],
+  );
 
-    const ref = recordRef(batchId, sessionId, recordId);
-    await setDoc(ref, {
-      studentId: mark.studentId,
-      attendeeType: mark.attendeeType,
-      walkInName: mark.walkIn?.name ?? null,
-      walkInPhone: mark.walkIn?.phone ?? null,
-      walkInNotes: mark.walkIn?.notes ?? null,
-      batchId,
-      sessionId,
-      sessionDate,
-      status: mark.status,
-      note: mark.note?.trim() || null,
-      markedBy: userId,
-      createdAt: serverTimestamp(),
+  // Record id strategy:
+  //   - student-linked records: id = studentId (one per student per session)
+  //   - pure trial walk-ins:    id = "trial_<phoneOrTimestamp>"
+  const ops = marks.map((mark) => {
+    const recordId = mark.recordId
+      ?? (mark.studentId
+        ? mark.studentId
+        : `trial_${(mark.walkIn?.phone ?? '').replace(/\D/g, '') || `${Date.now()}`}`);
+    const isNew = !existingIds.has(recordId);
+    return {
+      ref: recordRef(batchId, sessionId, recordId),
+      data: {
+        studentId: mark.studentId,
+        attendeeType: mark.attendeeType,
+        walkInName: mark.walkIn?.name ?? null,
+        walkInPhone: mark.walkIn?.phone ?? null,
+        walkInNotes: mark.walkIn?.notes ?? null,
+        batchId,
+        sessionId,
+        sessionDate,
+        status: mark.status,
+        note: mark.note?.trim() || null,
+        markedBy: userId,
+        ...(isNew ? { createdAt: serverTimestamp(), createdBy: userId } : {}),
+        updatedAt: serverTimestamp(),
+        updatedBy: userId,
+      },
+    };
+  });
+
+  for (let i = 0; i < ops.length; i += MAX_BATCH_OPS) {
+    const chunk = ops.slice(i, i + MAX_BATCH_OPS);
+    const wb = writeBatch(db);
+    chunk.forEach(({ ref, data }) => wb.set(ref, data, { merge: true }));
+
+    // Ride the session's "ended" stamp along on the final chunk, so the
+    // register and the fact that it was completed land together.
+    if (i + MAX_BATCH_OPS >= ops.length) {
+      wb.update(sessionRef(batchId, sessionId), {
+        endedAt: new Date().toISOString(),
+        updatedAt: serverTimestamp(),
+        updatedBy: userId,
+      });
+    }
+    await wb.commit();
+  }
+
+  // An empty register still marks the session as taken — a coach who opens a
+  // session with nobody expected and saves has genuinely finished it.
+  if (ops.length === 0) {
+    await updateDoc(sessionRef(batchId, sessionId), {
+      endedAt: new Date().toISOString(),
       updatedAt: serverTimestamp(),
-      createdBy: userId,
       updatedBy: userId,
     });
   }
-
-  await updateDoc(sessionRef(batchId, sessionId), {
-    endedAt: new Date().toISOString(),
-    updatedAt: serverTimestamp(),
-    updatedBy: userId,
-  });
 }
 
 /** Get all attendance records for a session. */

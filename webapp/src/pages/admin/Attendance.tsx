@@ -60,9 +60,11 @@ export default function AttendancePage() {
 
   const activeBatches = filteredBatches.filter((b) => b.status === 'ACTIVE');
 
-  const load = useCallback(async () => {
+  // `silent` for the post-save refresh — see the coach page for why swapping
+  // the register for a skeleton the moment it saves reads as a dead button.
+  const load = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const [bData, cData, sData] = await Promise.all([
         getAllBatches(),
         getAllCentres(),
@@ -78,7 +80,7 @@ export default function AttendancePage() {
       console.error(err);
       toast.error('Failed to load data');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [historyBatchId]);
 
@@ -184,7 +186,7 @@ export default function AttendancePage() {
           <QuickAttendance
             batches={activeBatches}
             userId={profile.id}
-            onDone={load}
+            onDone={() => load(true)}
           />
         </div>
       )}
@@ -195,7 +197,7 @@ export default function AttendancePage() {
             batches={activeBatches}
             centreId={centreFilter || centres[0]?.id || ''}
             userId={profile.id}
-            onDone={load}
+            onDone={() => load(true)}
           />
         </div>
       )}

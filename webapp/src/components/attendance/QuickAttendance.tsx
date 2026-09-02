@@ -88,6 +88,9 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [hasExisting, setHasExisting] = useState(false);
+  const [droppedNames, setDroppedNames] = useState<string[]>([]);
+  const [saveError, setSaveError] = useState('');
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [showPicker, setShowPicker] = useState<null | 'student' | 'trial'>(null);
   const [pickerBatchId, setPickerBatchId] = useState('');
   const [collapsedSlots, setCollapsedSlots] = useState<Set<string>>(new Set());
@@ -100,6 +103,8 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
   );
 
   useEffect(() => {
+    setSaveError('');
+    setSavedAt(null);
     if (batchesForDay.length === 0) {
       setRows([]);
       setHasExisting(false);
@@ -111,6 +116,10 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
       try {
         const allRows: QuickRow[] = [];
         let foundExisting = false;
+        // Enrolled people who never make it onto the register, and why. A
+        // roster that is quietly short is worse than one that says so — it is
+        // what turns "a student is missing" into a week of nobody noticing.
+        const dropped: string[] = [];
 
         for (const batch of batchesForDay) {
           const [enrollments, records] = await Promise.all([
@@ -129,7 +138,8 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
 
           for (const enrollment of enrollments) {
             const s = studentDocMap.get(enrollment.studentId);
-            if (!s || s.status !== 'ACTIVE') continue;
+            if (!s) { dropped.push(`${enrollment.studentId} (no student record)`); continue; }
+            if (s.status !== 'ACTIVE') { dropped.push(`${s.name} (marked ${s.status})`); continue; }
 
             const r = recordById.get(s.id);
             const slotStart = enrollment.timeSlotStartTime;
@@ -189,6 +199,7 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
 
         setRows(allRows);
         setHasExisting(foundExisting);
+        setDroppedNames(dropped);
       } catch (err) {
         console.error(err);
         toast.error('Failed to load attendance roster');
@@ -303,6 +314,7 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
   async function handleSave() {
     if (rows.length === 0) return;
     setSaving(true);
+    setSaveError('');
 
     try {
       const byBatch = new Map<string, QuickRow[]>();
@@ -328,10 +340,24 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
       }
 
       toast.success(`Attendance saved for ${rows.length} students across ${byBatch.size} batch${byBatch.size !== 1 ? 'es' : ''}`);
+      setSavedAt(new Date());
+      setHasExisting(true);
       onDone?.();
     } catch (err) {
       console.error(err);
-      toast.error('Failed to save attendance');
+      // A 3-second toast is not enough to act on, and "Failed to save
+      // attendance" is the same message whether the coach was signed out,
+      // offline, or denied by the rules. Show what actually went wrong, and
+      // leave it on screen next to the button that failed.
+      const code = (err as { code?: string })?.code ?? '';
+      const detail =
+        code === 'permission-denied'
+          ? "You don't have permission to mark this batch. Ask your admin to assign you to it."
+          : code === 'unavailable' || code === 'deadline-exceeded'
+            ? 'No connection to the server. Your marks are still on screen — try again once you have signal.'
+            : (err as Error)?.message || 'Unknown error';
+      setSaveError(detail);
+      toast.error('Attendance not saved');
     } finally {
       setSaving(false);
     }
@@ -376,6 +402,15 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
         <p className="text-xs text-yellow-600">
           Attendance was already recorded for some batches. You are editing existing records.
         </p>
+      )}
+
+      {droppedNames.length > 0 && (
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <p className="font-semibold">
+            {droppedNames.length} enrolled student{droppedNames.length === 1 ? '' : 's'} not shown
+          </p>
+          <p className="mt-0.5">{droppedNames.join(' · ')}</p>
+        </div>
       )}
 
       {/* Quick "mark all" */}
@@ -588,9 +623,32 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
             <span className="text-gray-500">{rows.length} total</span>
           </div>
           <button onClick={handleSave} disabled={saving || rows.length === 0} className="btn-primary">
-            {saving ? 'Saving…' : hasExisting ? 'Update Attendance' : 'Save Attendance'}
+            {saving
+              ? `Saving ${rows.length}…`
+              : hasExisting ? 'Update Attendance' : 'Save Attendance'}
           </button>
         </div>
+      )}
+
+      {saveError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+          <p className="text-xs font-semibold text-red-800">Attendance was not saved</p>
+          <p className="mt-1 text-xs text-red-700">{saveError}</p>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="mt-2 rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
+      {savedAt && !saveError && (
+        <p className="text-center text-xs text-green-700">
+          Saved at {savedAt.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}.
+        </p>
       )}
 
       {/* Picker modals */}

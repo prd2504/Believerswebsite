@@ -11,6 +11,7 @@ import {
   getSessionsByDateRange,
   getAttendanceRecords,
 } from '@/services/attendanceService';
+import { getEnrollmentsByBatch } from '@/services/enrollmentService';
 import { cn } from '@/lib/cn';
 import type { BatchDocument, StudentDocument, AttendanceRecord, SessionDocument } from '@bba/shared';
 
@@ -29,6 +30,17 @@ interface MonthlyRosterProps {
 
 export function MonthlyRoster({ batches, students, centreFilter }: MonthlyRosterProps) {
   const [batchId, setBatchId] = useState(batches[0]?.id ?? '');
+  /**
+   * Student ids with an ACTIVE enrolment in the selected batch.
+   *
+   * Read from /enrollments rather than `batch.studentIds`. That array is a
+   * denormalised mirror that no single code path owned: deleting a student
+   * never cleaned it, imports and direct edits never wrote it, and batches
+   * predating the mirror never had it at all. A batch whose mirror was empty
+   * rendered "No students enrolled" over a roster full of people.
+   */
+  const [enrolledIds, setEnrolledIds] = useState<string[]>([]);
+  const [enrolLoading, setEnrolLoading] = useState(false);
   const [month, setMonth] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -41,15 +53,48 @@ export function MonthlyRoster({ batches, students, centreFilter }: MonthlyRoster
     return centreFilter ? batches.filter((b) => b.centreId === centreFilter) : batches;
   }, [batches, centreFilter]);
 
+  // Keep the selection inside the list the dropdown actually offers. Without
+  // this, changing the centre filter left `batchId` pointing at a batch that
+  // is no longer an option: the <select> falls back to displaying the first
+  // one while the grid below still renders the old batch, so the page names
+  // one batch and shows another.
+  useEffect(() => {
+    if (filteredBatches.length === 0) { setBatchId(''); return; }
+    if (!filteredBatches.some((b) => b.id === batchId)) setBatchId(filteredBatches[0].id);
+  }, [filteredBatches, batchId]);
+
   const selectedBatch = batches.find((b) => b.id === batchId);
 
-  // Students in this batch
+  useEffect(() => {
+    if (!batchId) { setEnrolledIds([]); return; }
+    let cancelled = false;
+    setEnrolLoading(true);
+    getEnrollmentsByBatch(batchId)
+      .then((rows) => {
+        if (cancelled) return;
+        setEnrolledIds(rows.filter((e) => e.status === 'ACTIVE').map((e) => e.studentId));
+      })
+      .catch((err) => {
+        console.error(err);
+        if (!cancelled) { setEnrolledIds([]); toast.error('Could not load the batch roster'); }
+      })
+      .finally(() => { if (!cancelled) setEnrolLoading(false); });
+    return () => { cancelled = true; };
+  }, [batchId]);
+
   const batchStudents = useMemo(() => {
-    if (!selectedBatch) return [];
+    const ids = new Set(enrolledIds);
     return students
-      .filter((s) => selectedBatch.studentIds.includes(s.id))
+      .filter((s) => ids.has(s.id))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [selectedBatch, students]);
+  }, [enrolledIds, students]);
+
+  /**
+   * Enrolled students whose /students document is missing or unreadable.
+   * Silently dropping them is how a roster quietly loses a person; naming the
+   * count at least says the grid is short.
+   */
+  const missingStudentCount = Math.max(0, new Set(enrolledIds).size - batchStudents.length);
 
   // Dates in month
   const datesInMonth = useMemo(() => {
@@ -229,12 +274,24 @@ export function MonthlyRoster({ batches, students, centreFilter }: MonthlyRoster
       </div>
 
       {/* Grid */}
-      {loading ? (
+      {missingStudentCount > 0 && (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          {missingStudentCount} enrolled student{missingStudentCount === 1 ? ' has' : 's have'} no
+          student record and {missingStudentCount === 1 ? 'is' : 'are'} not shown below.
+        </p>
+      )}
+
+      {loading || enrolLoading ? (
         <div className="py-12 text-center text-sm text-gray-400">Loading roster…</div>
+      ) : !selectedBatch ? (
+        <div className="py-12 text-center text-sm text-gray-400">
+          <Users size={32} className="mx-auto mb-2 text-gray-300" />
+          No batch selected{centreFilter ? ' for this centre' : ''}.
+        </div>
       ) : batchStudents.length === 0 ? (
         <div className="py-12 text-center text-sm text-gray-400">
           <Users size={32} className="mx-auto mb-2 text-gray-300" />
-          No students enrolled in this batch.
+          No active enrolments in {selectedBatch.name}.
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-gray-100 bg-white shadow-sm">
