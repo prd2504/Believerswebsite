@@ -30,6 +30,8 @@ import {
   canBook,
   bookingHours,
   addOnsTotalPaise,
+  guestFeePaise,
+  INCLUDED_PLAYERS,
   type CourtBookingDocument,
   type CourtRentalConfig,
   type CourtBookingSource,
@@ -61,6 +63,10 @@ function bookingFrom(id: string, d: DocumentData): CourtBookingDocument {
     courtPaise: d.courtPaise ?? d.amountPaise ?? 0,
     addOns: (d.addOns && typeof d.addOns === 'object') ? d.addOns : {},
     addOnsPaise: d.addOnsPaise ?? 0,
+    // Bookings taken before guest fees existed were all within the included
+    // four, so reading them that way keeps past totals exactly as charged.
+    players: d.players ?? 4,
+    guestPaise: d.guestPaise ?? 0,
     amountPaise: d.amountPaise ?? 0,
     status: d.status ?? 'HELD',
     source: d.source ?? 'ONLINE',
@@ -180,6 +186,8 @@ export interface CreateCourtBookingInput {
   hourlyRatePaise?: number;
   /** Add-on quantities by key, e.g. { SHUTTLE: 2 }. */
   addOns?: Record<string, number>;
+  /** Total people on court, the booker included. */
+  players?: number;
   planId?: string | null;
   screenshotUrl?: string | null;
   notes?: string | null;
@@ -217,6 +225,8 @@ export async function createCourtBooking(input: CreateCourtBookingInput): Promis
   const hours = Math.max(1, input.hours);
   const addOns = input.addOns ?? {};
   const addOnsPaise = addOnsTotalPaise(addOns);
+  const players = input.players ?? INCLUDED_PLAYERS;
+  const guestPaise = guestFeePaise(players);
   const courtPaise = rate * hours;
   const bookingId = `${input.centreId}_${input.date}_${input.startHour.replace(':', '')}`;
 
@@ -252,7 +262,9 @@ export async function createCourtBooking(input: CreateCourtBookingInput): Promis
         courtPaise: i === 0 ? courtPaise : 0,
         addOns: i === 0 ? addOns : {},
         addOnsPaise: i === 0 ? addOnsPaise : 0,
-        amountPaise: i === 0 ? courtPaise + addOnsPaise : 0,
+        players,
+        guestPaise: i === 0 ? guestPaise : 0,
+        amountPaise: i === 0 ? courtPaise + addOnsPaise + guestPaise : 0,
         status: 'HELD',
         source: input.source,
         planId: input.planId ?? null,
@@ -542,6 +554,8 @@ export interface PublicBookingInput {
   bookerPhone: string;
   bookerEmail?: string;
   addOns?: Record<string, number>;
+  /** Total people on court, the booker included. Guest fees apply beyond four. */
+  players?: number;
   screenshotUrl?: string | null;
 }
 

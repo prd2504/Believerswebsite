@@ -37,6 +37,8 @@ import {
   buildDayAvailability,
   bookingHours,
   addOnsTotalPaise,
+  guestFeePaise,
+  INCLUDED_PLAYERS,
   istNow,
   isHourPast,
   datesInMonth,
@@ -177,6 +179,7 @@ interface BookArgs {
   bookerPhone: string;
   bookerEmail: string | null;
   addOns: Record<string, number>;
+  players: number;
   screenshotUrl: string | null;
   planId: string | null;
   ratePaise: number;
@@ -198,6 +201,9 @@ async function claimHours(a: BookArgs): Promise<string> {
   const wanted = bookingHours(a.startHour, hours);
   const bookingId = `${a.centreId}_${a.date}_${a.startHour.replace(':', '')}`;
   const addOnsPaise = addOnsTotalPaise(a.addOns);
+  // Recomputed here, never taken from the request. The page shows a total, but
+  // the price of a booking is the server's to decide.
+  const guestPaise = guestFeePaise(a.players);
   const courtPaise = a.ratePaise * hours;
 
   await db.runTransaction(async (tx) => {
@@ -227,7 +233,9 @@ async function claimHours(a: BookArgs): Promise<string> {
         courtPaise: i === 0 ? courtPaise : 0,
         addOns: i === 0 ? a.addOns : {},
         addOnsPaise: i === 0 ? addOnsPaise : 0,
-        amountPaise: i === 0 ? courtPaise + addOnsPaise : 0,
+        players: a.players,
+        guestPaise: i === 0 ? guestPaise : 0,
+        amountPaise: i === 0 ? courtPaise + addOnsPaise + guestPaise : 0,
         status: 'HELD',
         source: a.source,
         planId: a.planId,
@@ -252,6 +260,19 @@ function validateBooker(b: Record<string, any>): string | null {
   if (normPhone(b.bookerPhone).length !== 10) return 'A 10-digit phone number is required';
   if (b.bookerEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(b.bookerEmail))) return 'That email address looks wrong';
   return null;
+}
+
+/**
+ * Players on court, clamped to something a badminton court can hold.
+ *
+ * Defaults to the included four rather than to one: a booking that says
+ * nothing about numbers is the ordinary case, and charging it as a single
+ * player would be wrong in the other direction.
+ */
+function cleanPlayers(raw: unknown): number {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n <= 0) return INCLUDED_PLAYERS;
+  return Math.min(12, Math.max(1, n));
 }
 
 /** Add-on quantities, clamped. Anything unrecognised is dropped. */
@@ -324,6 +345,7 @@ export const createCourtBookingPublic = onRequest(
         bookerPhone: normPhone(b.bookerPhone),
         bookerEmail: b.bookerEmail ? String(b.bookerEmail).trim() : null,
         addOns: cleanAddOns(b.addOns),
+        players: cleanPlayers(b.players),
         screenshotUrl: b.screenshotUrl ? String(b.screenshotUrl) : null,
         planId: null,
         ratePaise: cfg.hourlyRatePaise,
@@ -494,6 +516,9 @@ export const createCourtPlanPublic = onRequest(
             bookerPhone: normPhone(b.bookerPhone),
             bookerEmail: b.bookerEmail ? String(b.bookerEmail).trim() : null,
             addOns: {},
+            // Guests are settled on the day for a plan, not pre-paid for every
+            // week of a month in which the numbers will vary.
+            players: INCLUDED_PLAYERS,
             screenshotUrl: b.screenshotUrl ? String(b.screenshotUrl) : null,
             planId,
             ratePaise: rate,

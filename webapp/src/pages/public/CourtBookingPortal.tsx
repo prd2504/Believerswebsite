@@ -41,7 +41,11 @@ import {
   COURT_ADDONS,
   COURT_RULES,
   MAX_BOOKING_HOURS,
+  INCLUDED_PLAYERS,
+  GUEST_FEE_PAISE,
   addOnsTotalPaise,
+  guestFeePaise,
+  formatHourRange,
   istNow,
   isHourPast,
   nextMonth,
@@ -71,13 +75,6 @@ function monthLabel(yearMonth: string): string {
 function weekdayOfDate(date: string): number {
   const [y, m, d] = date.split('-').map(Number);
   return new Date(y, m - 1, d).getDay();
-}
-
-function hour12(hhmm: string): string {
-  const [h] = hhmm.split(':').map(Number);
-  const ampm = h < 12 ? 'AM' : 'PM';
-  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${h12} ${ampm}`;
 }
 
 function clockLabel(c: Clock): string {
@@ -159,6 +156,7 @@ export default function CourtBookingPortal() {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [addOns, setAddOns] = useState<Record<string, number>>({});
+  const [players, setPlayers] = useState(INCLUDED_PLAYERS);
   const [rulesAccepted, setRulesAccepted] = useState(false);
   const [shot, setShot] = useState<File | null>(null);
   const [shotPreview, setShotPreview] = useState<string | null>(null);
@@ -345,9 +343,10 @@ export default function CourtBookingPortal() {
   const rate = avail?.hourlyRatePaise ?? 0;
   const planRate = avail?.planHourlyRatePaise ?? 0;
   const extrasTotal = addOnsTotalPaise(addOns);
+  const guestTotal = guestFeePaise(players);
 
   const total = mode === 'SLOT'
-    ? rate * hours + extrasTotal
+    ? rate * hours + extrasTotal + guestTotal
     : planRate * planDates.length;
 
   const upiUrl = `upi://pay?pa=${encodeURIComponent(UPI_ID)}&pn=${encodeURIComponent('BBA Sports')}` +
@@ -366,7 +365,8 @@ export default function CourtBookingPortal() {
 
   function resetForm() {
     setDone(null); setPicked(null); setName(''); setPhone(''); setEmail('');
-    setAddOns({}); setRulesAccepted(false); setShot(null); setShotPreview(null);
+    setAddOns({}); setPlayers(INCLUDED_PLAYERS);
+    setRulesAccepted(false); setShot(null); setShotPreview(null);
   }
 
   async function submit() {
@@ -401,7 +401,7 @@ export default function CourtBookingPortal() {
 
       if (mode === 'SLOT') {
         await createCourtBookingPublic({
-          centreId, date, startHour: picked!, hours, addOns, ...booker,
+          centreId, date, startHour: picked!, hours, addOns, players, ...booker,
         });
         setDone({ kind: 'SLOT', booked: [date], clashes: [] });
       } else {
@@ -478,11 +478,11 @@ export default function CourtBookingPortal() {
 
           {done.kind === 'SLOT' ? (
             <p className="mt-2 text-sm text-gray-500">
-              {dayLabel(done.booked[0])} · {hour12(picked ?? '')} for {hours} hour{hours > 1 ? 's' : ''}
+              {dayLabel(done.booked[0])} · {formatHourRange(picked ?? '09:00', hours)}
             </p>
           ) : (
             <p className="mt-2 text-sm text-gray-500">
-              {WEEKDAY_NAMES[planWeekday ?? 0]}s at {hour12(planHour ?? '')} ·{' '}
+              {WEEKDAY_NAMES[planWeekday ?? 0]}s, {formatHourRange(planHour ?? '09:00')} ·{' '}
               {done.booked.length} session{done.booked.length > 1 ? 's' : ''} in {monthLabel(month)}
             </p>
           )}
@@ -637,7 +637,7 @@ export default function CourtBookingPortal() {
                     Nothing free on {dayLabel(date)}. Try another date.
                   </p>
                 ) : (
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     {shownSlots.map((s) => {
                       const past = s.state === 'PAST';
                       return (
@@ -654,7 +654,7 @@ export default function CourtBookingPortal() {
                                 : 'border-gray-100 bg-white text-gray-600 hover:border-gray-200',
                           )}
                         >
-                          {hour12(s.hour)}
+                          {formatHourRange(s.hour)}
                         </button>
                       );
                     })}
@@ -733,7 +733,7 @@ export default function CourtBookingPortal() {
                     Book single slots instead, or try the other month.
                   </p>
                 ) : (
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     {planHourOptions.map((h) => (
                       <button
                         key={h}
@@ -745,7 +745,7 @@ export default function CourtBookingPortal() {
                             : 'border-gray-100 bg-white text-gray-600',
                         )}
                       >
-                        {hour12(h)}
+                        {formatHourRange(h)}
                       </button>
                     ))}
                   </div>
@@ -804,6 +804,43 @@ export default function CourtBookingPortal() {
                   className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm focus:border-brand-primary focus:outline-none" />
               </div>
             </div>
+
+            {/* How many playing — a single slot only. On a monthly plan the
+                numbers vary week to week, so guests are settled on the day
+                rather than pre-paid for every session in the month. */}
+            {mode === 'SLOT' && (
+              <div className="rounded-xl border border-gray-100 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-brand-secondary">How many playing?</p>
+                    <p className="text-xs text-gray-400">
+                      Up to {INCLUDED_PLAYERS} included ·{' '}
+                      {formatINR(GUEST_FEE_PAISE, { withDecimals: false })} per extra guest
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPlayers((p) => Math.max(1, p - 1))}
+                      disabled={players <= 1}
+                      className="h-9 w-9 rounded-lg border border-gray-200 text-gray-600 disabled:opacity-30"
+                    >−</button>
+                    <span className="w-6 text-center text-base font-bold text-brand-secondary">{players}</span>
+                    <button
+                      type="button"
+                      onClick={() => setPlayers((p) => Math.min(12, p + 1))}
+                      className="h-9 w-9 rounded-lg border border-gray-200 text-gray-600"
+                    >+</button>
+                  </div>
+                </div>
+                {guestTotal > 0 && (
+                  <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
+                    {players - INCLUDED_PLAYERS} guest{players - INCLUDED_PLAYERS > 1 ? 's' : ''} over{' '}
+                    {INCLUDED_PLAYERS} — {formatINR(guestTotal, { withDecimals: false })} added.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Extras — a single slot only. Shuttles across a whole month are
                 sorted on the day, not pre-paid five weeks ahead. */}
@@ -875,13 +912,14 @@ export default function CourtBookingPortal() {
                 </p>
                 <p className="text-[11px] text-gray-400">
                   {mode === 'SLOT'
-                    ? `${dayLabel(date)} · ${hour12(picked!)} · ${hours} hour${hours > 1 ? 's' : ''}`
-                    : `${WEEKDAY_NAMES[planWeekday!]}s at ${hour12(planHour!)} · ${planDates.length} session${planDates.length > 1 ? 's' : ''}`}
+                    ? `${dayLabel(date)} · ${formatHourRange(picked!, hours)}`
+                    : `${WEEKDAY_NAMES[planWeekday!]}s, ${formatHourRange(planHour!)} · ${planDates.length} session${planDates.length > 1 ? 's' : ''}`}
                 </p>
-                {mode === 'SLOT' && extrasTotal > 0 && (
+                {mode === 'SLOT' && (extrasTotal > 0 || guestTotal > 0) && (
                   <p className="mt-1 text-[11px] text-gray-500">
                     Court {formatINR(rate * hours, { withDecimals: false })}
-                    {' + extras '}{formatINR(extrasTotal, { withDecimals: false })}
+                    {extrasTotal > 0 && <> + extras {formatINR(extrasTotal, { withDecimals: false })}</>}
+                    {guestTotal > 0 && <> + guests {formatINR(guestTotal, { withDecimals: false })}</>}
                   </p>
                 )}
               </div>
@@ -893,15 +931,32 @@ export default function CourtBookingPortal() {
                 Open UPI app
               </a>
 
-              <button
-                onClick={async () => { await copy(UPI_ID); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-                className="mt-2 flex w-full items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5"
-              >
-                <span className="font-mono text-sm text-brand-secondary">{UPI_ID}</span>
-                <span className="flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold text-gray-600">
-                  {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
-                </span>
-              </button>
+              {/* The deep link does not work everywhere — some browsers block
+                  it, and a phone with several UPI apps can fail to pick one.
+                  This is the way through when that happens, so it says so
+                  rather than sitting there as an unexplained row of text. */}
+              <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <p className="mb-2 text-xs text-gray-600">
+                  Button not working? Copy this UPI ID and pay from any UPI app
+                  &mdash; GPay, PhonePe, Paytm or your bank&rsquo;s.
+                </p>
+                <button
+                  onClick={async () => { await copy(UPI_ID); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+                  className="flex w-full items-center justify-between rounded-lg border border-gray-300 bg-white px-3 py-2.5"
+                >
+                  <span className="font-mono text-sm font-semibold text-brand-secondary">{UPI_ID}</span>
+                  <span className={cn(
+                    'flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold',
+                    copied ? 'text-green-700' : 'text-brand-primary',
+                  )}>
+                    {copied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
+                  </span>
+                </button>
+                <p className="mt-2 text-[11px] text-gray-500">
+                  Send exactly {formatINR(total, { withDecimals: false })}, then upload the
+                  screenshot below.
+                </p>
+              </div>
             </div>
 
             {/* Proof */}

@@ -47,6 +47,23 @@ export const COURT_ADDONS: CourtAddOn[] = [
   { key: 'RACQUET', label: 'Extra racquet',     pricePaise: 10_000 },
 ];
 
+/**
+ * Players a court hire covers before guest fees start.
+ *
+ * Four is a doubles court. A fifth person is someone else's game being played
+ * on time that was sold for four, so it is charged.
+ */
+export const INCLUDED_PLAYERS = 4;
+
+/** Charged once per extra player, for the booking — not per hour. */
+export const GUEST_FEE_PAISE = 10_000;
+
+/** Cost of however many players are over the included four. */
+export function guestFeePaise(players: number | null | undefined): number {
+  const extra = Math.max(0, Math.floor(Number(players) || 0) - INCLUDED_PLAYERS);
+  return extra * GUEST_FEE_PAISE;
+}
+
 /** Total for a set of add-on quantities, e.g. { SHUTTLE: 2, RACQUET: 1 }. */
 export function addOnsTotalPaise(qty: Record<string, number> | null | undefined): number {
   if (!qty) return 0;
@@ -101,7 +118,11 @@ export interface CourtBookingDocument extends BaseDocument {
   addOns: Record<string, number>;
   /** Add-ons subtotal, snapshotted at the prices charged. */
   addOnsPaise: number;
-  /** What the booker pays: courtPaise + addOnsPaise. */
+  /** Total people on court, the booker included. Defaults to the included four. */
+  players: number;
+  /** Guest fees for players beyond the included four, at the rate charged. */
+  guestPaise: number;
+  /** What the booker pays: courtPaise + addOnsPaise + guestPaise. */
   amountPaise: number;
 
   status: CourtBookingStatus;
@@ -232,6 +253,31 @@ export function isHourPast(date: string, hour: string, now: { date: string; time
 // ── Time helpers ─────────────────────────────────────────────────────────────
 // "HH:mm" sorts lexically, so plain string comparison is safe and avoids
 // dragging timezones into what is purely a wall-clock schedule.
+
+/**
+ * "09:00" + 1 hour → "9 – 10 AM". "11:00" + 1 → "11 AM – 12 PM".
+ *
+ * Slots were shown as a single time — "9 AM" — which reads as a start, not a
+ * booking. People arriving for a 9 AM slot could not tell from the page
+ * whether it ran to 10 or to 11, and asked. Naming both ends removes the
+ * question.
+ *
+ * The meridiem is printed once when both ends share it, twice when they do
+ * not, because "11 – 12 AM" is wrong and "11 AM – 12 PM" is the only honest
+ * way to write that hour.
+ */
+export function formatHourRange(startHHmm: string, hours = 1): string {
+  const label = (hhmm: string) => {
+    const [h] = hhmm.split(':').map(Number);
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return { h12, ampm: h < 12 || h === 24 ? 'AM' : 'PM' };
+  };
+  const a = label(startHHmm);
+  const b = label(addHour(startHHmm, Math.max(1, hours)));
+  return a.ampm === b.ampm
+    ? `${a.h12} – ${b.h12} ${b.ampm}`
+    : `${a.h12} ${a.ampm} – ${b.h12} ${b.ampm}`;
+}
 
 export function hourToMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);

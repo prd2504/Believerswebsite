@@ -85,7 +85,8 @@ var SHEETS = {
 // change here is a change there — see functions/src/slots/courtSheetSync.ts.
 var COURT_HEADERS = [
   "Synced_At", "Date", "Start", "Hours", "Booker", "Phone", "Email",
-  "Rate", "Court_Amount", "Extras", "Extras_Amount", "Total",
+  "Rate", "Court_Amount", "Extras", "Extras_Amount",
+  "Players", "Guest_Amount", "Total",
   "Source", "Plan_ID", "Status", "Verified_At", "Screenshot", "Booking_ID"
 ];
 var COURT_PLAN_HEADERS = [

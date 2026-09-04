@@ -29,11 +29,11 @@ const BOOKING_TAB = 'Court_Rentals';
 const PLAN_TAB = 'Court_Plans';
 
 /** Last column of each tab — keep in step with the Apps Script headers. */
-const BOOKING_LAST_COL = 'R';
+const BOOKING_LAST_COL = 'T';
 const PLAN_LAST_COL = 'O';
 
 /** Zero-based index of the id column each tab is keyed on. */
-const BOOKING_ID_COL = 17;  // R
+const BOOKING_ID_COL = 19;  // T
 const PLAN_ID_COL = 1;      // B
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -152,6 +152,8 @@ export const onCourtBookingSheetSync = onDocumentWritten(
       rupees(b.courtPaise ?? b.amountPaise),
       describeAddOns(b.addOns as Record<string, number>),
       rupees(b.addOnsPaise),
+      String(b.players ?? 4),
+      rupees(b.guestPaise),
       rupees(b.amountPaise),
       String(b.source ?? 'ONLINE'),
       String(b.planId ?? ''),

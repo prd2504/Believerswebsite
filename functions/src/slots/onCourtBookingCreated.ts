@@ -24,7 +24,7 @@ import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions';
 import { db } from '../admin.js';
 import { sendMail } from '../fees/mailer.js';
-import { COURT_RULES, describeAddOns } from '@bba/shared';
+import { COURT_RULES, describeAddOns, formatHourRange, INCLUDED_PLAYERS } from '@bba/shared';
 import { logoImg } from '../fees/brand.js';
 
 const REGION = 'asia-south1';
@@ -109,11 +109,13 @@ function bookingEmailHtml(b: Record<string, any>, confirmed: boolean): string {
       <tr><td style="padding:5px 0;color:#64748b;width:38%">Date</td>
           <td style="padding:5px 0;font-weight:600;color:#0A0A0A">${fmtDate(b.date)}</td></tr>
       <tr><td style="padding:5px 0;color:#64748b">Time</td>
-          <td style="padding:5px 0;font-weight:600;color:#0A0A0A">${hour12(b.startHour)} · ${b.hours} hour${b.hours > 1 ? 's' : ''}</td></tr>
+          <td style="padding:5px 0;font-weight:600;color:#0A0A0A">${formatHourRange(b.startHour, b.hours ?? 1)}</td></tr>
       <tr><td style="padding:5px 0;color:#64748b">Court time</td>
           <td style="padding:5px 0;color:#0A0A0A">${fmtINR(b.courtPaise ?? b.amountPaise ?? 0)}</td></tr>
       ${addOns ? `<tr><td style="padding:5px 0;color:#64748b">Extras</td>
           <td style="padding:5px 0;color:#0A0A0A">${addOns} — ${fmtINR(b.addOnsPaise ?? 0)}</td></tr>` : ''}
+      ${(b.guestPaise ?? 0) > 0 ? `<tr><td style="padding:5px 0;color:#64748b">Guests</td>
+          <td style="padding:5px 0;color:#0A0A0A">${(b.players ?? 0) - INCLUDED_PLAYERS} over ${INCLUDED_PLAYERS} — ${fmtINR(b.guestPaise)}</td></tr>` : ''}
       <tr><td style="padding:8px 0 5px;color:#64748b;border-top:1px solid #e2e8f0">Total</td>
           <td style="padding:8px 0 5px;font-weight:700;font-size:15px;color:#0A0A0A;border-top:1px solid #e2e8f0">${fmtINR(b.amountPaise ?? 0)}</td></tr>
     </table>
@@ -124,6 +126,16 @@ function bookingEmailHtml(b: Record<string, any>, confirmed: boolean): string {
       </p>
       <ul style="margin:0;padding-left:18px">${rulesHtml()}</ul>
     </div>
+
+    ${confirmed ? '' : `<div style="margin-top:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 16px">
+      <p style="margin:0 0 6px;font-size:12px;color:#334155">
+        Couldn&rsquo;t complete the payment? Pay from any UPI app to:
+      </p>
+      <p style="margin:0;font-size:15px;font-weight:700;font-family:monospace;color:#0A0A0A">85287401@ubin</p>
+      <p style="margin:6px 0 0;font-size:11px;color:#64748b">
+        Send ${fmtINR(b.amountPaise ?? 0)} and reply with the screenshot.
+      </p>
+    </div>`}
 
     <p style="margin:18px 0 0;font-size:12px;color:#64748b;line-height:1.6">
       Questions? Reply to this email or contact us at hello@bbashuttle.com.
@@ -155,13 +167,14 @@ export const onCourtBookingCreated = onDocumentWritten(
     const justConfirmed = before?.status !== 'CONFIRMED' && after.status === 'CONFIRMED';
     if (!isNew && !justConfirmed) return;
 
-    const when = `${fmtDate(after.date)}, ${hour12(after.startHour)} for ${after.hours}h`;
+    const when = `${fmtDate(after.date)}, ${formatHourRange(after.startHour, after.hours ?? 1)}`;
     const addOns = describeAddOns(after.addOns);
 
     // ── Telegram ──
     if (isNew) {
       await notifyTeam(
         `🏸 New court booking\n${after.bookerName} · ${after.bookerPhone}\n${when}` +
+        `${(after.players ?? 0) > INCLUDED_PLAYERS ? `\nPlayers: ${after.players} (${after.players - INCLUDED_PLAYERS} guest)` : ''}` +
         `${addOns ? `\nExtras: ${addOns}` : ''}` +
         `\nAmount: ${fmtINR(after.amountPaise)}\nStatus: awaiting payment verification`,
       );
