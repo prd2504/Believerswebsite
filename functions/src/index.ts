@@ -69,6 +69,8 @@ export {
   monthlyBookingEnrollmentSync,
   backfillBookingEnrollments,
 } from './slots/syncBookingEnrollments.js';
+// One-off: attach studentIds to the bookings taken before that field existed.
+export { linkBookingsToStudents } from './slots/linkBookingsToStudents.js';
 export { backfillBatchCounters } from './enrollments/backfillBatchCounters.js';
 export { onCourtBookingCreated } from './slots/onCourtBookingCreated.js';
 
