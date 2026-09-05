@@ -9,14 +9,34 @@ import { SportType } from '../types/centre.js';
 /** Company / brand metadata — safe to import from any component. */
 export const COMPANY = {
   legalName: 'BBA Sports Private Limited',
-  brandName: 'Believers Badminton Academy',
+  brandName: 'BBA Sports Academy',
   brandShortName: 'BBA',
-  supportEmail: 'support@bbasports.in',
+  supportEmail: 'hello@bbashuttle.com',
   defaultLocale: 'en-IN',
   defaultTimezone: 'Asia/Kolkata',
   defaultCurrency: 'INR' as const,
   defaultCountryCode: '+91',
 } as const;
+
+/**
+ * Ruia College identifiers, in one place because they previously weren't:
+ * the centre code and the slot-booking namespace id were each hardcoded
+ * separately in three different files and drifted at least once already
+ * (two different UPI IDs shown depending on which page a parent opened).
+ *
+ * RUIA_CENTRE_CODE matches `centres.{id}.centreCode` — the real centre
+ * document used everywhere else (payments, batches, enrollments).
+ *
+ * RUIA_SLOT_BOOKING_CENTRE_ID is the `centreId` value stored on every
+ * `slotBookings` document. It is NOT a real centre document id — it's a
+ * fixed namespace string chosen when the slot-booking flow was built,
+ * decoupled from the centre doc on purpose so the booking flow didn't need
+ * a live centre lookup. The two must be bridged explicitly (via
+ * centreCode) wherever code needs to go from "the real Ruia centre" to
+ * "Ruia's slot bookings", or vice versa.
+ */
+export const RUIA_CENTRE_CODE = 'RUI';
+export const RUIA_SLOT_BOOKING_CENTRE_ID = 'ruia-college';
 
 /** Brand colours — mirrored in Tailwind theme config in webapp/tailwind.config.js. */
 export const BRAND_COLORS = {
@@ -61,6 +81,13 @@ export const ATTENDANCE = {
   coachEditWindowHours: 24,
 } as const;
 
+/** Coach session log business rules. */
+export const SESSION_LOG = {
+  lateThresholdMinutes: 10,
+  selfRatingMin: 1,
+  selfRatingMax: 5,
+} as const;
+
 /** Payment / fee business rules. */
 export const PAYMENT = {
   /** Days before due date when a friendly reminder is sent. */
@@ -69,10 +96,16 @@ export const PAYMENT = {
   gracePeriodDays: 0,
   /** Days after due date when a firm overdue reminder is sent. */
   overdueReminderDaysAfterDue: 3,
-  /** Default GST rate for coaching services in India (can be overridden per centre). */
-  defaultGstRatePercent: 18,
+  /** GST not charged — BBA Sports has no GST compliance yet. Fees are billed as-is. */
+  defaultGstRatePercent: 0,
   /** Receipt number prefix. */
   receiptNumberPrefix: 'BBA',
+} as const;
+
+/** Payroll business rules. */
+export const PAYROLL = {
+  ptSurchargeMonth: 2,
+  section194JTdsRatePercent: 10,
 } as const;
 
 /** Path segments — stored as constants so typos are caught at compile time. */
@@ -80,17 +113,33 @@ export const COLLECTIONS = {
   users: 'users',
   centres: 'centres',
   batches: 'batches',
+  enrollments: 'enrollments',
   students: 'students',
   attendance: 'attendance',
   sessions: 'sessions',
   records: 'records',
   payments: 'payments',
+  paymentMonthlySummaries: 'paymentMonthlySummaries',
   progress: 'progress',
   progressScores: 'scores',
   progressReports: 'reports',
-  tournaments: 'tournaments',
-  registrations: 'registrations',
+  parentFeedback: 'parentFeedback',
+  centreExpenses: 'centreExpenses',
+  recurringExpenses: 'recurringExpenses',
+  partnerPayouts: 'partnerPayouts',
+  issues: 'issues',
+  issueComments: 'comments',
+  assessments: 'assessments',
   notifications: 'notifications',
   notificationMessages: 'messages',
   broadcasts: 'broadcasts',
+  slotBookings: 'slotBookings',
+  slotBookingConfig: 'slotBookingConfig',
+  staff: 'staff',
+  payrollRuns: 'payrollRuns',
+  feeAttendanceReports: 'feeAttendanceReports',
+  courtBookings: 'courtBookings',
+  courtRentalConfig: 'courtRentalConfig',
+  courtRentalPlans: 'courtRentalPlans',
+  counters: 'counters',
 } as const;

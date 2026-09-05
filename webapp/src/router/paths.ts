@@ -10,7 +10,7 @@ export const paths = {
   // Public
   login: '/login',
   register: '/register',
-  otp: '/otp',
+  booking: '/book/:centreSlug',
 
   // Admin / Manager (sidebar shell)
   admin: {
@@ -19,13 +19,22 @@ export const paths = {
     centres: '/admin/centres',
     batches: '/admin/batches',
     students: '/admin/students',
+    coaches: '/admin/coaches',
+    roster: '/admin/roster',
     attendance: '/admin/attendance',
     payments: '/admin/payments',
     progress: '/admin/progress',
-    tournaments: '/admin/tournaments',
+    sessionLogs: '/admin/session-logs',
+    parentFeedback: '/admin/parent-feedback',
+    financials: '/admin/financials',
+    expenses: '/admin/expenses',
+    courtHours: '/admin/court-hours',
+    issues: '/admin/issues',
     notifications: '/admin/notifications',
+    payroll: '/admin/payroll',
     settings: '/admin/settings',
   },
+  pendingApproval: '/pending-approval',
 
   // Coach (mobile-first bottom nav)
   coach: {
@@ -34,6 +43,8 @@ export const paths = {
     batches: '/coach/batches',
     attendance: '/coach/attendance',
     progress: '/coach/progress',
+    issues: '/coach/issues',
+    salary: '/coach/salary',
   },
 
   // Student / Parent (shared shell — parent sees scoped-to-child data)
@@ -44,7 +55,6 @@ export const paths = {
     attendance: '/me/attendance',
     fees: '/me/fees',
     progress: '/me/progress',
-    tournaments: '/me/tournaments',
     profile: '/me/profile',
   },
 } as const;

@@ -1,0 +1,396 @@
+rules_version = '2';
+
+// =========================================================================================
+// BBA Sports — Firestore Security Rules (Production)
+// -----------------------------------------------------------------------------------------
+// Enforce RBAC at the database level. Compromised frontend code cannot escalate privileges.
+//
+// After editing, paste in Firebase Console → Firestore → Rules and click "Publish".
+// Allow ~30 seconds to propagate.
+// =========================================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ──────────────────────────────────────────────────────────────────
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/users/$(uid()));
+    }
+
+    function getRole() {
+      return getUserDoc().data.role;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && getRole() == 'SUPER_ADMIN';
+    }
+
+    function isCentreManager() {
+      return isSignedIn() && getRole() == 'CENTRE_MANAGER';
+    }
+
+    function isAdminLike() {
+      return isSignedIn() && getRole() in ['SUPER_ADMIN', 'CENTRE_MANAGER'];
+    }
+
+    function isActiveCoach() {
+      // Missing accountStatus field (existing docs) defaults to ACTIVE
+      return isSignedIn() && getRole() == 'COACH' && (
+        !('accountStatus' in getUserDoc().data) ||
+        getUserDoc().data.accountStatus == 'ACTIVE'
+      );
+    }
+
+    function isCoach() {
+      return isActiveCoach();
+    }
+
+    function isAdminOrCoach() {
+      return isSignedIn() && (
+        getRole() in ['SUPER_ADMIN', 'CENTRE_MANAGER'] || isActiveCoach()
+      );
+    }
+
+    function isStudentOrParent() {
+      return isSignedIn() && getRole() in ['STUDENT', 'PARENT'];
+    }
+
+    // Check if the user's centreIds includes a given centreId (for scoped managers)
+    function managedCentreIds() {
+      return getUserDoc().data.centreIds;
+    }
+
+    function isAllCentreManager() {
+      return isCentreManager() && getUserDoc().data.allCentreAccess == true;
+    }
+
+    function managesCentre(centreId) {
+      return isSuperAdmin() || isAllCentreManager() || (isCentreManager() && centreId in managedCentreIds());
+    }
+
+    // ── /users/{userId} ───────────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      // Own profile or admin can read
+      allow read: if isSignedIn() && (uid() == userId || isAdminLike());
+
+      // Self-create on first login
+      allow create: if isSignedIn() && uid() == userId;
+
+      // Self can update own mutable fields; super-admin can update any field including role
+      allow update: if isSignedIn() && (
+        uid() == userId && !('role' in request.resource.data.diff(resource.data).affectedKeys())
+      ) || isSuperAdmin();
+
+      // Only super-admin can delete
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /centres/{centreId} ───────────────────────────────────────────────────────────────
+    match /centres/{centreId} {
+      // Public can read active centres (for /fees page). Signed-in users can read all.
+      allow read: if resource.data.active == true || isSignedIn();
+      // Admin-like can write. Managers can only write to their own centres.
+      allow create: if isAdminLike();
+      allow update, delete: if managesCentre(centreId);
+    }
+
+    // ── /batches/{batchId} ────────────────────────────────────────────────────────────────
+    match /batches/{batchId} {
+      allow read: if isSignedIn();
+      allow create: if isAdminLike();
+      // Admins + coaches (updating studentIds/currentEnrolment) can write
+      allow update: if isAdminLike() || isCoach();
+      allow delete: if isAdminLike();
+    }
+
+    // ── /students/{studentId} ─────────────────────────────────────────────────────────────
+    match /students/{studentId} {
+      // Admin + coaches can read all; students/parents can only read their linked profiles
+      allow read: if isAdminOrCoach() || (
+        isStudentOrParent() && studentId in getUserDoc().data.linkedStudentIds
+      );
+      allow create: if isAdminLike();
+      allow update: if isAdminLike();
+      allow delete: if isAdminLike();
+
+      // Denormalised monthly attendance summary written by Cloud Function
+      match /attendanceMonthly/{yearMonth} {
+        allow read: if isAdminOrCoach() || (
+          isStudentOrParent() && studentId in getUserDoc().data.linkedStudentIds
+        );
+        allow write: if isAdminLike();  // CF uses admin SDK which bypasses rules
+      }
+    }
+
+    // ── /enrollments/{enrollmentId} ──────────────────────────────────────────────────────
+    // One row per (student, batch). Admins and the centre's manager create + update.
+    // Students/parents read their own. Coaches read enrollments for their batches
+    // (needed to derive today's roster).
+    match /enrollments/{enrollmentId} {
+      allow read: if isAdminOrCoach() || (
+        isStudentOrParent() && resource.data.studentId in getUserDoc().data.linkedStudentIds
+      );
+      allow create: if isAdminLike();
+      allow update: if isAdminLike();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /attendance/{batchId}/sessions/{sessionId}/records/{studentId} ───────────────────
+    match /attendance/{batchId}/sessions/{sessionId} {
+      allow read: if isAdminOrCoach() || isStudentOrParent();
+      allow write: if isAdminOrCoach();
+
+      match /records/{recordId} {
+        allow read: if isAdminOrCoach() || isStudentOrParent();
+        allow write: if isAdminOrCoach();
+      }
+    }
+
+    // ── /payments/{paymentId} ─────────────────────────────────────────────────────────────
+    match /payments/{paymentId} {
+      // Coaches cannot see payment data
+      allow read: if isAdminLike() || (
+        isStudentOrParent() && (
+          resource.data.studentId in getUserDoc().data.linkedStudentIds ||
+          resource.data.studentId == uid()
+        )
+      );
+      allow create: if isAdminLike();
+      allow update: if isAdminLike();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /progress/{studentId}/scores & reports ────────────────────────────────────────────
+    match /progress/{studentId} {
+      match /{subcol}/{docId} {
+        allow read: if isAdminOrCoach() || (
+          isStudentOrParent() && (
+            studentId in getUserDoc().data.linkedStudentIds || studentId == uid()
+          )
+        );
+        allow write: if isAdminOrCoach();
+      }
+    }
+
+    // ── /parentFeedback/{feedbackId} ────────────────────────────────────────────────────────
+    match /parentFeedback/{feedbackId} {
+      allow read: if isAdminLike();
+      allow create, update: if isAdminLike();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /centreExpenses/{expenseId} — SUPER_ADMIN ONLY ───────────────────────────────────
+    // Expenses include COACH_SALARY rows (booked automatically when payroll is
+    // paid) and drive the profit view. This is finance data a CENTRE_MANAGER
+    // must never see or edit — read/write is SUPER_ADMIN only, matching
+    // partnerPayouts and the payroll collections.
+    // A centre manager may raise expenses for a centre they manage and see only
+    // that centre's expenses. They can never approve — approval is what lets a
+    // row affect profit, so it stays a super-admin act. Revenue, payouts and
+    // payroll remain invisible to them (separate collections, unchanged).
+    match /centreExpenses/{expenseId} {
+      function managerOwnsRow() {
+        return isCentreManager() && managesCentre(resource.data.centreId);
+      }
+      // Approval fields and the original submitter are never a manager's to
+      // change. centreId is allowed to move, but only between centres they
+      // manage — enforced separately below.
+      function approvalFieldsUntouched() {
+        return !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(['approvedBy', 'approvedAt', 'rejectionReason', 'submittedBy']);
+      }
+
+      allow read: if isSuperAdmin() || managerOwnsRow();
+
+      // Managers submit as PENDING only, for a centre they manage, attributed
+      // to themselves — so a submission can't be back-dated onto someone else
+      // or slipped in pre-approved.
+      allow create: if isSuperAdmin() || (
+        isCentreManager()
+        && managesCentre(request.resource.data.centreId)
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.approvedBy == null
+        && request.resource.data.submittedBy == uid()
+      );
+
+      // A manager may correct their own row only while it is still PENDING,
+      // and may not touch the approval fields.
+      allow update: if isSuperAdmin() || (
+        managerOwnsRow()
+        && resource.data.status == 'PENDING'
+        && request.resource.data.status == 'PENDING'
+        && managesCentre(request.resource.data.centreId)
+        && approvalFieldsUntouched()
+      );
+
+      allow delete: if isSuperAdmin() || (managerOwnsRow() && resource.data.status == 'PENDING');
+    }
+
+    // ── /courtBookings/{bookingId} ───────────────────────────────────────────────────────
+    // Court hour bookings. Admin-only both ways: unlike slotBookings there is
+    // no public "who's booked" view to justify opening reads, and every
+    // document carries a member of the public's name and phone.
+    //
+    // That closes the door on the public booking page too — a Firestore
+    // transaction reads before it writes, so it could not even attempt a
+    // booking, and its availability query came back denied, which rendered as
+    // "nothing free" on every date. Both now go through Cloud Functions
+    // (courtAvailability / createCourtBookingPublic), which run with the admin
+    // SDK and return occupancy without any contact details attached.
+    //
+    // Admin create stays open: Jaydeep enters walk-ins from the court grid.
+    match /courtBookings/{bookingId} {
+      allow read: if isAdminLike();
+      allow create, update, delete: if isAdminLike();
+    }
+
+    // ── /courtRentalPlans/{planId} ───────────────────────────────────────────────────────
+    // Recurring monthly court hires. Admin-only both ways — a plan is arranged
+    // directly, never self-served, and it carries a member of the public's
+    // contact details.
+    match /courtRentalPlans/{planId} {
+      allow read, write: if isAdminLike();
+    }
+
+    // ── /courtRentalConfig/{centreId} ────────────────────────────────────────────────────
+    // Public read so the booking page can show real availability; only an
+    // admin may change rates, windows or open/close an hour.
+    match /courtRentalConfig/{centreId} {
+      allow read: if true;
+      allow write: if isAdminLike();
+    }
+
+    // ── /feeAttendanceReports/{reportId} ─────────────────────────────────────────────────
+    // "Who attended but hasn't paid" — a collections worklist, not finance
+    // data: it carries fees owed and session counts, but no revenue, profit,
+    // payroll or partner figures. A centre manager needs it to chase payments,
+    // so admin-like may read. Written only by the Cloud Function (admin SDK,
+    // which bypasses rules), so nothing may write from a client.
+    match /feeAttendanceReports/{reportId} {
+      allow read: if isAdminLike();
+      allow write: if false;
+    }
+
+    // ── /recurringExpenses/{templateId} — SUPER_ADMIN ONLY ───────────────────────────────
+    // Templates for fixed monthly costs (rent, utilities). Same finance-only
+    // sensitivity as centreExpenses, which is what they post into.
+    match /recurringExpenses/{templateId} {
+      allow read: if isSuperAdmin();
+      allow create, update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /partnerPayouts/{payoutId} — SUPER_ADMIN ONLY ───────────────────────────────────
+    match /partnerPayouts/{payoutId} {
+      allow read: if isSuperAdmin();
+      allow create, update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /issues/{issueId} ───────────────────────────────────────────────────────────────
+    match /issues/{issueId} {
+      allow read: if isAdminOrCoach();
+      allow create: if isAdminOrCoach();
+      allow update: if isAdminOrCoach();
+      allow delete: if isAdminLike();
+
+      match /comments/{commentId} {
+        allow read: if isAdminOrCoach();
+        allow create: if isAdminOrCoach();
+        allow update: if isSignedIn() && resource.data.authorId == uid();
+        allow delete: if isAdminLike();
+      }
+    }
+
+    // ── /notifications/{userId}/messages/{notifId} ───────────────────────────────────────
+    match /notifications/{userId} {
+      match /messages/{notifId} {
+        // Users can only read/mark-read their own notifications
+        allow read: if isSignedIn() && uid() == userId;
+        // Users can mark their own as read (update 'read' and 'readAt' only)
+        allow update: if isSignedIn() && uid() == userId;
+        // Cloud Functions (admin SDK) create; admin-like users can also create
+        allow create: if isAdminLike();
+        allow delete: if isAdminLike();
+      }
+    }
+
+    // ── /slotBookings/{bookingId} — PUBLIC booking portal ────────────────────────────────
+    // ── /slotBookings/{bookingId} ────────────────────────────────────────────────────────
+    // Public read is deliberate: /fees shows live slot counts and who has
+    // booked. But this document used to carry participantPhone and
+    // participantEmail too, which meant anyone who queried the collection
+    // could dump every parent's contact details.
+    //
+    // Firestore rules are all-or-nothing per document — a rule cannot expose a
+    // name while hiding a phone number. So contact details now live in the
+    // private subcollection below, and creation moved to the createSlotBooking
+    // Cloud Function (admin SDK, bypasses these rules) so a client never needs
+    // write access to either document.
+    match /slotBookings/{bookingId} {
+      allow read: if true;
+      allow create: if false;          // createSlotBooking only
+      allow update: if isAdminLike();
+      allow delete: if isSuperAdmin();
+
+      // Phone and email. Never publicly readable, and no client writes it —
+      // the booking function creates it with the admin SDK.
+      match /private/{docId} {
+        allow read: if isAdminLike();
+        allow write: if false;
+      }
+    }
+
+    // ── /paymentMonthlySummaries/{summaryId} — admin-only monthly rollups ─────────────────
+    match /paymentMonthlySummaries/{summaryId} {
+      allow read: if isAdminLike();
+      allow create, update: if isAdminLike();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /slotBookingConfig/{centreId} — Portal config (public read, admin write) ──────────
+    match /slotBookingConfig/{centreId} {
+      allow read: if true;
+      allow write: if isAdminLike();
+    }
+
+    // ── /staff/{staffId} — Coach payroll profiles (SUPER_ADMIN only) ───────────────────
+    match /staff/{staffId} {
+      allow read: if isSuperAdmin() || (
+        isCoach() && resource.data.authUid == uid()
+      );
+      allow create, update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /payrollRuns/{runId} — Monthly payroll entries ─────────────────────────────
+    match /payrollRuns/{runId} {
+      allow read: if isSuperAdmin() || (
+        isCoach() && get(/databases/$(database)/documents/staff/$(resource.data.staffId)).data.authUid == uid()
+      );
+      allow create, update: if isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ── /emailDigests/{digestId} — Attendance email dedup (Cloud Functions only) ──────
+    match /emailDigests/{digestId} {
+      allow read, write: if false;
+    }
+
+    // ── /broadcasts/{broadcastId} ─────────────────────────────────────────────────────────
+    match /broadcasts/{broadcastId} {
+      allow read: if isAdminLike();
+      allow create: if isAdminLike();
+      allow update, delete: if isSuperAdmin();
+    }
+  }
+}
