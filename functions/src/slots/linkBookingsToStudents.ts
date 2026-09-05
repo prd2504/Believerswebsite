@@ -20,6 +20,11 @@
  *               family, so it is reported separately rather than folded in.
  *   PHONE_NAME  the phone matches several students (siblings share a number)
  *               and the name picks one of them out.
+ *   PHONE_PREFIX same, but the names differ in length rather than substance —
+ *               a booking for "Hitindra Misttry" against a student recorded as
+ *               "Hitindra", where the other person on that number is a Rakesh.
+ *               Still anchored on the phone, so it is nothing like guessing
+ *               from a name alone.
  *   NAME        no phone match at all, but the name matches exactly one
  *               student in the whole database.
  *   PREFIX      "Devarsh" against "Devarsh Shah" — a booking taken with a
@@ -51,7 +56,7 @@ function normName(s: unknown): string {
     .trim();
 }
 
-type Tier = 'PHONE' | 'PHONE_ALT' | 'PHONE_NAME' | 'NAME' | 'PREFIX';
+type Tier = 'PHONE' | 'PHONE_ALT' | 'PHONE_NAME' | 'PHONE_PREFIX' | 'NAME' | 'PREFIX';
 
 interface Match {
   bookingId: string;
@@ -150,11 +155,22 @@ export async function linkBookings(opts: {
       tier = 'PHONE_ALT';
     } else if (phoneHits.length > 1) {
       const narrowed = phoneHits.filter((s) => s.norm === norm);
+      // Fall back to a prefix match WITHIN the people on that number. The
+      // phone has already done the identifying work; this is only choosing
+      // between a handful of known family members, so a shortened name is
+      // safe here in a way it would never be across the whole database.
+      const prefixed = narrowed.length === 0
+        ? phoneHits.filter((s) => s.norm && (s.norm.startsWith(`${norm} `) || norm.startsWith(`${s.norm} `)))
+        : [];
+
       if (narrowed.length === 1) { hit = narrowed[0]; tier = 'PHONE_NAME'; }
+      else if (prefixed.length === 1) { hit = prefixed[0]; tier = 'PHONE_PREFIX'; }
       else {
         problems.push({
           bookingId: doc.id, participantName: name,
-          reason: `${phoneHits.length} students share that phone and the name matched ${narrowed.length}`,
+          reason: narrowed.length > 1
+            ? `${narrowed.length} students on that phone share the name — these look like duplicate records, not different people`
+            : `${phoneHits.length} students share that phone and none matched the name`,
           candidates: phoneHits.map((s) => `${s.name} (${s.id})`),
         });
         continue;
