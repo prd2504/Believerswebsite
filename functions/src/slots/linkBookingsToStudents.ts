@@ -15,6 +15,9 @@
  *
  *   PHONE       the booking's phone matches exactly one student. Strongest —
  *               a phone is issued to a family, not typed from memory.
+ *   PHONE_ALT   it matches exactly one student's EMERGENCY contact number.
+ *               Weaker: that number may belong to a relative rather than the
+ *               family, so it is reported separately rather than folded in.
  *   PHONE_NAME  the phone matches several students (siblings share a number)
  *               and the name picks one of them out.
  *   NAME        no phone match at all, but the name matches exactly one
@@ -48,7 +51,7 @@ function normName(s: unknown): string {
     .trim();
 }
 
-type Tier = 'PHONE' | 'PHONE_NAME' | 'NAME' | 'PREFIX';
+type Tier = 'PHONE' | 'PHONE_ALT' | 'PHONE_NAME' | 'NAME' | 'PREFIX';
 
 interface Match {
   bookingId: string;
@@ -74,13 +77,14 @@ export async function linkBookings(opts: {
   matched: Match[];
   byTier: Record<string, number>;
   problems: Problem[];
+  stillPublic: number;
 }> {
   const [bookingsSnap, studentsSnap] = await Promise.all([
     db.collection('slotBookings').get(),
     db.collection('students').get(),
   ]);
 
-  interface Stu { id: string; name: string; norm: string; phone: string }
+  interface Stu { id: string; name: string; norm: string; phone: string; altPhone: string }
   const students: Stu[] = studentsSnap.docs.map((d) => {
     const s = d.data();
     return {
@@ -88,15 +92,16 @@ export async function linkBookings(opts: {
       name: String(s.name ?? ''),
       norm: normName(s.name),
       phone: normPhone(s.phone),
+      altPhone: normPhone(s.emergencyContact?.phone),
     };
   });
 
   const byPhone = new Map<string, Stu[]>();
+  const byAltPhone = new Map<string, Stu[]>();
   const byName = new Map<string, Stu[]>();
   students.forEach((s) => {
-    if (s.phone.length === 10) {
-      byPhone.set(s.phone, [...(byPhone.get(s.phone) ?? []), s]);
-    }
+    if (s.phone.length === 10) byPhone.set(s.phone, [...(byPhone.get(s.phone) ?? []), s]);
+    if (s.altPhone.length === 10) byAltPhone.set(s.altPhone, [...(byAltPhone.get(s.altPhone) ?? []), s]);
     if (s.norm) byName.set(s.norm, [...(byName.get(s.norm) ?? []), s]);
   });
 
@@ -104,6 +109,8 @@ export async function linkBookings(opts: {
   const problems: Problem[] = [];
   const byTier: Record<string, number> = {};
   let alreadyLinked = 0;
+  /** Bookings whose phone is still on the world-readable parent document. */
+  let stillPublic = 0;
 
   for (const doc of bookingsSnap.docs) {
     const b = doc.data();
@@ -112,18 +119,35 @@ export async function linkBookings(opts: {
     const name = String(b.participantName ?? '');
     const norm = normName(name);
 
-    // The phone lives in the private subcollection, which is exactly why this
-    // has to run server-side with the admin SDK.
+    // The phone lives in the private subcollection for bookings written by the
+    // createSlotBooking function — which is why this has to run server-side
+    // with the admin SDK.
+    //
+    // Older bookings still carry it on the PUBLIC document, because
+    // backfillSlotBookingContacts has not been run. Reading only the private
+    // copy found nothing for roughly sixty of them and reported "no usable
+    // phone" over a phone number sitting in plain sight. Both are checked, and
+    // the count of unmigrated ones is reported, because every one of them is
+    // still a phone number the whole internet can read.
     const contact = await doc.ref.collection('private').doc('contact').get();
-    const phone = normPhone(contact.exists ? contact.data()?.participantPhone : '');
+    const privatePhone = normPhone(contact.exists ? contact.data()?.participantPhone : '');
+    const publicPhone = normPhone(b.participantPhone);
+    if (publicPhone.length === 10) stillPublic++;
+    const phone = privatePhone.length === 10 ? privatePhone : publicPhone;
 
     const phoneHits = phone.length === 10 ? (byPhone.get(phone) ?? []) : [];
+    const altHits = phone.length === 10 && phoneHits.length === 0
+      ? (byAltPhone.get(phone) ?? [])
+      : [];
     let hit: Stu | undefined;
     let tier: Tier | undefined;
 
     if (phoneHits.length === 1) {
       hit = phoneHits[0];
       tier = 'PHONE';
+    } else if (phoneHits.length === 0 && altHits.length === 1) {
+      hit = altHits[0];
+      tier = 'PHONE_ALT';
     } else if (phoneHits.length > 1) {
       const narrowed = phoneHits.filter((s) => s.norm === norm);
       if (narrowed.length === 1) { hit = narrowed[0]; tier = 'PHONE_NAME'; }
@@ -186,7 +210,7 @@ export async function linkBookings(opts: {
     }
   }
 
-  return { total: bookingsSnap.size, alreadyLinked, matched, byTier, problems };
+  return { total: bookingsSnap.size, alreadyLinked, matched, byTier, problems, stillPublic };
 }
 
 export const linkBookingsToStudents = onRequest(
@@ -211,6 +235,8 @@ export const linkBookingsToStudents = onRequest(
         allowNameMatch,
         total: out.total,
         alreadyLinked: out.alreadyLinked,
+        // Still exposing a phone number publicly — run backfillSlotBookingContacts.
+        phonesStillPublic: out.stillPublic,
         matchedCount: out.matched.length,
         byTier: out.byTier,
         problemCount: out.problems.length,
