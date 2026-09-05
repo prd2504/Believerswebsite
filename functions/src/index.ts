@@ -71,6 +71,8 @@ export {
 } from './slots/syncBookingEnrollments.js';
 // One-off: attach studentIds to the bookings taken before that field existed.
 export { linkBookingsToStudents } from './slots/linkBookingsToStudents.js';
+// Read-only report: one person entered more than once.
+export { duplicateStudents } from './fees/duplicateStudents.js';
 export { backfillBatchCounters } from './enrollments/backfillBatchCounters.js';
 export { onCourtBookingCreated } from './slots/onCourtBookingCreated.js';
 

@@ -97,6 +97,7 @@ export async function syncBookingToEnrollments(
   bookingId: string,
   booking: FirebaseFirestore.DocumentData,
   now = istNow(),
+  dryRun = false,
 ): Promise<SyncResult> {
   const studentId: string | null = booking.studentId ?? null;
   const result: SyncResult = { bookingId, studentId, created: [], ended: [], unmatched: false };
@@ -166,7 +167,7 @@ export async function syncBookingToEnrollments(
         : { startDate: nowIso.slice(0, 10), pausedMonths: [], createdAt: nowIso, createdBy: 'syncBookingToEnrollments' }),
     };
 
-    await ref.set(payload, { merge: true });
+    if (!dryRun) await ref.set(payload, { merge: true });
     if (!existing.exists || existing.data()?.status !== 'ACTIVE') result.created.push(batchId);
   }
 
@@ -180,12 +181,14 @@ export async function syncBookingToEnrollments(
     const e = doc.data();
     if (wantedBatchIds.includes(String(e.batchId))) continue;
     if (e.status === 'ENDED') continue;
-    await doc.ref.update({
-      status: 'ENDED',
-      endDate: nowIso.slice(0, 10),
-      updatedAt: nowIso,
-      updatedBy: 'syncBookingToEnrollments',
-    });
+    if (!dryRun) {
+      await doc.ref.update({
+        status: 'ENDED',
+        endDate: nowIso.slice(0, 10),
+        updatedAt: nowIso,
+        updatedBy: 'syncBookingToEnrollments',
+      });
+    }
     result.ended.push(String(e.batchId));
   }
 
@@ -249,8 +252,10 @@ export async function syncAllBookings(dryRun = false): Promise<{
       if (LIVE_STATUSES.has(String(b.status ?? ''))) unlinked.push(`${doc.id} (${b.participantName})`);
       continue;
     }
-    if (dryRun) continue;
-    const res = await syncBookingToEnrollments(doc.id, b);
+    // Runs in both modes now. A dry run that skipped the work could only ever
+    // report what it had not looked at — it said "0 created" whether there was
+    // nothing to do or everything to do, which is the opposite of a preview.
+    const res = await syncBookingToEnrollments(doc.id, b, istNow(), dryRun);
     created += res.created.length;
     ended += res.ended.length;
     if (res.unmatched) unmatched.push(`${doc.id} (${b.planType} · ${b.timeSlot})`);
