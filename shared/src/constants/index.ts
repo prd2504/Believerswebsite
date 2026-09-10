@@ -141,5 +141,6 @@ export const COLLECTIONS = {
   courtBookings: 'courtBookings',
   courtRentalConfig: 'courtRentalConfig',
   courtRentalPlans: 'courtRentalPlans',
+  dayPasses: 'dayPasses',
   counters: 'counters',
 } as const;

@@ -73,6 +73,14 @@ export {
 export { linkBookingsToStudents } from './slots/linkBookingsToStudents.js';
 // Read-only report: one person entered more than once.
 export { duplicateStudents } from './fees/duplicateStudents.js';
+
+// --- Gate passes: a standing pass is a view of fee coverage, a day pass is a
+//     document with an approval trail. See passes/gatePassApi.ts -------------
+export {
+  getPass,
+  sendStandingPass,
+  onDayPassWritten,
+} from './passes/gatePassApi.js';
 export { backfillBatchCounters } from './enrollments/backfillBatchCounters.js';
 export { onCourtBookingCreated } from './slots/onCourtBookingCreated.js';
 

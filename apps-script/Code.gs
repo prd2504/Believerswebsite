@@ -72,6 +72,9 @@ var SHEETS = {
   // up in Court_Rentals like any other booking; this tab is what says the
   // five of them were one purchase.
   COURT_PLANS: "Court_Plans",
+  // Gate passes issued for a single day — a discretionary admission, so the
+  // trail of who asked and who approved lives next to the fee tabs.
+  PASSES     : "Gate_Passes",
   PAYMENTS   : {
     "Dadar"            : "Payments_Dadar",
     "Ruia College"     : "Payments_Ruia",
@@ -89,6 +92,11 @@ var COURT_HEADERS = [
   "Players", "Guest_Amount", "Total",
   "Source", "Plan_ID", "Status", "Verified_At", "Screenshot", "Booking_ID"
 ];
+var GATE_PASS_HEADERS = [
+  "Synced_At", "Valid_Date", "Centre", "Name", "Phone", "Email",
+  "Reason", "Notes", "Status", "Raised_By", "Approved_By", "Pass_ID"
+];
+
 var COURT_PLAN_HEADERS = [
   "Synced_At", "Plan_ID", "Month", "Weekday", "Hour", "Hours",
   "Booker", "Phone", "Email", "Rate", "Sessions", "Total",
@@ -340,6 +348,7 @@ function applySafeStyling() {
   targets.push({ name: SHEETS.INVOICES, monthIdx: INV_COL.MONTH });
   targets.push({ name: SHEETS.COURT,       monthIdx: -1 });
   targets.push({ name: SHEETS.COURT_PLANS, monthIdx: -1 });
+  targets.push({ name: SHEETS.PASSES,      monthIdx: -1 });
   targets.push({ name: SHEETS.PLAYERS,  monthIdx: -1 });
   targets.push({ name: SHEETS.ADMIN,    monthIdx: -1 });
 
@@ -468,7 +477,8 @@ function ensureNewColumnHeaders() {
   // split, plan id, verified-at, screenshot) and Court_Plans is new.
   ensureCourtTab(ss, SHEETS.COURT,       COURT_HEADERS,      [2]);
   ensureCourtTab(ss, SHEETS.COURT_PLANS, COURT_PLAN_HEADERS, [3]);
-  changed.push(SHEETS.COURT + " + " + SHEETS.COURT_PLANS);
+  ensureCourtTab(ss, SHEETS.PASSES,      GATE_PASS_HEADERS,  [2]);
+  changed.push(SHEETS.COURT + " + " + SHEETS.COURT_PLANS + " + " + SHEETS.PASSES);
 
   adminLog("Column headers ensured", "—", "—", changed.join(", ") || "already correct");
   SpreadsheetApp.getUi().alert(
@@ -737,6 +747,7 @@ function setupSpreadsheet() {
   // headers brought up to date and its data left alone.
   ensureCourtTab(ss, SHEETS.COURT,       COURT_HEADERS,      [2]);
   ensureCourtTab(ss, SHEETS.COURT_PLANS, COURT_PLAN_HEADERS, [3]);
+  ensureCourtTab(ss, SHEETS.PASSES,      GATE_PASS_HEADERS,  [2]);
 
   var logSheet = ss.getSheetByName(SHEETS.ADMIN);
   if (!logSheet) {

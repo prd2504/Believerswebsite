@@ -29,6 +29,7 @@ export const paths = {
     financials: '/admin/financials',
     expenses: '/admin/expenses',
     courtHours: '/admin/court-hours',
+    gatePasses: '/admin/gate-passes',
     issues: '/admin/issues',
     notifications: '/admin/notifications',
     payroll: '/admin/payroll',

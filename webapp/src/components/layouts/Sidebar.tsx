@@ -5,6 +5,7 @@
 
 import { NavLink, type To } from 'react-router-dom';
 import {
+  Ticket,
   LayoutDashboard,
   MapPin,
   Layers,
@@ -59,6 +60,7 @@ const NAV_ITEMS: NavItem[] = [
   // sees it. Financials (revenue, profit, payouts) stays super-admin only.
   { to: paths.admin.expenses, label: 'Centre Expenses', icon: <Receipt size={18} /> },
   { to: paths.admin.courtHours, label: 'Court Hours', icon: <Clock size={18} /> },
+  { to: paths.admin.gatePasses, label: 'Gate Passes', icon: <Ticket size={18} /> },
   { to: paths.admin.financials, label: 'Financials', icon: <Wallet size={18} />, superAdminOnly: true },
   { to: paths.admin.payroll, label: 'Payroll', icon: <Banknote size={18} />, superAdminOnly: true },
   { to: paths.admin.issues, label: 'Issues', icon: <AlertTriangle size={18} /> },

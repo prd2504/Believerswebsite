@@ -14,6 +14,7 @@ export * from './attendance.js';
 export * from './payment.js';
 export * from './feeAttendance.js';
 export * from './courtRental.js';
+export * from './gatePass.js';
 export * from './progress.js';
 export * from './notification.js';
 export * from './parentFeedback.js';

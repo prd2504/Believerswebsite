@@ -49,6 +49,8 @@ const AdminPayroll = lazy(() => import('@/pages/admin/Payroll'));
 const AdminSettings = lazy(() => import('@/pages/admin/Settings'));
 const AdminCentreExpenses = lazy(() => import('@/pages/admin/CentreExpenses'));
 const AdminCourtBookings = lazy(() => import('@/pages/admin/CourtBookings'));
+const GatePass = lazy(() => import('@/pages/public/GatePass'));
+const AdminGatePasses = lazy(() => import('@/pages/admin/GatePasses'));
 
 const CoachDashboard = lazy(() => import('@/pages/coach/Dashboard'));
 const CoachBatches = lazy(() => import('@/pages/coach/Batches'));
@@ -99,6 +101,12 @@ const routes: RouteObject[] = [
     path: '/court/:centreSlug',
     element: <Lazy><CourtBookingPortal /></Lazy>,
   },
+  // Gate pass — opened at a gate by someone with no account. The token is the
+  // only credential, and the page sets a noindex tag on mount.
+  {
+    path: '/pass/:token',
+    element: <Lazy><GatePass /></Lazy>,
+  },
 
   // Root redirect — sends authenticated users to their role home, guests to /login
   {
@@ -136,6 +144,9 @@ const routes: RouteObject[] = [
               { path: '/admin/expenses', element: <Lazy><AdminCentreExpenses /></Lazy> },
               // Court hours — a manager runs this day to day, so admin-like.
               { path: '/admin/court-hours', element: <Lazy><AdminCourtBookings /></Lazy> },
+              // Gate passes — a manager raises day passes here; only a super
+              // admin can approve one, which the Firestore rules enforce.
+              { path: '/admin/gate-passes', element: <Lazy><AdminGatePasses /></Lazy> },
               // Financials & Payroll expose salaries, expenses, partner payouts
               // and profit — SUPER_ADMIN only, never CENTRE_MANAGER. Nested guard
               // so a manager can't reach them by typing the URL directly.

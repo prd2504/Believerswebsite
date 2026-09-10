@@ -253,6 +253,41 @@ service cloud.firestore {
       allow create, update, delete: if isAdminLike();
     }
 
+    // ── /dayPasses/{passId} ──────────────────────────────────────────────────────────────
+    // One-day gate passes: admitting someone who has not paid for the month.
+    //
+    // The two-person rule lives HERE, not in the UI. A centre manager may
+    // raise a pass but may never approve one — including their own — because
+    // approval is the whole control. Hiding the button would be a suggestion;
+    // this is the rule.
+    //
+    // A super admin may set any status. A centre manager may only edit a pass
+    // that is still pending, and only while leaving it pending, so they can fix
+    // a typo in a name without quietly turning it into an approved pass.
+    //
+    // Reads are admin-like. The pass PAGE is public but goes through the
+    // getPass Cloud Function, which returns a name and a validity window and
+    // nothing else — never this document.
+    match /dayPasses/{passId} {
+      allow read: if isAdminLike();
+
+      allow create: if isAdminLike()
+        && request.resource.data.status == 'PENDING_APPROVAL'
+        && request.resource.data.approvedBy == null
+        && request.resource.data.personName is string
+        && request.resource.data.personName.size() > 1
+        && request.resource.data.validDate is string;
+
+      allow update: if isSuperAdmin() || (
+        isCentreManager()
+        && resource.data.status == 'PENDING_APPROVAL'
+        && request.resource.data.status == 'PENDING_APPROVAL'
+        && request.resource.data.approvedBy == null
+      );
+
+      allow delete: if isSuperAdmin();
+    }
+
     // ── /courtRentalPlans/{planId} ───────────────────────────────────────────────────────
     // Recurring monthly court hires. Admin-only both ways — a plan is arranged
     // directly, never self-served, and it carries a member of the public's
