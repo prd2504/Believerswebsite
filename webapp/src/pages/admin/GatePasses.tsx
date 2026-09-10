@@ -12,6 +12,14 @@
  *     the only action is sending someone their link. The list doubles as a
  *     read on who is unpaid this month, which is the same question the gate
  *     is asking.
+ *
+ * Dadar only, for now — GATE_PASS_CENTRE_CODE. That's the one centre with an
+ * actual gate and a guard checking it. This screen doesn't offer a centre
+ * picker for that reason: showing one and then having the write get rejected
+ * by the rules would just be confusing. The restriction lives in the rules
+ * (see firestore.rules) and in the Cloud Functions that mint a standing pass —
+ * this UI filter is a convenience on top of an enforcement that doesn't
+ * depend on it.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
@@ -28,7 +36,7 @@ import {
 } from '@/services/dayPassService';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
 import {
-  UserRole, DAY_PASS_REASON_LABELS, monthColour, paymentCoversMonth,
+  UserRole, DAY_PASS_REASON_LABELS, monthColour, paymentCoversMonth, GATE_PASS_CENTRE_CODE,
   type DayPassDocument, type DayPassReason, type CentreDocument, type StudentDocument,
 } from '@bba/shared';
 import { collection, getDocs, query, where } from 'firebase/firestore';
@@ -66,10 +74,16 @@ export default function GatePassesPage() {
   const [busy, setBusy] = useState(false);
   const [showIssue, setShowIssue] = useState(false);
   const [studentSearch, setStudentSearch] = useState('');
-  const [centreFilter, setCentreFilter] = useState('');
 
   const thisMonth = todayStr().slice(0, 7);
   const colour = monthColour(thisMonth);
+
+  // The one centre this whole page operates on. Not a filter the user picks —
+  // there is nowhere else for a gate pass to go.
+  const dadCentre = useMemo(
+    () => centres.find((c) => c.centreCode === GATE_PASS_CENTRE_CODE) ?? null,
+    [centres],
+  );
 
   const load = useCallback(async () => {
     try {
@@ -88,7 +102,11 @@ export default function GatePassesPage() {
         )),
       ]);
       setCentres(cData);
-      setStudents(sData.filter((s) => s.status === 'ACTIVE'));
+      const dad = cData.find((c) => c.centreCode === GATE_PASS_CENTRE_CODE);
+      // Students at Dadar only. Every downstream list, count and dialog on
+      // this page reads from this array, so restricting it here is what
+      // keeps a Ruia or RBI student from ever showing up to be sent a pass.
+      setStudents(sData.filter((s) => s.status === 'ACTIVE' && s.primaryCentreId === dad?.id));
 
       // Same coverage rule the pass itself uses, so this list and the gate can
       // never disagree about who is paid up.
@@ -104,8 +122,6 @@ export default function GatePassesPage() {
       });
       setPaidIds(paid);
 
-      const dad = cData.find((c) => c.centreCode === 'DAD') ?? cData[0];
-      if (dad) setCentreFilter((f) => f || dad.id);
     } catch (err) {
       console.error(err);
       toast.error('Failed to load passes');
@@ -120,10 +136,11 @@ export default function GatePassesPage() {
   const pending = useMemo(() => passes.filter((p) => p.status === 'PENDING_APPROVAL'), [passes]);
   const upcoming = useMemo(() => passes.filter((p) => p.status !== 'PENDING_APPROVAL'), [passes]);
 
+  // `students` is already Dadar-only (filtered on load), so this is just
+  // search and ordering, not a second centre filter.
   const centreStudents = useMemo(() => {
     const q = studentSearch.trim().toLowerCase();
     return students
-      .filter((s) => !centreFilter || s.primaryCentreId === centreFilter)
       .filter((s) => !q || s.name.toLowerCase().includes(q) || (s.phone ?? '').includes(q))
       .sort((a, b) => {
         // Unpaid first — the ones the gate will turn away are the ones worth
@@ -132,7 +149,7 @@ export default function GatePassesPage() {
         const bp = paidIds.has(b.id) ? 1 : 0;
         return ap - bp || a.name.localeCompare(b.name);
       });
-  }, [students, centreFilter, studentSearch, paidIds]);
+  }, [students, studentSearch, paidIds]);
 
   async function handleApprove(p: DayPassDocument) {
     if (!profile) return;
@@ -177,7 +194,10 @@ export default function GatePassesPage() {
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-brand-secondary">Gate Passes</h1>
-          <p className="text-sm text-gray-500">
+          <p className="text-xs font-medium text-gray-400">
+            {dadCentre?.name ?? 'Dadar Railway Officers Colony'} only
+          </p>
+          <p className="mt-0.5 text-sm text-gray-500">
             This month&rsquo;s colour is{' '}
             <span
               className="ml-0.5 inline-block rounded px-1.5 py-0.5 text-xs font-bold"
@@ -276,11 +296,6 @@ export default function GatePassesPage() {
             <ShieldCheck size={14} /> Standing passes
           </h2>
           <div className="flex flex-wrap items-center gap-2">
-            <select value={centreFilter} onChange={(e) => setCentreFilter(e.target.value)}
-              className="input w-auto py-1.5 text-xs">
-              <option value="">All centres</option>
-              {centres.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
             <div className="relative">
               <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
               <input value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)}
@@ -324,11 +339,10 @@ export default function GatePassesPage() {
         </div>
       </div>
 
-      {showIssue && profile && (
+      {showIssue && profile && dadCentre && (
         <IssueDayPassDialog
-          centres={centres}
+          centre={dadCentre}
           students={students}
-          defaultCentreId={centreFilter}
           onClose={() => setShowIssue(false)}
           onCreate={async (input) => {
             setBusy(true);
@@ -422,15 +436,14 @@ export function PreviewPassButton({ studentId }: { studentId: string }) {
 }
 
 interface IssueProps {
-  centres: CentreDocument[];
+  /** The only centre a day pass can be raised for — see GATE_PASS_CENTRE_CODE. */
+  centre: CentreDocument;
   students: StudentDocument[];
-  defaultCentreId: string;
   onClose: () => void;
   onCreate: (input: Parameters<typeof createDayPass>[0]) => void;
 }
 
-function IssueDayPassDialog({ centres, students, defaultCentreId, onClose, onCreate }: IssueProps) {
-  const [centreId, setCentreId] = useState(defaultCentreId || centres[0]?.id || '');
+function IssueDayPassDialog({ centre, students, onClose, onCreate }: IssueProps) {
   const [name, setName] = useState('');
   const [studentId, setStudentId] = useState<string | null>(null);
   const [phone, setPhone] = useState('');
@@ -440,7 +453,6 @@ function IssueDayPassDialog({ centres, students, defaultCentreId, onClose, onCre
   const [validDate, setValidDate] = useState(todayStr);
   const [search, setSearch] = useState('');
 
-  const centre = centres.find((c) => c.id === centreId);
   const matches = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return [];
@@ -459,11 +471,9 @@ function IssueDayPassDialog({ centres, students, defaultCentreId, onClose, onCre
         </div>
 
         <div className="space-y-3 p-4">
-          <div>
-            <label className="label">Centre</label>
-            <select value={centreId} onChange={(e) => setCentreId(e.target.value)} className="input text-sm">
-              {centres.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+          <div className="rounded-lg bg-gray-50 px-3 py-2">
+            <p className="text-[10px] uppercase tracking-wide text-gray-400">Centre</p>
+            <p className="text-sm font-medium text-brand-secondary">{centre.name}</p>
           </div>
 
           <div>
@@ -542,8 +552,8 @@ function IssueDayPassDialog({ centres, students, defaultCentreId, onClose, onCre
           <button onClick={onClose} className="btn-secondary text-xs">Cancel</button>
           <button
             className="btn-primary text-xs"
-            disabled={name.trim().length < 2 || !centre || !validDate}
-            onClick={() => centre && onCreate({
+            disabled={name.trim().length < 2 || !validDate}
+            onClick={() => onCreate({
               centreId: centre.id,
               centreCode: centre.centreCode ?? '',
               centreName: centre.name,

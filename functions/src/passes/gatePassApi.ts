@@ -27,6 +27,7 @@ import {
   dayPassState,
   monthColour,
   DAY_PASS_REASON_LABELS,
+  GATE_PASS_CENTRE_CODE,
   type PassView,
 } from '@bba/shared';
 import { buildPassEmail } from './passEmail.js';
@@ -69,19 +70,24 @@ async function buildStandingPass(studentId: string, token: string): Promise<Pass
   if (!studentSnap.exists) return null;
   const s = studentSnap.data()!;
 
+  // Gate passes are Dadar-only. A student's primaryCentreId can be any
+  // centre, so this has to check the actual centre document rather than
+  // trust anything the caller sent — the same reason the day-pass write
+  // below checks centreCode instead of trusting the client's centreName.
+  const homeCentreSnap = s.primaryCentreId
+    ? await db.collection('centres').doc(String(s.primaryCentreId)).get()
+    : null;
+  if (homeCentreSnap?.data()?.centreCode !== GATE_PASS_CENTRE_CODE) return null;
+
   const [y, m] = thisMonth.split('-').map(Number);
   const from = new Date(y, m - 3, 1);
   const fromMonth = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}`;
 
-  const [paySnap, centreSnap] = await Promise.all([
-    db.collection('payments')
-      .where('studentId', '==', studentId)
-      .where('month', '>=', fromMonth)
-      .get(),
-    s.primaryCentreId
-      ? db.collection('centres').doc(String(s.primaryCentreId)).get()
-      : Promise.resolve(null),
-  ]);
+  const paySnap = await db.collection('payments')
+    .where('studentId', '==', studentId)
+    .where('month', '>=', fromMonth)
+    .get();
+  const centreSnap = homeCentreSnap;
 
   // The payment whose coverage reaches furthest — someone who paid monthly and
   // then quarterly should get the quarterly window, not whichever row came
@@ -238,6 +244,19 @@ export const sendStandingPass = onRequest(
     if (!studentId) { res.status(400).json({ ok: false, error: 'studentId required' }); return; }
 
     try {
+      const snap0 = await db.collection('students').doc(studentId).get();
+      if (!snap0.exists) { res.status(404).json({ ok: false, error: 'Student not found' }); return; }
+      const homeCentre = snap0.data()?.primaryCentreId
+        ? (await db.collection('centres').doc(String(snap0.data()!.primaryCentreId)).get()).data()
+        : null;
+      if (homeCentre?.centreCode !== GATE_PASS_CENTRE_CODE) {
+        res.status(400).json({
+          ok: false,
+          error: `Gate passes are only for ${GATE_PASS_CENTRE_CODE} right now — this student's centre is ${homeCentre?.centreCode ?? 'unknown'}.`,
+        });
+        return;
+      }
+
       const token = await ensurePassToken(studentId);
       const view = await buildStandingPass(studentId, token);
       if (!view) { res.status(404).json({ ok: false, error: 'Student not found' }); return; }

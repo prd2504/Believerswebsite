@@ -271,7 +271,12 @@ service cloud.firestore {
     match /dayPasses/{passId} {
       allow read: if isAdminLike();
 
+      // Dadar only, for now — that's the one centre with a gate to check.
+      // centreCode is checked here, not just filtered out of the admin UI's
+      // dropdown, because a rule is what a stray API call or a future screen
+      // can't route around.
       allow create: if isAdminLike()
+        && request.resource.data.centreCode == 'DAD'
         && request.resource.data.status == 'PENDING_APPROVAL'
         && request.resource.data.approvedBy == null
         && request.resource.data.personName is string

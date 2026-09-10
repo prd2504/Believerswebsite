@@ -38,6 +38,15 @@ export const COMPANY = {
 export const RUIA_CENTRE_CODE = 'RUI';
 export const RUIA_SLOT_BOOKING_CENTRE_ID = 'ruia-college';
 
+/**
+ * Gate passes are Dadar Railway Officers Colony only, for now — that's the
+ * one centre with an actual gate and a guard checking it. Centralised here
+ * rather than left to whichever screen happens to filter by centre, because
+ * the enforcement that matters is server-side: the Cloud Functions that mint
+ * and email a pass check this too, not just the admin UI's dropdown.
+ */
+export const GATE_PASS_CENTRE_CODE = 'DAD';
+
 /** Brand colours — mirrored in Tailwind theme config in webapp/tailwind.config.js. */
 export const BRAND_COLORS = {
   primary: '#E8593C',
