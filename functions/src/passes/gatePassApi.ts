@@ -338,3 +338,130 @@ export const onDayPassWritten = onDocumentWritten(
     }
   },
 );
+
+/**
+ * Every Dadar pass in one call, for the print sheet.
+ *
+ * ── Why this is not "call sendStandingPass N times" ──
+ * buildStandingPass reads the student, their payments and the centre — three
+ * reads each. Across a centre that is hundreds of reads and hundreds of
+ * invocations to print one sheet, repeated every month. Here the students, the
+ * payments and the centre are each read ONCE and the passes computed in
+ * memory, which is three reads regardless of how many people are at the
+ * centre.
+ *
+ * Tokens are minted for anyone who lacks one, in a single batched write.
+ */
+export const bulkStandingPasses = onRequest(
+  { region: REGION, cors: true, timeoutSeconds: 300 },
+  async (req, res): Promise<void> => {
+    if (!(await requireAdminLike(req, res))) return;
+
+    // Off by default. You do not print a NOT VALID card to hand somebody —
+    // it admits them nowhere. Available because knowing who is missing from
+    // the sheet is sometimes the point.
+    const includeUnpaid = String(req.query.includeUnpaid ?? '') === '1';
+
+    try {
+      const now = istNow();
+      const thisMonth = now.date.slice(0, 7);
+      const [y, m] = thisMonth.split('-').map(Number);
+      const from = new Date(y, m - 3, 1);
+      const fromMonth = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}`;
+
+      const centreSnap = await db.collection('centres')
+        .where('centreCode', '==', GATE_PASS_CENTRE_CODE).limit(1).get();
+      if (centreSnap.empty) {
+        res.status(404).json({ ok: false, error: `No centre with code ${GATE_PASS_CENTRE_CODE}` });
+        return;
+      }
+      const centre = centreSnap.docs[0];
+      const centreName = String(centre.data().name ?? '');
+
+      const [studentsSnap, paySnap] = await Promise.all([
+        db.collection('students').where('primaryCentreId', '==', centre.id).get(),
+        // One range query for the whole centre. Coverage is applied per student
+        // below, so a quarterly payment still counts in its later months.
+        db.collection('payments').where('month', '>=', fromMonth).get(),
+      ]);
+
+      // studentId → the payment whose coverage reaches furthest into the future
+      const best = new Map<string, { month: string; months: number; end: string }>();
+      paySnap.docs.forEach((d) => {
+        const p = d.data();
+        if (p.status === 'REFUNDED' || !p.studentId) return;
+        const months = Number(p.coverageMonths) > 0 ? Number(p.coverageMonths) : 1;
+        const end = String(p.coverageEndMonth || coveredMonths(String(p.month), months).slice(-1)[0]);
+        if (!paymentCoversMonth(
+          { month: String(p.month), coverageMonths: months, coverageEndMonth: end }, thisMonth,
+        )) return;
+        const id = String(p.studentId);
+        const cur = best.get(id);
+        if (!cur || end > cur.end) best.set(id, { month: String(p.month), months, end });
+      });
+
+      const writer = db.batch();
+      let minted = 0;
+      const passes: PassView[] = [];
+
+      for (const doc of studentsSnap.docs) {
+        const s = doc.data();
+        if (s.status !== 'ACTIVE') continue;
+        const cover = best.get(doc.id);
+        if (!cover && !includeUnpaid) continue;
+
+        let token = s.passToken as string | undefined;
+        if (!token) {
+          token = randomUUID().replace(/-/g, '');
+          writer.update(doc.ref, { passToken: token, updatedAt: new Date().toISOString() });
+          minted++;
+        }
+
+        const base = {
+          kind: 'STANDING' as const,
+          personName: String(s.name ?? ''),
+          centreName,
+          centreCode: GATE_PASS_CENTRE_CODE,
+          batchLabel: null,
+          colourMonth: thisMonth,
+          code: passCode(GATE_PASS_CENTRE_CODE, `${thisMonth}-01`, token),
+          reasonLabel: null,
+        };
+
+        passes.push(cover
+          ? {
+            ...base,
+            state: 'VALID',
+            validLabel: monthWord(thisMonth),
+            validUntilLabel: `Valid until ${longDate(endOfMonth(cover.end))}`,
+            coversMonths: coveredMonths(cover.month, cover.months),
+            message: null,
+          }
+          : {
+            ...base,
+            state: 'EXPIRED',
+            validLabel: monthWord(thisMonth),
+            validUntilLabel: 'Fees not received for this month',
+            coversMonths: [],
+            message: null,
+          });
+      }
+
+      if (minted > 0) await writer.commit();
+      passes.sort((a, b) => a.personName.localeCompare(b.personName));
+
+      logger.info('[bulkStandingPasses] built', { count: passes.length, minted, includeUnpaid });
+      res.status(200).json({
+        ok: true,
+        month: thisMonth,
+        centreName,
+        colour: monthColour(thisMonth),
+        count: passes.length,
+        passes,
+      });
+    } catch (err: any) {
+      logger.error('[bulkStandingPasses] failed', { err });
+      res.status(500).json({ ok: false, error: err?.message ?? 'Internal error' });
+    }
+  },
+);

@@ -79,6 +79,7 @@ export { duplicateStudents } from './fees/duplicateStudents.js';
 export {
   getPass,
   sendStandingPass,
+  bulkStandingPasses,
   onDayPassWritten,
 } from './passes/gatePassApi.js';
 export { backfillBatchCounters } from './enrollments/backfillBatchCounters.js';

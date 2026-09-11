@@ -24,8 +24,9 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Ticket, Check, X, Plus, Loader2, Send, Search, ShieldCheck, Clock, Copy, ExternalLink,
+  Ticket, Check, X, Plus, Loader2, Send, Search, ShieldCheck, Clock, Copy, ExternalLink, Printer,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
 import { useAuth } from '@/hooks/useAuth';
@@ -226,9 +227,18 @@ export default function GatePassesPage() {
             {' '}&mdash; tell security to admit only this colour.
           </p>
         </div>
-        <button onClick={() => setShowIssue(true)} className="btn-primary text-sm">
-          <Plus size={15} /> Issue day pass
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/admin/gate-passes/print"
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            title="Every paid pass at this centre, laid out to print and cut"
+          >
+            <Printer size={15} /> Print all
+          </Link>
+          <button onClick={() => setShowIssue(true)} className="btn-primary text-sm">
+            <Plus size={15} /> Issue day pass
+          </button>
+        </div>
       </div>
 
       {/* Approval queue */}
