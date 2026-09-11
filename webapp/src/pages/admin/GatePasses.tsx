@@ -62,6 +62,17 @@ const STATUS_STYLE: Record<string, string> = {
   REJECTED: 'bg-red-50 text-red-700 border-red-200',
 };
 
+/**
+ * Build marker, also hung off window so it can be checked from the console or
+ * curled out of the bundle. Two deploys were spent unable to tell whether the
+ * browser was running new code; a version string that can be read without
+ * squinting at the page settles that in one step.
+ */
+const PASSES_BUILD = 'passes-v3';
+if (typeof window !== 'undefined') {
+  (window as unknown as Record<string, string>).__BBA_PASSES_BUILD = PASSES_BUILD;
+}
+
 export default function GatePassesPage() {
   const { profile } = useAuth();
   const isSuperAdmin = profile?.role === UserRole.SUPER_ADMIN;
@@ -200,8 +211,8 @@ export default function GatePassesPage() {
                 was still running an older bundle, and there was no way to tell
                 from the page which code was live. If this tag is missing, the
                 deploy hasn't reached this browser — hard-refresh. */}
-            <span className="ml-1.5 rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] text-gray-400">
-              passes-v2
+            <span className="ml-1.5 rounded bg-brand-primary px-1.5 py-0.5 font-mono text-[11px] font-bold text-white">
+              {PASSES_BUILD}
             </span>
           </p>
           <p className="mt-0.5 text-sm text-gray-500">
