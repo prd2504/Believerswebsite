@@ -5,6 +5,8 @@ import { buildInvoiceHtml } from './invoiceEmailTemplate.js';
 import { buildWelcomeHtml } from './welcomeEmailTemplate.js';
 import { syncPublicFeePayment, logAdminEvent } from './sheetsSync.js';
 import { sendMail } from './mailer.js';
+import { ensurePassToken } from '../passes/gatePassApi.js';
+import { GATE_PASS_CENTRE_CODE, GATE_PASS_LAUNCH_MONTH } from '@bba/shared';
 
 function monthLabel(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
@@ -260,6 +262,26 @@ export const onFeePaymentCreated = onDocumentWritten(
     // the sheet — it fires from the real sendMail() outcome (SMTP
     // accepted/rejected), unlike the "Invoice generated" row in sheetsSync.ts
     // which just means an invoice number was logged, before this ever runs.
+    // ── Gate pass on the receipt ──
+    // Dadar only, and only from the rollout month: a pass on a receipt for a
+    // centre with no gate is a puzzle, and one for a month before the gate is
+    // being checked invites someone to turn up expecting it to mean something.
+    // A failure here must never cost the payer their receipt, so it degrades
+    // to a receipt with no pass block rather than throwing.
+    let passUrl: string | null = null;
+    let passMonthLabel: string | null = null;
+    try {
+      const payMonth = String(after.month ?? '');
+      if (centreCode === GATE_PASS_CENTRE_CODE && payMonth >= GATE_PASS_LAUNCH_MONTH) {
+        const token = await ensurePassToken(studentId);
+        const base = process.env.APP_BASE_URL ?? 'https://bba-sports-prod.web.app';
+        passUrl = `${base}/pass/${token}`;
+        passMonthLabel = monthLabel(payMonth).toUpperCase();
+      }
+    } catch (err) {
+      logger.warn('[onFeePaymentCreated] could not attach a gate pass', { studentId, err });
+    }
+
     try {
       const html = buildInvoiceHtml({
         studentName,
@@ -274,6 +296,8 @@ export const onFeePaymentCreated = onDocumentWritten(
         gstRatePercent: after.gstRatePercentSnapshot as number,
         paymentMethod: after.method as string,
         paymentDate: after.paidAt as string | null,
+        passUrl,
+        passMonthLabel,
       });
       const result = await sendMail({ to: recipientEmail, subject: `Fee Receipt — ${month} | BBA Sports`, html });
       logger.info(`[onFeePaymentCreated] Invoice email sent to ${recipientEmail} — ${month}`, { result });

@@ -57,6 +57,15 @@ export interface InvoiceEmailParams {
   gstRatePercent: number;
   paymentMethod: string;
   paymentDate: string | null;
+  /**
+   * Link to the payer's gate pass, when the centre has a gate and the month is
+   * on or after the rollout. Null everywhere else, and the receipt then looks
+   * exactly as it did before — a pass block on a receipt for a centre with no
+   * gate would just be a puzzle.
+   */
+  passUrl?: string | null;
+  /** "OCTOBER 2026" — what the pass will say across the top. */
+  passMonthLabel?: string | null;
 }
 
 export function buildInvoiceHtml(p: InvoiceEmailParams): string {
@@ -152,6 +161,29 @@ export function buildInvoiceHtml(p: InvoiceEmailParams): string {
       </tr>
     </table>
   </div>
+
+  ${p.passUrl ? `<!-- Gate pass. Dadar only, from the rollout month onward. -->
+  <div style="padding:0 24px 20px">
+    <div style="background:#0A0A0A;border-radius:10px;padding:18px 20px;text-align:center">
+      <p style="margin:0;font-size:10px;font-weight:700;letter-spacing:2.5px;color:#E84C1E">
+        YOUR GATE PASS
+      </p>
+      <p style="margin:8px 0 0;font-size:20px;font-weight:800;color:#ffffff">
+        ${p.passMonthLabel ?? ''}
+      </p>
+      <p style="margin:8px 0 0;font-size:12px;color:#cbd5e1;line-height:1.6">
+        Entry at ${p.centreName} needs this pass. Show it at the gate &mdash;
+        on your phone, or printed.
+      </p>
+      <a href="${p.passUrl}" style="display:inline-block;margin-top:14px;background:#E84C1E;color:#ffffff;
+         padding:11px 26px;border-radius:8px;font-size:14px;font-weight:700;text-decoration:none">
+        Open my pass
+      </a>
+      <p style="margin:10px 0 0;font-size:10px;color:#94a3b8">
+        The pass updates itself &mdash; the same link works next month once fees are paid.
+      </p>
+    </div>
+  </div>` : ''}
 
   <!-- Footer -->
   <div style="background:#f8fafc;padding:16px 24px;border-top:1px solid #e2e8f0;text-align:center">

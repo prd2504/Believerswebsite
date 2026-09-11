@@ -47,6 +47,17 @@ export const RUIA_SLOT_BOOKING_CENTRE_ID = 'ruia-college';
  */
 export const GATE_PASS_CENTRE_CODE = 'DAD';
 
+/**
+ * First month a fee receipt carries a gate pass.
+ *
+ * Passes only start being checked at the gate in October, and a receipt for an
+ * earlier month that arrives with a pass attached would invite someone to turn
+ * up in September expecting it to mean something. Same shape as
+ * QUARTERLY_LAUNCH_MONTH, for the same reason: a rollout date belongs in one
+ * place, not in whichever branch happens to guard it.
+ */
+export const GATE_PASS_LAUNCH_MONTH = '2026-10';
+
 /** Brand colours — mirrored in Tailwind theme config in webapp/tailwind.config.js. */
 export const BRAND_COLORS = {
   primary: '#E8593C',

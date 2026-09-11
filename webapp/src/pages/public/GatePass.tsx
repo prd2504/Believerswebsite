@@ -22,25 +22,13 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Loader2, AlertCircle, Printer, RefreshCw } from 'lucide-react';
+import { Loader2, AlertCircle, Printer, RefreshCw, Download } from 'lucide-react';
+import { renderPassPng } from '@/lib/pass/renderPassPng';
+import type { PassPayload } from '@/lib/pass/types';
 
 const FUNCTIONS_BASE = import.meta.env.VITE_FUNCTIONS_BASE_URL
   || `https://${import.meta.env.VITE_FUNCTIONS_REGION || 'asia-south1'}-${import.meta.env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net`;
 
-interface PassPayload {
-  kind: 'STANDING' | 'DAY';
-  state: 'VALID' | 'EXPIRED' | 'PENDING' | 'REJECTED' | 'UNKNOWN';
-  personName: string;
-  centreName: string;
-  centreCode: string;
-  validLabel: string;
-  validUntilLabel: string;
-  coversMonths: string[];
-  colourMonth: string;
-  code: string;
-  reasonLabel: string | null;
-  message: string | null;
-}
 
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function monthLabel(ym: string): string {
@@ -54,6 +42,7 @@ export default function GatePass() {
   const [today, setToday] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [downloading, setDownloading] = useState(false);
 
   // Never indexed. A pass carries a person's name and where they train.
   useEffect(() => {
@@ -220,16 +209,51 @@ export default function GatePass() {
 
       <div className="no-print mx-auto mt-4 flex max-w-sm gap-2">
         <button
+          onClick={async () => {
+            setDownloading(true);
+            try {
+              const blob = await renderPassPng(pass, colour);
+              if (!blob) throw new Error('render failed');
+              // A blob URL rather than a canvas data URL: a data URL for an
+              // image this size is a megabyte-long string, and Safari refuses
+              // to download one past a certain length.
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `BBA-pass-${pass.personName.replace(/[^a-zA-Z0-9]+/g, '-')}-${pass.colourMonth}.png`;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              // Revoked on the next tick — revoking immediately can cancel the
+              // download in Firefox before it has started reading the blob.
+              setTimeout(() => URL.revokeObjectURL(url), 10_000);
+            } catch {
+              // Falling back to print is better than a dead button: the pass
+              // is still obtainable, just via one more step.
+              window.print();
+            } finally {
+              setDownloading(false);
+            }
+          }}
+          disabled={downloading}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand-secondary py-3 text-sm font-semibold text-white disabled:opacity-60"
+        >
+          {downloading
+            ? <><Loader2 size={15} className="animate-spin" /> Preparing…</>
+            : <><Download size={15} /> Download</>}
+        </button>
+        <button
           onClick={() => window.print()}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white py-3 text-sm font-semibold text-gray-700"
+          className="flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700"
         >
           <Printer size={15} /> Print
         </button>
         <button
           onClick={load}
+          title="Re-check this pass"
           className="flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700"
         >
-          <RefreshCw size={15} /> Refresh
+          <RefreshCw size={15} />
         </button>
       </div>
     </div>
