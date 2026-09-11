@@ -196,6 +196,13 @@ export default function GatePassesPage() {
           <h1 className="text-xl font-bold text-brand-secondary">Gate Passes</h1>
           <p className="text-xs font-medium text-gray-400">
             {dadCentre?.name ?? 'Dadar Railway Officers Colony'} only
+            {/* Build marker. The pass buttons failed twice while the browser
+                was still running an older bundle, and there was no way to tell
+                from the page which code was live. If this tag is missing, the
+                deploy hasn't reached this browser — hard-refresh. */}
+            <span className="ml-1.5 rounded bg-gray-100 px-1 py-0.5 font-mono text-[10px] text-gray-400">
+              passes-v2
+            </span>
           </p>
           <p className="mt-0.5 text-sm text-gray-500">
             This month&rsquo;s colour is{' '}
@@ -384,25 +391,57 @@ const FN_BASE = import.meta.env.VITE_FUNCTIONS_BASE_URL
 async function callSendPass(studentId: string, preview: boolean): Promise<{
   ok: boolean; url?: string; emailed?: boolean; error?: string;
 }> {
+  // Every failure path below names WHICH step failed and carries the HTTP
+  // status. A pass button that reports one generic sentence for a signed-out
+  // session, a blocked request and a server error costs a deploy cycle per
+  // guess — this one says which it was the first time.
   const user = auth.currentUser;
-  if (!user) return { ok: false, error: 'You are signed out. Reload the page and sign in again.' };
+  if (!user) return { ok: false, error: 'Signed out — reload the page and sign in again.' };
+  if (!FN_BASE.includes('cloudfunctions.net') && !FN_BASE.startsWith('http')) {
+    return { ok: false, error: `Functions URL is misconfigured: "${FN_BASE}"` };
+  }
 
+  let token: string;
   try {
-    const token = await user.getIdToken();
-    const res = await fetch(`${FN_BASE}/sendStandingPass${preview ? '?preview=1' : ''}`, {
+    token = await user.getIdToken();
+  } catch (err) {
+    console.error('[gatePass] getIdToken failed', err);
+    return { ok: false, error: 'Could not refresh your login. Sign out and back in.' };
+  }
+
+  const url = `${FN_BASE}/sendStandingPass${preview ? '?preview=1' : ''}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ studentId }),
     });
-    const body = await res.json().catch(() => null);
-    if (!res.ok || !body?.ok) {
-      return { ok: false, error: body?.error ?? `Request failed (HTTP ${res.status})` };
-    }
-    return { ok: true, url: body.url, emailed: body.emailed };
   } catch (err) {
-    console.error('[gatePass] send failed', err);
-    return { ok: false, error: 'Could not reach the server. Check your connection.' };
+    // fetch only throws for network-level failures, and a blocked CORS
+    // preflight is one of them — so name that possibility rather than
+    // blaming the connection.
+    console.error('[gatePass] network/CORS failure calling', url, err);
+    return { ok: false, error: `Request blocked before it reached the server. Is sendStandingPass deployed? (${url})` };
   }
+
+  const raw = await res.text();
+  let body: { ok?: boolean; error?: string; url?: string; emailed?: boolean } | null = null;
+  try { body = JSON.parse(raw); } catch { /* not JSON — infrastructure error page */ }
+
+  if (!res.ok || !body?.ok) {
+    console.error('[gatePass] server said', res.status, raw.slice(0, 300));
+    if (body?.error) return { ok: false, error: `${body.error} (HTTP ${res.status})` };
+    // A non-JSON body means Cloud Run answered, not our code — almost always
+    // a function that isn't deployed, or one that isn't publicly invokable.
+    return {
+      ok: false,
+      error: res.status === 404
+        ? 'sendStandingPass is not deployed — run npm run deploy:functions.'
+        : `Server returned HTTP ${res.status} before reaching the function.`,
+    };
+  }
+  return { ok: true, url: body.url, emailed: body.emailed };
 }
 
 /**
