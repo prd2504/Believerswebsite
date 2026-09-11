@@ -83,9 +83,15 @@ async function buildStandingPass(studentId: string, token: string): Promise<Pass
   const from = new Date(y, m - 3, 1);
   const fromMonth = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}`;
 
+  // orderBy('month','desc') is not cosmetic — it is what makes this query
+  // servable by the index we already have (studentId ASC, month DESC).
+  // Without it Firestore implicitly orders the range field ASCENDING and
+  // demands a second, near-identical index. Every payment is examined either
+  // way, so the direction costs nothing.
   const paySnap = await db.collection('payments')
     .where('studentId', '==', studentId)
     .where('month', '>=', fromMonth)
+    .orderBy('month', 'desc')
     .get();
   const centreSnap = homeCentreSnap;
 
