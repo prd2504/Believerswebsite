@@ -40,7 +40,7 @@ import {
   type DayPassDocument, type DayPassReason, type CentreDocument, type StudentDocument,
 } from '@bba/shared';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase';
 
 const REASONS: DayPassReason[] = ['TRIAL', 'GUEST', 'FEE_EXTENSION', 'MAKEUP', 'OTHER'];
 
@@ -365,6 +365,46 @@ export default function GatePassesPage() {
   );
 }
 
+const FN_BASE = import.meta.env.VITE_FUNCTIONS_BASE_URL
+  || `https://${import.meta.env.VITE_FUNCTIONS_REGION || 'asia-south1'}-${import.meta.env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net`;
+
+/**
+ * Call sendStandingPass as the signed-in admin.
+ *
+ * The endpoint used to demand the shared x-api-key, which the browser has no
+ * business holding — that key also authorises backfills and enrolment-counter
+ * rewrites, and anything in a JS bundle is public. It now accepts a Firebase
+ * ID token and checks the caller's role server-side, which is the same thing
+ * the Firestore rules do.
+ *
+ * Errors are returned rather than swallowed so the caller can show what
+ * actually went wrong: "your session expired" and "no email on file" need
+ * different responses from whoever clicked.
+ */
+async function callSendPass(studentId: string, preview: boolean): Promise<{
+  ok: boolean; url?: string; emailed?: boolean; error?: string;
+}> {
+  const user = auth.currentUser;
+  if (!user) return { ok: false, error: 'You are signed out. Reload the page and sign in again.' };
+
+  try {
+    const token = await user.getIdToken();
+    const res = await fetch(`${FN_BASE}/sendStandingPass${preview ? '?preview=1' : ''}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ studentId }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body?.ok) {
+      return { ok: false, error: body?.error ?? `Request failed (HTTP ${res.status})` };
+    }
+    return { ok: true, url: body.url, emailed: body.emailed };
+  } catch (err) {
+    console.error('[gatePass] send failed', err);
+    return { ok: false, error: 'Could not reach the server. Check your connection.' };
+  }
+}
+
 /**
  * Sending is a Cloud Function, not a client write: it has to read payments to
  * decide what the pass says, and mint a token onto the student document —
@@ -372,8 +412,6 @@ export default function GatePassesPage() {
  */
 function SendPassButton({ studentId, disabled }: { studentId: string; disabled: boolean }) {
   const [sending, setSending] = useState(false);
-  const base = import.meta.env.VITE_FUNCTIONS_BASE_URL
-    || `https://${import.meta.env.VITE_FUNCTIONS_REGION || 'asia-south1'}-${import.meta.env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net`;
 
   return (
     <button
@@ -381,19 +419,10 @@ function SendPassButton({ studentId, disabled }: { studentId: string; disabled: 
       title={disabled ? 'No email on file for this student' : 'Email their pass link'}
       onClick={async () => {
         setSending(true);
-        try {
-          const res = await fetch(`${base}/sendStandingPass`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId }),
-          });
-          const body = await res.json().catch(() => null);
-          if (!res.ok || !body?.ok) throw new Error(body?.error ?? 'Failed');
-          toast.success(body.emailed ? 'Pass emailed' : `No email on file — link: ${body.url}`);
-        } catch (err) {
-          console.error(err);
-          toast.error('Could not send the pass');
-        } finally { setSending(false); }
+        const r = await callSendPass(studentId, false);
+        setSending(false);
+        if (!r.ok) { toast.error(r.error ?? 'Could not send the pass'); return; }
+        toast.success(r.emailed ? 'Pass emailed' : `No email on file — link copied below: ${r.url}`);
       }}
       className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 disabled:opacity-40"
     >
@@ -409,26 +438,29 @@ function SendPassButton({ studentId, disabled }: { studentId: string; disabled: 
  * what the gate sees is the only way to know the pass is right.
  */
 export function PreviewPassButton({ studentId }: { studentId: string }) {
-  const base = import.meta.env.VITE_FUNCTIONS_BASE_URL
-    || `https://${import.meta.env.VITE_FUNCTIONS_REGION || 'asia-south1'}-${import.meta.env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net`;
+  const [busy, setBusy] = useState(false);
   return (
     <button
+      disabled={busy}
       title="Open this pass without emailing anyone"
       onClick={async () => {
-        try {
-          const res = await fetch(`${base}/sendStandingPass?preview=1`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ studentId }),
-          });
-          const body = await res.json().catch(() => null);
-          if (!res.ok || !body?.ok) throw new Error(body?.error ?? 'Failed');
-          window.open(body.url, '_blank', 'noopener');
-        } catch {
-          toast.error('Could not open the pass');
+        // The tab is opened BEFORE the await, while the click is still on the
+        // stack. Opening it after the fetch resolves is a popup a browser
+        // blocks, because by then it is no longer attributable to a gesture.
+        const tab = window.open('', '_blank', 'noopener');
+        setBusy(true);
+        const r = await callSendPass(studentId, true);
+        setBusy(false);
+
+        if (!r.ok || !r.url) {
+          tab?.close();
+          toast.error(r.error ?? 'Could not open the pass');
+          return;
         }
+        if (tab) tab.location.href = r.url;
+        else window.location.href = r.url;   // popups blocked — go there instead
       }}
-      className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600"
+      className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600 disabled:opacity-40"
     >
       <ExternalLink size={11} /> View
     </button>

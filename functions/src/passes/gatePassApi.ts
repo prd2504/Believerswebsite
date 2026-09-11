@@ -17,7 +17,7 @@ import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions';
 import { randomUUID } from 'node:crypto';
 import { db } from '../admin.js';
-import { config } from '../config.js';
+import { requireAdminLike } from '../http/requireAdmin.js';
 import { sendMail } from '../fees/mailer.js';
 import {
   paymentCoversMonth,
@@ -236,10 +236,10 @@ function passUrl(token: string): string {
 export const sendStandingPass = onRequest(
   { region: REGION, cors: true, timeoutSeconds: 60 },
   async (req, res): Promise<void> => {
-    if (!config.sheets.apiKey || req.header('x-api-key') !== config.sheets.apiKey) {
-      res.status(401).json({ ok: false, error: 'Unauthorized' });
-      return;
-    }
+    // Called from the admin UI, so a signed-in admin's ID token is the normal
+    // credential here; x-api-key still works for curl.
+    if (!(await requireAdminLike(req, res))) return;
+
     const studentId = String(req.query.studentId ?? req.body?.studentId ?? '');
     if (!studentId) { res.status(400).json({ ok: false, error: 'studentId required' }); return; }
 
