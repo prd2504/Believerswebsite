@@ -98,6 +98,15 @@ export async function syncBookingToEnrollments(
   booking: FirebaseFirestore.DocumentData,
   now = istNow(),
   dryRun = false,
+  /**
+   * Pre-resolved centre and batches, for callers processing many bookings.
+   *
+   * Every Ruia booking resolves to the SAME centre and the SAME batch list, so
+   * looking them up inside the loop was two extra Firestore reads per booking
+   * on every monthly run — work that scales with the number of bookings ever
+   * taken while producing an identical answer each time.
+   */
+  ctx?: { centreId: string; batches: BatchLike[] },
 ): Promise<SyncResult> {
   const studentId: string | null = booking.studentId ?? null;
   const result: SyncResult = { bookingId, studentId, created: [], ended: [], unmatched: false };
@@ -107,13 +116,13 @@ export async function syncBookingToEnrollments(
   // guessing from a name.
   if (!studentId) return result;
 
-  const centreId = await centreIdForBooking(String(booking.centreId ?? ''));
+  const centreId = ctx?.centreId ?? await centreIdForBooking(String(booking.centreId ?? ''));
   if (!centreId) {
     logger.warn('[bookingSync] no centre for booking', { bookingId, centreId: booking.centreId });
     return result;
   }
 
-  const batches = await ruiaBatches(centreId);
+  const batches = ctx?.batches ?? await ruiaBatches(centreId);
   const live = LIVE_STATUSES.has(String(booking.status ?? ''));
 
   // A booking only justifies an enrolment while it covers the month we are in.
@@ -232,20 +241,53 @@ export const onSlotBookingWritten = onDocumentWritten(
  */
 export const monthlyBookingEnrollmentSync = onSchedule(
   { schedule: '30 3 1 * *', timeZone: 'Asia/Kolkata', region: REGION, timeoutSeconds: 540 },
-  async () => { await syncAllBookings(); },
+  // skipLapsed: a booking whose coverage ended before last month had its
+  // enrolments ended by an earlier run. Re-deriving them every month forever
+  // costs reads and changes nothing.
+  async () => { await syncAllBookings(false, { skipLapsed: true }); },
 );
 
-export async function syncAllBookings(dryRun = false): Promise<{
-  total: number; created: number; ended: number; unmatched: string[]; unlinked: string[];
+export async function syncAllBookings(dryRun = false, opts: { skipLapsed?: boolean } = {}): Promise<{
+  total: number; skipped: number; created: number; ended: number;
+  unmatched: string[]; unlinked: string[];
 }> {
   const snap = await db.collection('slotBookings').get();
   let created = 0;
   let ended = 0;
+  let skipped = 0;
   const unmatched: string[] = [];
   const unlinked: string[] = [];
 
+  // Resolved once for the whole run rather than per booking — see the ctx
+  // parameter on syncBookingToEnrollments.
+  const now = istNow();
+  const centreId = await centreIdForBooking('ruia-college');
+  const ctx = centreId ? { centreId, batches: await ruiaBatches(centreId) } : undefined;
+
+  /**
+   * The month before this one. A booking whose coverage ended before then had
+   * its enrolments ended by an earlier run, and re-deriving them every month
+   * forever produces the same answer at the cost of several reads apiece.
+   * Last month is included rather than only this one, so a run that was missed
+   * still catches up.
+   */
+  const [cy, cm] = now.date.slice(0, 7).split('-').map(Number);
+  const prev = new Date(cy, cm - 2, 1);
+  const floor = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}`;
+
   for (const doc of snap.docs) {
     const b = doc.data();
+
+    const covers: string[] = Array.isArray(b.coversMonths) && b.coversMonths.length
+      ? b.coversMonths
+      : [String(b.month ?? '')];
+    const lastCovered = covers.reduce((a, c) => (c > a ? c : a), '');
+    // Only the unattended monthly run skips. The manual backfill must still
+    // walk everything: its whole job is reporting what is unlinked or
+    // unmatched across the full history, and a backfill that quietly ignored
+    // old bookings would answer the wrong question.
+    if (opts.skipLapsed && lastCovered && lastCovered < floor) { skipped++; continue; }
+
     if (!b.studentId) {
       // No student link. Reported, never guessed — matching a booking to a
       // student by name is how the wrong child ends up on a register.
@@ -255,13 +297,13 @@ export async function syncAllBookings(dryRun = false): Promise<{
     // Runs in both modes now. A dry run that skipped the work could only ever
     // report what it had not looked at — it said "0 created" whether there was
     // nothing to do or everything to do, which is the opposite of a preview.
-    const res = await syncBookingToEnrollments(doc.id, b, istNow(), dryRun);
+    const res = await syncBookingToEnrollments(doc.id, b, now, dryRun, ctx);
     created += res.created.length;
     ended += res.ended.length;
     if (res.unmatched) unmatched.push(`${doc.id} (${b.planType} · ${b.timeSlot})`);
   }
 
-  return { total: snap.size, created, ended, unmatched, unlinked };
+  return { total: snap.size, skipped, created, ended, unmatched, unlinked };
 }
 
 /** Manual run — first-time backfill, or after fixing a batch's slotPlanTypes. */
