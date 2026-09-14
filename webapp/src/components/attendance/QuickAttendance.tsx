@@ -89,6 +89,9 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
   const [saving, setSaving] = useState(false);
   const [hasExisting, setHasExisting] = useState(false);
   const [droppedNames, setDroppedNames] = useState<string[]>([]);
+  const [loadError, setLoadError] = useState('');
+  /** Bumped by Retry, so the load effect re-runs without anything else changing. */
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [saveError, setSaveError] = useState('');
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [showPicker, setShowPicker] = useState<null | 'student' | 'trial'>(null);
@@ -112,6 +115,26 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
     }
 
     setLoading(true);
+    setLoadError('');
+
+    // A superseded load must not write its rows over a newer one — changing
+    // the date twice quickly would otherwise leave the first date's register
+    // on screen under the second date's heading.
+    let cancelled = false;
+
+    /**
+     * The Firestore SDK does not time out. On a weak connection it queues a
+     * read and waits — indefinitely — rather than rejecting, so `finally`
+     * never runs and the skeleton stays up forever with no error and no way
+     * out. That is precisely what a coach standing at the court sees: a page
+     * that never loads and never explains itself.
+     *
+     * Racing the load against a deadline turns that into something he can act
+     * on.
+     */
+    const deadline = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('TIMEOUT')), 20_000));
+
     (async () => {
       try {
         const allRows: QuickRow[] = [];
@@ -122,9 +145,12 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
         const dropped: string[] = [];
 
         for (const batch of batchesForDay) {
-          const [enrollments, records] = await Promise.all([
-            getEnrollmentsForBatchOnDay(batch.id, dayOfWeek),
-            getAttendanceRecords(batch.id, sessionDate).catch(() => []),
+          const [enrollments, records] = await Promise.race([
+            Promise.all([
+              getEnrollmentsForBatchOnDay(batch.id, dayOfWeek),
+              getAttendanceRecords(batch.id, sessionDate).catch(() => []),
+            ]),
+            deadline,
           ]);
 
           if (records.length > 0) foundExisting = true;
@@ -197,17 +223,31 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
           }
         }
 
+        if (cancelled) return;
         setRows(allRows);
         setHasExisting(foundExisting);
         setDroppedNames(dropped);
       } catch (err) {
-        console.error(err);
-        toast.error('Failed to load attendance roster');
+        if (cancelled) return;
+        console.error('[QuickAttendance] roster load failed', err);
+        const code = (err as { code?: string })?.code ?? '';
+        setLoadError(
+          (err as Error)?.message === 'TIMEOUT'
+            ? 'The roster is taking too long to load — usually a weak connection. Tap Retry, or move somewhere with better signal.'
+            : code === 'permission-denied'
+              ? "You don't have access to one of today's batches. Ask your admin to check your assignment."
+              : code === 'unavailable'
+                ? 'No connection to the server. Tap Retry once you have signal.'
+                : (err as Error)?.message || 'Could not load the roster.',
+        );
+        setRows([]);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
-  }, [batchesForDay, sessionDate, dayOfWeek]);
+
+    return () => { cancelled = true; };
+  }, [batchesForDay, sessionDate, dayOfWeek, reloadNonce]);
 
   const slotGroups = useMemo((): SlotGroup[] => {
     const map = new Map<string, QuickRow[]>();
@@ -376,18 +416,22 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
   return (
     <div className="space-y-5">
       {/* Date selector */}
-      <div className="flex items-end gap-3">
-        <div className="w-44">
+      {/* Stacks on a phone. Side by side, the date field is a fixed 176px next
+          to a flex-1 sibling — but an iOS date input will not shrink below the
+          intrinsic width of its own locale format, so it overflows and the day
+          label lands on top of it. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="w-full sm:w-44">
           <label className="label">Date</label>
           <input
             type="date"
             value={sessionDate}
             onChange={(e) => setSessionDate(e.target.value)}
-            className="input"
+            className="input w-full min-w-0"
             disabled={saving}
           />
         </div>
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-brand-secondary">
             {DAY_OF_WEEK_LABELS[dayOfWeek]}
           </p>
@@ -432,7 +476,19 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
       )}
 
       {/* Roster grouped by time slot */}
-      {loading ? (
+      {loadError ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+          <p className="text-sm font-semibold text-red-800">Couldn&apos;t load the roster</p>
+          <p className="mt-1 text-xs leading-relaxed text-red-700">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => setReloadNonce((n) => n + 1)}
+            className="mt-3 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white"
+          >
+            Retry
+          </button>
+        </div>
+      ) : loading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-16 animate-pulse rounded-lg bg-gray-100" />
