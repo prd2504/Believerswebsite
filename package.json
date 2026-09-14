@@ -2,7 +2,7 @@
   "name": "bba-sports-platform",
   "version": "0.1.0",
   "private": true,
-  "description": "Believers Badminton Academy — multi-centre coaching platform (BBA Sports Private Limited)",
+  "description": "BBA Sports Academy — multi-centre coaching platform (BBA Sports Private Limited)",
   "workspaces": [
     "shared",
     "webapp",
@@ -12,8 +12,13 @@
     "dev": "npm run dev --workspace=webapp",
     "build:shared": "npm run build --workspace=shared",
     "build:webapp": "npm run build --workspace=webapp",
-    "build:functions": "npm run build --workspace=functions",
+    "build:functions": "npm run build --workspace=@bba/functions",
     "build": "npm run build:shared && npm run build:webapp && npm run build:functions",
+    "clean": "npm run clean --workspace=shared",
+    "deploy": "npm run build && firebase deploy --project bba-sports-prod",
+    "deploy:hosting": "npm run build:webapp && firebase deploy --only hosting --project bba-sports-prod",
+    "deploy:functions": "npm run build --workspace=@bba/functions && firebase deploy --only functions --project bba-sports-prod",
+    "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage --project bba-sports-prod",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },

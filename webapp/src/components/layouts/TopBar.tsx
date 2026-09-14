@@ -47,7 +47,7 @@ export function TopBar({ onMenuToggle, showMenuButton = false }: TopBarProps) {
         )}
         <Logo size="sm" />
         <span className="hidden text-sm font-semibold text-brand-secondary sm:inline">
-          Believers Badminton Academy
+          BBA Sports Academy
         </span>
       </div>
 

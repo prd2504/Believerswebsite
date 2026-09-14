@@ -17,6 +17,7 @@ import {
   type ReactNode,
 } from 'react';
 import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
+import { toast } from 'sonner';
 import { auth } from '@/lib/firebase';
 import { ensureUserProfile, getUserProfile } from '@/services/userService';
 import type { UserDocument } from '@bba/shared';
@@ -74,8 +75,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         setProfile(loaded);
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error('[AuthContext] Failed to load/bootstrap profile', err);
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('permission') || msg.includes('PERMISSION_DENIED')) {
+          toast.error(
+            'Firestore permission denied. Update your Firestore security rules — see the console for details.',
+            { duration: 10000 },
+          );
+          console.error(
+            '[AuthContext] Firestore PERMISSION_DENIED.\n\n' +
+            'Your Firestore database likely has default "deny all" rules.\n' +
+            'Go to Firebase Console → Firestore → Rules and paste the rules from firestore.rules in the repo root.\n',
+          );
+        } else {
+          toast.error('Failed to load your profile. Check the browser console.');
+        }
         setProfile(null);
       } finally {
         setLoading(false);

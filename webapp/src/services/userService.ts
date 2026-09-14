@@ -8,17 +8,25 @@
  */
 
 import {
+  collection,
   doc,
   getDoc,
+  getDocs,
   setDoc,
   updateDoc,
+  runTransaction,
   serverTimestamp,
+  query,
+  where,
+  arrayUnion,
+  arrayRemove,
   type DocumentData,
   type Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import {
   UserRole,
+  AccountStatus,
   COLLECTIONS,
   DEFAULT_NOTIFICATION_PREFERENCES,
   type UserDocument,
@@ -59,7 +67,9 @@ function fromFirestore(id: string, data: DocumentData): UserDocument {
     phone: data.phone ?? null,
     email: data.email ?? null,
     photoPath: data.photoPath ?? null,
+    allCentreAccess: Boolean(data.allCentreAccess ?? false),
     centreIds: Array.isArray(data.centreIds) ? data.centreIds : [],
+    assignedBatchIds: Array.isArray(data.assignedBatchIds) ? data.assignedBatchIds : [],
     linkedStudentIds: Array.isArray(data.linkedStudentIds) ? data.linkedStudentIds : [],
     notificationPreferences: {
       ...DEFAULT_NOTIFICATION_PREFERENCES,
@@ -67,6 +77,7 @@ function fromFirestore(id: string, data: DocumentData): UserDocument {
     },
     onboardingComplete: Boolean(data.onboardingComplete ?? false),
     disabled: Boolean(data.disabled ?? false),
+    accountStatus: (data.accountStatus ?? AccountStatus.ACTIVE) as AccountStatus,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     createdBy: data.createdBy ?? null,
@@ -85,40 +96,61 @@ export async function getUserProfile(uid: string): Promise<UserDocument | null> 
 }
 
 /**
+ * Module-level promise that blocks ensureUserProfile until a coach bootstrap
+ * completes. Set by the coach registration flow to prevent the STUDENT-overwrite
+ * race condition.
+ */
+let pendingCoachBootstrap: Promise<void> | null = null;
+
+/**
+ * Signal that a coach bootstrap is about to happen. ensureUserProfile will
+ * await this promise before attempting to create a STUDENT doc.
+ */
+export function setPendingCoachBootstrap(p: Promise<void>): void {
+  pendingCoachBootstrap = p;
+}
+
+/**
  * Create the /users/{uid} document if it does not yet exist. Idempotent — safe to call
  * on every login. Returns the final (existing OR newly-created) profile.
  *
- * The default role is STUDENT. The founder should run the one-off "promote to
- * SUPER_ADMIN" script (to be added in Step 2) to elevate themselves.
+ * The default role is STUDENT. To promote yourself to SUPER_ADMIN, go to
+ * Firebase Console → Firestore → /users/{your-uid} → set role to "SUPER_ADMIN".
  */
 export async function ensureUserProfile(input: BootstrapProfileInput): Promise<UserDocument> {
-  const existing = await getUserProfile(input.uid);
-  if (existing) return existing;
+  if (pendingCoachBootstrap) {
+    await pendingCoachBootstrap;
+    pendingCoachBootstrap = null;
+  }
 
   const ref = doc(db, COLLECTIONS.users, input.uid);
-  const base: Omit<UserDocument, 'createdAt' | 'updatedAt'> & {
-    createdAt: ReturnType<typeof serverTimestamp>;
-    updatedAt: ReturnType<typeof serverTimestamp>;
-  } = {
-    id: input.uid,
-    role: UserRole.STUDENT,
-    name: input.name || 'Guest',
-    phone: input.phone,
-    email: input.email,
-    photoPath: null,
-    centreIds: [],
-    linkedStudentIds: [],
-    notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES,
-    onboardingComplete: false,
-    disabled: false,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    createdBy: null,
-    updatedBy: null,
-  };
 
-  await setDoc(ref, base);
-  // Re-read so we return real ISO timestamps instead of FieldValue sentinels.
+  await runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (snap.exists()) return;
+
+    transaction.set(ref, {
+      id: input.uid,
+      role: UserRole.STUDENT,
+      name: input.name || 'Guest',
+      phone: input.phone,
+      email: input.email,
+      photoPath: null,
+      allCentreAccess: false,
+      centreIds: [],
+      assignedBatchIds: [],
+      linkedStudentIds: [],
+      notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES,
+      onboardingComplete: false,
+      disabled: false,
+      accountStatus: AccountStatus.ACTIVE,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      createdBy: null,
+      updatedBy: null,
+    });
+  });
+
   const fresh = await getUserProfile(input.uid);
   if (!fresh) {
     throw new Error('Failed to create user profile — /users write succeeded but read returned null.');
@@ -138,5 +170,202 @@ export async function updateUserProfile(
     ...patch,
     updatedAt: serverTimestamp(),
     updatedBy: uid,
+  });
+}
+
+// ── Coach management (admin only) ───────────────────────────────────────────
+
+/** All users with role=COACH, ordered by name. */
+export async function getAllCoaches(): Promise<UserDocument[]> {
+  const q = query(collection(db, COLLECTIONS.users), where('role', '==', UserRole.COACH));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => fromFirestore(d.id, d.data())).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Approve a pending coach: set accountStatus=ACTIVE, assign centre and batch access.
+ * Also syncs the coach's uid into each assigned batch's `coachIds` array.
+ */
+export async function approveCoach(
+  uid: string,
+  centreIds: string[],
+  batchIds: string[],
+  adminId: string,
+): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.users, uid), {
+    accountStatus: AccountStatus.ACTIVE,
+    centreIds: arrayUnion(...centreIds),
+    assignedBatchIds: arrayUnion(...batchIds),
+    updatedAt: serverTimestamp(),
+    updatedBy: adminId,
+  });
+  for (const batchId of batchIds) {
+    await updateDoc(doc(db, COLLECTIONS.batches, batchId), {
+      coachIds: arrayUnion(uid),
+      updatedAt: serverTimestamp(),
+      updatedBy: adminId,
+    });
+  }
+}
+
+/**
+ * Force `batches.coachIds` to agree with the coach's `assignedBatchIds`.
+ *
+ * The two are written separately (here and by the batch form), so they can
+ * drift — and when they do, the coach's app believes the batch side, because
+ * getBatchesByCoach queries coachIds. A coach can therefore look correctly
+ * assigned on their profile and still see nothing. updateCoachAssignments only
+ * syncs the difference against the *previous* profile value, so re-saving an
+ * unchanged list will not repair existing drift; this will.
+ *
+ * Idempotent — only writes the batches that are actually wrong.
+ */
+export async function repairCoachBatchLinks(
+  uid: string,
+  assignedBatchIds: string[],
+  allBatches: { id: string; coachIds: string[] }[],
+  adminId: string,
+): Promise<number> {
+  const assigned = new Set(assignedBatchIds);
+  let fixed = 0;
+
+  for (const batch of allBatches) {
+    const linked = (batch.coachIds ?? []).includes(uid);
+    const shouldBeLinked = assigned.has(batch.id);
+    if (linked === shouldBeLinked) continue;
+
+    await updateDoc(doc(db, COLLECTIONS.batches, batch.id), {
+      coachIds: shouldBeLinked ? arrayUnion(uid) : arrayRemove(uid),
+      updatedAt: serverTimestamp(),
+      updatedBy: adminId,
+    });
+    fixed += 1;
+  }
+
+  return fixed;
+}
+
+/**
+ * Update a coach's assigned centres and batches (replaces existing arrays).
+ * Syncs batch `coachIds`: removes coach from old batches, adds to new ones.
+ */
+export async function updateCoachAssignments(
+  uid: string,
+  centreIds: string[],
+  batchIds: string[],
+  adminId: string,
+): Promise<void> {
+  const existing = await getUserProfile(uid);
+  const oldBatchIds = existing?.assignedBatchIds ?? [];
+
+  await updateDoc(doc(db, COLLECTIONS.users, uid), {
+    centreIds,
+    assignedBatchIds: batchIds,
+    updatedAt: serverTimestamp(),
+    updatedBy: adminId,
+  });
+
+  const toRemove = oldBatchIds.filter((id) => !batchIds.includes(id));
+  const toAdd = batchIds.filter((id) => !oldBatchIds.includes(id));
+
+  for (const batchId of toRemove) {
+    await updateDoc(doc(db, COLLECTIONS.batches, batchId), {
+      coachIds: arrayRemove(uid),
+      updatedAt: serverTimestamp(),
+      updatedBy: adminId,
+    });
+  }
+  for (const batchId of toAdd) {
+    await updateDoc(doc(db, COLLECTIONS.batches, batchId), {
+      coachIds: arrayUnion(uid),
+      updatedAt: serverTimestamp(),
+      updatedBy: adminId,
+    });
+  }
+}
+
+/** Suspend a coach — they can still log in but will see a suspended screen. */
+export async function suspendCoach(uid: string, adminId: string): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.users, uid), {
+    accountStatus: AccountStatus.SUSPENDED,
+    updatedAt: serverTimestamp(),
+    updatedBy: adminId,
+  });
+}
+
+/** Reactivate a suspended coach. */
+export async function reactivateCoach(uid: string, adminId: string): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.users, uid), {
+    accountStatus: AccountStatus.ACTIVE,
+    updatedAt: serverTimestamp(),
+    updatedBy: adminId,
+  });
+}
+
+/**
+ * Admin-creates a coach profile in Firestore (pre-approved, no pending state).
+ * The admin still needs to send the coach their login credentials separately —
+ * Firebase Auth user creation requires the Admin SDK or the user to self-register.
+ * This creates the /users doc that the coach's Firebase Auth sign-in will find.
+ */
+export async function createCoachProfile(
+  uid: string,
+  name: string,
+  email: string | null,
+  phone: string | null,
+  centreIds: string[],
+  batchIds: string[],
+  adminId: string,
+): Promise<void> {
+  await setDoc(doc(db, COLLECTIONS.users, uid), {
+    role: UserRole.COACH,
+    name,
+    email,
+    phone,
+    photoPath: null,
+    allCentreAccess: false,
+    centreIds,
+    assignedBatchIds: batchIds,
+    linkedStudentIds: [],
+    notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES,
+    onboardingComplete: false,
+    disabled: false,
+    accountStatus: AccountStatus.ACTIVE,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    createdBy: adminId,
+    updatedBy: adminId,
+  });
+}
+
+/**
+ * Write a PENDING coach profile immediately after Firebase Auth registration.
+ * Called by the coach self-registration page to set role=COACH before
+ * ensureUserProfile can bootstrap a default STUDENT doc.
+ */
+export async function bootstrapCoachProfile(
+  uid: string,
+  name: string,
+  email: string | null,
+  phone: string | null,
+): Promise<void> {
+  await setDoc(doc(db, COLLECTIONS.users, uid), {
+    role: UserRole.COACH,
+    name,
+    email,
+    phone,
+    photoPath: null,
+    allCentreAccess: false,
+    centreIds: [],
+    assignedBatchIds: [],
+    linkedStudentIds: [],
+    notificationPreferences: DEFAULT_NOTIFICATION_PREFERENCES,
+    onboardingComplete: false,
+    disabled: false,
+    accountStatus: AccountStatus.PENDING_APPROVAL,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    createdBy: null,
+    updatedBy: null,
   });
 }
