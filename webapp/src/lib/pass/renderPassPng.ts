@@ -82,8 +82,9 @@ export async function renderPassPng(
   ctx.scale(SCALE, SCALE);
 
   const valid = pass.state === 'VALID';
-  const band = valid ? colour.bg : '#B91C1C';
-  const bandFg = valid ? colour.fg : '#FFFFFF';
+  const upcoming = pass.state === 'UPCOMING';
+  const band = valid ? colour.bg : upcoming ? '#334155' : '#B91C1C';
+  const bandFg = valid || upcoming ? colour.fg : '#FFFFFF';
 
   // Card
   ctx.fillStyle = '#FFFFFF';
@@ -120,8 +121,9 @@ export async function renderPassPng(
   ctx.globalAlpha = 0.85;
   ctx.font = '700 15px -apple-system, "Segoe UI", Roboto, sans-serif';
   const headline = pass.state === 'VALID' ? 'ENTRY PASS'
-    : pass.state === 'PENDING' ? 'AWAITING APPROVAL'
-      : pass.state === 'REJECTED' ? 'DECLINED' : 'NOT VALID';
+    : pass.state === 'UPCOMING' ? 'NOT YET ACTIVE'
+      : pass.state === 'PENDING' ? 'AWAITING APPROVAL'
+        : pass.state === 'REJECTED' ? 'DECLINED' : 'NOT VALID';
   ctx.fillText(headline.split('').join(' '), W / 2, 140);
   ctx.globalAlpha = 1;
 
@@ -180,7 +182,7 @@ export async function renderPassPng(
     ctx.fillText(label, 36, y + 28);
 
     ctx.textAlign = 'right';
-    ctx.fillStyle = label === 'Validity' && !valid ? '#B91C1C' : '#0A0A0A';
+    ctx.fillStyle = label === 'Validity' && !valid && !upcoming ? '#B91C1C' : '#0A0A0A';
     const vSize = fitText(ctx, value, W - 210, 15, '600');
     ctx.font = `600 ${vSize}px ${label === 'Pass code' ? 'monospace' : '-apple-system, "Segoe UI", Roboto, sans-serif'}`;
     ctx.fillText(value, W - 36, y + 28);

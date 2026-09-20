@@ -1,22 +1,13 @@
 /**
  * The pass payload as getPass returns it.
  *
- * Lives here rather than inside the page so the canvas renderer and the page
- * are typed against the same shape — the two draw the same card twice, and a
- * field renamed in one and not the other would show up as a blank line on a
- * printed pass rather than as a build error.
+ * Aliased to the shared PassView rather than restated here. It WAS restated,
+ * and adding the UPCOMING state to the shared union left this copy behind —
+ * so the renderer and the page both compared against a state the local type
+ * said could not exist. TypeScript caught it, but only because the comparison
+ * happened to be written; a field renamed on one side and not the other would
+ * have shown up as a blank line on a printed pass instead.
+ *
+ * One definition, imported in both places.
  */
-export interface PassPayload {
-  kind: 'STANDING' | 'DAY';
-  state: 'VALID' | 'EXPIRED' | 'PENDING' | 'REJECTED' | 'UNKNOWN';
-  personName: string;
-  centreName: string;
-  centreCode: string;
-  validLabel: string;
-  validUntilLabel: string;
-  coversMonths: string[];
-  colourMonth: string;
-  code: string;
-  reasonLabel: string | null;
-  message: string | null;
-}
+export type { PassView as PassPayload } from '@bba/shared';

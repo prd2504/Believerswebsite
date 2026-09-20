@@ -23,6 +23,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Loader2, AlertCircle, Printer, RefreshCw, Download } from 'lucide-react';
+import { cn } from '@/lib/cn';
 import { renderPassPng } from '@/lib/pass/renderPassPng';
 import type { PassPayload } from '@/lib/pass/types';
 
@@ -104,14 +105,19 @@ export default function GatePass() {
   }
 
   const valid = pass.state === 'VALID';
-  const band = valid ? colour.bg : '#B91C1C';
-  const bandFg = valid ? colour.fg : '#FFFFFF';
+  // Upcoming gets its own colour: the month it will be valid in, dimmed —
+  // never red. Somebody who has just paid for next month must not be shown the
+  // same card as somebody who has not paid at all.
+  const upcoming = pass.state === 'UPCOMING';
+  const band = valid ? colour.bg : upcoming ? '#334155' : '#B91C1C';
+  const bandFg = valid || upcoming ? colour.fg : '#FFFFFF';
 
   const headline =
     pass.state === 'VALID' ? 'ENTRY PASS'
-      : pass.state === 'PENDING' ? 'AWAITING APPROVAL'
-        : pass.state === 'REJECTED' ? 'DECLINED'
-          : 'NOT VALID';
+      : pass.state === 'UPCOMING' ? 'NOT YET ACTIVE'
+        : pass.state === 'PENDING' ? 'AWAITING APPROVAL'
+          : pass.state === 'REJECTED' ? 'DECLINED'
+            : 'NOT VALID';
 
   return (
     <div className="min-h-screen bg-gray-100 px-4 py-6 print:bg-white print:p-0">
@@ -169,7 +175,7 @@ export default function GatePass() {
           <dl className="divide-y divide-gray-100 text-sm">
             <div className="flex justify-between gap-3 py-2">
               <dt className="text-gray-500">Validity</dt>
-              <dd className={`text-right font-semibold ${valid ? 'text-brand-secondary' : 'text-red-700'}`}>
+              <dd className={`text-right font-semibold ${valid || upcoming ? 'text-brand-secondary' : 'text-red-700'}`}>
                 {pass.validUntilLabel}
               </dd>
             </div>
@@ -192,8 +198,13 @@ export default function GatePass() {
           </dl>
 
           {pass.message && (
-            <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
-              <p className="text-xs leading-relaxed text-red-800">{pass.message}</p>
+            <div className={cn(
+              'mt-3 rounded-lg border p-3',
+              upcoming ? 'border-slate-200 bg-slate-50' : 'border-red-200 bg-red-50',
+            )}>
+              <p className={cn('text-xs leading-relaxed', upcoming ? 'text-slate-700' : 'text-red-800')}>
+                {pass.message}
+              </p>
             </div>
           )}
         </div>

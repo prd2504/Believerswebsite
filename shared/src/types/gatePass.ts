@@ -121,7 +121,14 @@ export function monthColour(yearMonth: string): { bg: string; fg: string; name: 
 // ── The pass a page renders ──────────────────────────────────────────────────
 
 export type PassKind = 'STANDING' | 'DAY';
-export type PassState = 'VALID' | 'EXPIRED' | 'PENDING' | 'REJECTED' | 'UNKNOWN';
+/**
+ * UPCOMING is the one that matters at a rollout. Somebody paying on the 25th
+ * is paying for NEXT month, so their pass does not cover today — but telling
+ * them "fees not received" is both wrong and insulting to someone who has just
+ * paid. It is not valid yet, which is a different thing from not paid, and the
+ * card says so and shows the date it starts.
+ */
+export type PassState = 'VALID' | 'UPCOMING' | 'EXPIRED' | 'PENDING' | 'REJECTED' | 'UNKNOWN';
 
 export interface PassView {
   kind: PassKind;

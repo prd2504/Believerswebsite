@@ -98,16 +98,26 @@ async function buildStandingPass(studentId: string, token: string): Promise<Pass
   // The payment whose coverage reaches furthest — someone who paid monthly and
   // then quarterly should get the quarterly window, not whichever row came
   // back first.
+  //
+  // Coverage that has not STARTED yet counts too, separately. Paying on the
+  // 25th buys next month, and that pass is upcoming rather than unpaid.
   let best: { month: string; months: number; end: string } | null = null;
+  let upcoming: { month: string; months: number; end: string } | null = null;
   paySnap.docs.forEach((d) => {
     const p = d.data();
     if (p.status === 'REFUNDED') return;
     const months = Number(p.coverageMonths) > 0 ? Number(p.coverageMonths) : 1;
-    const end = String(p.coverageEndMonth || coveredMonths(String(p.month), months).slice(-1)[0]);
-    if (!paymentCoversMonth(
-      { month: String(p.month), coverageMonths: months, coverageEndMonth: end }, thisMonth,
-    )) return;
-    if (!best || end > best.end) best = { month: String(p.month), months, end };
+    const start = String(p.month);
+    const end = String(p.coverageEndMonth || coveredMonths(start, months).slice(-1)[0]);
+
+    if (paymentCoversMonth({ month: start, coverageMonths: months, coverageEndMonth: end }, thisMonth)) {
+      if (!best || end > best.end) best = { month: start, months, end };
+      return;
+    }
+    // Starts later than this month — a pass that will be valid, but is not yet.
+    if (start > thisMonth && (!upcoming || start < upcoming.month)) {
+      upcoming = { month: start, months, end };
+    }
   });
 
   const centreName = centreSnap?.exists ? String(centreSnap.data()!.name ?? '') : '';
@@ -123,6 +133,22 @@ async function buildStandingPass(studentId: string, token: string): Promise<Pass
     code: passCode(centreCode || 'BBA', `${thisMonth}-01`, token),
     reasonLabel: null,
   };
+
+  if (!best && upcoming) {
+    const u = upcoming as { month: string; months: number; end: string };
+    return {
+      ...base,
+      state: 'UPCOMING',
+      // The band shows the month it BECOMES valid, not today's — a card that
+      // says September while admitting nobody in September is just confusing.
+      validLabel: monthWord(u.month),
+      validUntilLabel: `Valid from ${longDate(`${u.month}-01`)}`,
+      coversMonths: coveredMonths(u.month, u.months),
+      colourMonth: u.month,
+      code: passCode(centreCode || 'BBA', `${u.month}-01`, token),
+      message: `Your fees are paid. This pass starts on ${longDate(`${u.month}-01`)} — it will not admit you before then.`,
+    };
+  }
 
   if (!best) {
     return {

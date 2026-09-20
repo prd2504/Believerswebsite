@@ -232,15 +232,26 @@ export const onSlotBookingWritten = onDocumentWritten(
 );
 
 /**
- * Month rollover: end the enrolments whose booking no longer covers the month
- * we have just entered.
+ * Bring enrolments in line with what the bookings currently say.
  *
- * The per-write trigger cannot do this on its own — nothing writes to a
- * booking when its last covered month simply passes. Runs on the 1st, after
- * the sheet rollover has had its turn.
+ * Two things only this can do. It STARTS the enrolment for a booking bought in
+ * advance — somebody paying on the 25th is paying for next month, so on the day
+ * they pay the booking covers no current month and the per-write trigger
+ * correctly creates nothing. And it ENDS an enrolment whose booking has run
+ * out, which no write ever announces: a month simply passes.
+ *
+ * ── Why daily, not monthly ──
+ * It ran at 03:30 on the 1st, once. That put every Ruia register for a new
+ * month on a single unattended execution with sessions starting at 6 AM and no
+ * second attempt until the 1st of the month after. One transient failure and a
+ * coach opens an empty register with a month to wait.
+ *
+ * Daily costs almost nothing — skipLapsed bounds each run to recent bookings —
+ * and turns that single point of failure into a delay of at most a day. It is
+ * idempotent by construction, so the other 30 runs do nothing at all.
  */
 export const monthlyBookingEnrollmentSync = onSchedule(
-  { schedule: '30 3 1 * *', timeZone: 'Asia/Kolkata', region: REGION, timeoutSeconds: 540 },
+  { schedule: '30 3 * * *', timeZone: 'Asia/Kolkata', region: REGION, timeoutSeconds: 540 },
   // skipLapsed: a booking whose coverage ended before last month had its
   // enrolments ended by an earlier run. Re-deriving them every month forever
   // costs reads and changes nothing.
