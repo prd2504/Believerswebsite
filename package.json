@@ -2,7 +2,7 @@
   "name": "bba-sports-platform",
   "version": "0.1.0",
   "private": true,
-  "description": "BBA Sports Academy — multi-centre coaching platform (BBA Sports Private Limited)",
+  "description": "BBA Sports Academy \u2014 multi-centre coaching platform (BBA Sports Private Limited)",
   "workspaces": [
     "shared",
     "webapp",
@@ -20,9 +20,14 @@
     "deploy:functions": "npm run build --workspace=@bba/functions && firebase deploy --only functions --project bba-sports-prod",
     "deploy:rules": "firebase deploy --only firestore:rules,firestore:indexes,storage --project bba-sports-prod",
     "lint": "npm run lint --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.7"
   }
 }
