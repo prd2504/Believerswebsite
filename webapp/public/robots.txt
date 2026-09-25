@@ -1,0 +1,3 @@
+User-agent: *
+# Unlisted booking link — shared directly, not advertised.
+Disallow: /court/
