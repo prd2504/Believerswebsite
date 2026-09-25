@@ -13,7 +13,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   monthColour, MONTH_COLOURS, passCode, dayPassState,
-  GATE_PASS_LAUNCH_MONTH, GATE_PASS_CENTRE_CODE,
+  GATE_PASS_LAUNCH_MONTH, GATE_PASS_CENTRE_CODE, passSheetMonth,
 } from '@bba/shared';
 
 describe('month colours — the actual security of the pass', () => {
@@ -60,5 +60,17 @@ describe('rollout constants', () => {
     expect(GATE_PASS_LAUNCH_MONTH).toBe('2026-10');
     expect('2026-09' >= GATE_PASS_LAUNCH_MONTH).toBe(false);
     expect('2026-10' >= GATE_PASS_LAUNCH_MONTH).toBe(true);
+  });
+});
+
+describe('passSheetMonth — which month a printed sheet is for', () => {
+  it.each([
+    ['2026-09-24', '2026-09', 'before the 25th → this month'],
+    ['2026-09-25', '2026-10', 'the 25th → next month (rollout day)'],
+    ['2026-09-30', '2026-10', 'end of month → next month'],
+    ['2026-10-01', '2026-10', 'once October starts → October'],
+    ['2026-12-25', '2027-01', 'year rollover'],
+  ])('%s → %s (%s)', (date, want) => {
+    expect(passSheetMonth({ date })).toBe(want);
   });
 });

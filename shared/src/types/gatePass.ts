@@ -178,3 +178,23 @@ export function dayPassState(
   if (pass.status === 'PENDING_APPROVAL') return 'PENDING';
   return pass.validDate === today ? 'VALID' : 'EXPIRED';
 }
+
+/**
+ * Which month a printed pass sheet should be for.
+ *
+ * From the 25th it is NEXT month — the same day the fees form starts billing
+ * next month. Printing on the 25th for the current month would produce cards
+ * that expire within days, and would leave off everybody who paid that day,
+ * since their payment covers next month rather than this one.
+ *
+ * A printed card cannot update itself the way the live pass does, so it is
+ * printed for the month it is meant to be carried in, and the month colour is
+ * what retires it.
+ */
+export function passSheetMonth(now: { date: string }, opensOnDay = 25): YearMonth {
+  const ym = now.date.slice(0, 7);
+  const day = Number(now.date.slice(8, 10));
+  if (day < opensOnDay) return ym;
+  const [y, m] = ym.split('-').map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+}

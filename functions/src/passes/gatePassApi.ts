@@ -28,6 +28,7 @@ import {
   monthColour,
   DAY_PASS_REASON_LABELS,
   GATE_PASS_CENTRE_CODE,
+  passSheetMonth,
   type PassView,
 } from '@bba/shared';
 import { buildPassEmail } from './passEmail.js';
@@ -388,9 +389,19 @@ export const bulkStandingPasses = onRequest(
     // the sheet is sometimes the point.
     const includeUnpaid = String(req.query.includeUnpaid ?? '') === '1';
 
+    // The month the cards are FOR. Defaults to next month from the 25th, the
+    // same rule the fees form bills by — printing the current month on the
+    // 25th gives cards that expire within days and leaves off everyone who
+    // paid that day. An explicit ?month= wins, so a reprint is always possible.
+    const requested = String(req.query.month ?? '');
+    if (requested && !/^\d{4}-(0[1-9]|1[0-2])$/.test(requested)) {
+      res.status(400).json({ ok: false, error: 'month must be YYYY-MM' });
+      return;
+    }
+
     try {
       const now = istNow();
-      const thisMonth = now.date.slice(0, 7);
+      const thisMonth = requested || passSheetMonth(now);
       const [y, m] = thisMonth.split('-').map(Number);
       const from = new Date(y, m - 3, 1);
       const fromMonth = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}`;
@@ -429,6 +440,9 @@ export const bulkStandingPasses = onRequest(
       const writer = db.batch();
       let minted = 0;
       const passes: PassView[] = [];
+      // Parallel to `passes`. Not on PassView itself: the public pass page
+      // must never be handed a student id, and PassView is what it receives.
+      const studentIds: string[] = [];
 
       for (const doc of studentsSnap.docs) {
         const s = doc.data();
@@ -454,6 +468,7 @@ export const bulkStandingPasses = onRequest(
           reasonLabel: null,
         };
 
+        studentIds.push(doc.id);
         passes.push(cover
           ? {
             ...base,
@@ -474,7 +489,9 @@ export const bulkStandingPasses = onRequest(
       }
 
       if (minted > 0) await writer.commit();
-      passes.sort((a, b) => a.personName.localeCompare(b.personName));
+      const rows = passes
+        .map((pass, i) => ({ ...pass, studentId: studentIds[i] }))
+        .sort((a, b) => a.personName.localeCompare(b.personName));
 
       logger.info('[bulkStandingPasses] built', { count: passes.length, minted, includeUnpaid });
       res.status(200).json({
@@ -482,8 +499,8 @@ export const bulkStandingPasses = onRequest(
         month: thisMonth,
         centreName,
         colour: monthColour(thisMonth),
-        count: passes.length,
-        passes,
+        count: rows.length,
+        passes: rows,
       });
     } catch (err: any) {
       logger.error('[bulkStandingPasses] failed', { err });

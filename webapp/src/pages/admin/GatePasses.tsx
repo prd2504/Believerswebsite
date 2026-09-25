@@ -356,6 +356,15 @@ export default function GatePassesPage() {
                     {paid ? 'Valid' : 'Unpaid'}
                   </span>
                   <PreviewPassButton studentId={s.id} />
+                  {/* One laminatable card, for a child without a phone. Same
+                      85.6 × 54 mm layout as the full sheet. */}
+                  <Link
+                    to={`/admin/gate-passes/print?student=${encodeURIComponent(s.id)}`}
+                    title="Print this student's ID card"
+                    className="flex items-center gap-1 rounded-lg border border-gray-200 px-2.5 py-1 text-[11px] font-medium text-gray-600"
+                  >
+                    <Printer size={11} /> ID card
+                  </Link>
                   <SendPassButton studentId={s.id} disabled={!s.email} />
                 </div>
               </div>

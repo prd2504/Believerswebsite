@@ -23,11 +23,18 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Loader2, Printer, ArrowLeft, AlertCircle } from 'lucide-react';
 import { auth } from '@/lib/firebase';
 import { cn } from '@/lib/cn';
 import type { PassPayload } from '@/lib/pass/types';
+import { istNow, nextMonth, passSheetMonth } from '@bba/shared';
+
+type SheetPass = PassPayload & { studentId?: string };
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+  'August', 'September', 'October', 'November', 'December'];
+const monthName = (ym: string) => `${MONTH_NAMES[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
 
 const FN_BASE = import.meta.env.VITE_FUNCTIONS_BASE_URL
   || `https://${import.meta.env.VITE_FUNCTIONS_REGION || 'asia-south1'}-${import.meta.env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net`;
@@ -36,7 +43,18 @@ const ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oc
 const monthChip = (ym: string) => `${ABBR[Number(ym.slice(5, 7)) - 1] ?? ''} ${ym.slice(2, 4)}`;
 
 export default function GatePassSheet() {
-  const [passes, setPasses] = useState<PassPayload[]>([]);
+  const [params] = useSearchParams();
+  /** Set when opened from one student's "ID card" link — print just theirs. */
+  const onlyStudent = params.get('student');
+
+  const today = istNow();
+  const thisMonth = today.date.slice(0, 7);
+  // Cards are for the month they'll be carried in: next month from the 25th,
+  // same rule as the fees form. Both months are offered so a reprint for the
+  // current month is still one click.
+  const [month, setMonth] = useState(passSheetMonth(today));
+
+  const [passes, setPasses] = useState<SheetPass[]>([]);
   const [colour, setColour] = useState({ bg: '#0A0A0A', fg: '#FFFFFF', name: '' });
   const [centreName, setCentreName] = useState('');
   const [includeUnpaid, setIncludeUnpaid] = useState(false);
@@ -50,17 +68,20 @@ export default function GatePassSheet() {
     if (!user) { setError('Signed out — reload and sign in again.'); setLoading(false); return; }
     try {
       const token = await user.getIdToken();
+      const qs = new URLSearchParams({ month });
+      if (includeUnpaid) qs.set('includeUnpaid', '1');
       const res = await fetch(
-        `${FN_BASE}/bulkStandingPasses${includeUnpaid ? '?includeUnpaid=1' : ''}`,
+        `${FN_BASE}/bulkStandingPasses?${qs.toString()}`,
         { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
       );
       const raw = await res.text();
-      let body: { ok?: boolean; error?: string; passes?: PassPayload[]; colour?: typeof colour; centreName?: string } | null = null;
+      let body: { ok?: boolean; error?: string; passes?: SheetPass[]; colour?: typeof colour; centreName?: string } | null = null;
       try { body = JSON.parse(raw); } catch { /* infrastructure error page */ }
       if (!res.ok || !body?.ok) {
         throw new Error(body?.error ?? `Request failed (HTTP ${res.status})`);
       }
-      setPasses(body.passes ?? []);
+      const all = body.passes ?? [];
+      setPasses(onlyStudent ? all.filter((x) => x.studentId === onlyStudent) : all);
       if (body.colour) setColour(body.colour);
       setCentreName(body.centreName ?? '');
     } catch (err) {
@@ -68,7 +89,7 @@ export default function GatePassSheet() {
     } finally {
       setLoading(false);
     }
-  }, [includeUnpaid]);
+  }, [includeUnpaid, month, onlyStudent]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -104,7 +125,10 @@ export default function GatePassSheet() {
           <Link to="/admin/gate-passes" className="mb-1 flex items-center gap-1 text-xs text-gray-500 hover:text-brand-primary">
             <ArrowLeft size={13} /> Back to Gate Passes
           </Link>
-          <h1 className="text-xl font-bold text-brand-secondary">Print sheet</h1>
+          <h1 className="text-xl font-bold text-brand-secondary">
+            Print sheet — {monthName(month)}
+            {onlyStudent && <span className="ml-2 text-sm font-medium text-gray-500">(one student)</span>}
+          </h1>
           <p className="text-sm text-gray-500">
             {loading ? 'Loading…' : `${passes.length} pass${passes.length === 1 ? '' : 'es'} · ${centreName}`}
             {!loading && (
@@ -117,7 +141,22 @@ export default function GatePassSheet() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex rounded-lg border border-gray-200 bg-white p-0.5">
+            {[thisMonth, nextMonth(thisMonth)].map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMonth(m)}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-xs font-semibold transition',
+                  month === m ? 'bg-brand-secondary text-white' : 'text-gray-500 hover:bg-gray-50',
+                )}
+              >
+                {monthName(m)}
+              </button>
+            ))}
+          </div>
           <label className="flex cursor-pointer items-center gap-1.5 text-xs text-gray-600">
             <input
               type="checkbox"
@@ -150,7 +189,7 @@ export default function GatePassSheet() {
         <div className="flex justify-center py-16"><Loader2 size={26} className="animate-spin text-gray-400" /></div>
       ) : passes.length === 0 && !error ? (
         <p className="py-16 text-center text-sm text-gray-400">
-          Nobody at {centreName || 'this centre'} has fees covering this month yet.
+          Nobody at {centreName || 'this centre'} has fees covering {monthName(month)} yet.
         </p>
       ) : (
         <div className="sheet">
