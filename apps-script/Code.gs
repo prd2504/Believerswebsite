@@ -70,7 +70,8 @@ var CONTACT_MOBILE = "90221 02921";
 // here — Apps Script does not render markdown, so parents would see raw
 // brackets in every invoice. This has silently regressed twice; some
 // editors auto-linkify domains on paste. Check this line after pasting.
-var WEBSITE      = "www.bbashuttle.com";
+// Built by concatenation so no editor or chat can auto-linkify it on paste.
+var WEBSITE      = "www" + ".bbashuttle" + ".com";
 var WEBSITE_URL  = "https://www.bbashuttle.com";
 var FEE_URL      = "https://www.bbashuttle.com/fees";
 
