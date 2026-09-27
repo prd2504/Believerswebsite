@@ -1,5 +1,28 @@
 // ═══════════════════════════════════════════════════════════════════════
-//  BBA SPORTS ACADEMY — Google Apps Script v7
+//  BBA SPORTS ACADEMY — Google Apps Script v7.1
+//
+//  ── WHAT v7.1 CHANGES (27 Sep 2026) ─────────────────────────────────
+//  • Website-only intake. The legacy Google Forms are closed and unlinked,
+//    their onFormSubmit triggers removed, and LEGACY_FORMS_ENABLED = false
+//    makes onFeeFormSubmit / onRegistrationFormSubmit refuse to write even
+//    if a trigger is ever re-created.
+//  • Fee_Status centre names: the website writes Firestore's names
+//    ("Dadar Railway Officers Colony", "Ruia College Matunga") while
+//    Centre_Config uses short names. canonicalCentre() maps both to one
+//    name, so the expected-fee lookup works and the report groups cleanly.
+//  • Expected fee: plan columns are now looked up by Centre_Config HEADER
+//    name (the old index map was off by one: 5-Day read Fee_4Day, Games Day
+//    read Fee_5Day, Bundle read Fee_GamesDay, 4-Day was missing). Batches
+//    with no day-count (e.g. "DADAR (Monday - Friday)") fall back to the
+//    student's last monthly invoice amount.
+//  • Paid matching: an invoice whose Student_ID is not in Player_Directory
+//    (Firestore issued a different ID to a pre-website student) is matched
+//    by name + centre when that pair is unique among active students.
+//  • runMonthlyFeeCheck is safe to run daily (trigger changed to daily) —
+//    it only rebuilds the report and never emails anyone.
+//  • FIREBASE_API_KEY removed from source; read from Script Properties.
+//    Only the (now disabled) legacy form path used it.
+//  • sendFeeReminders is UNCHANGED and deliberately has NO trigger (on hold).
 //
 //  SOURCE OF TRUTH. Edit here, commit, then paste into the Apps Script
 //  editor. v6 and earlier lived only in the editor with no history, which
@@ -52,10 +75,18 @@ var WEBSITE_URL  = "https://www.bbashuttle.com";
 var FEE_URL      = "https://www.bbashuttle.com/fees";
 
 var FIREBASE_SYNC_URL = "https://asia-south1-bba-sports-prod.cloudfunctions.net/submitFeePayment";
-// ⚠️ SECURITY: this key is in git history and should be rotated — generate a
-// new random string, set it as SHEETS_API_KEY in functions/.env, redeploy the
-// Cloud Functions, THEN update this constant to match.
-var FIREBASE_API_KEY  = "812f9c987cded3d3f8903aef29819b7d31047c46";
+// ⚠️ SECURITY: the old key is in git history and should be rotated — generate
+// a new random string, set it as SHEETS_API_KEY in functions/.env, redeploy
+// the Cloud Functions, THEN set the same value in Script Properties.
+// Read at call time from Project Settings → Script Properties
+// (key: FIREBASE_API_KEY). Never hard-code it here — this file is in git.
+function getFirebaseApiKey() {
+  return PropertiesService.getScriptProperties().getProperty("FIREBASE_API_KEY") || "";
+}
+
+// Website (bbashuttle.com/fees) is the ONLY intake. Flip to true only if the
+// legacy Google Forms are deliberately re-opened and re-linked.
+var LEGACY_FORMS_ENABLED = false;
 
 var SHEETS = {
   CONFIG     : "Centre_Config",
@@ -163,7 +194,7 @@ function canonicalMonth(v) {
     return MONTHS[v.getMonth()] + " " + v.getFullYear();
   }
 
-  var s = String(v).replace(/ /g, " ").trim();
+  var s = String(v).replace(/\u00a0/g, " ").trim();
   if (!s) return "";
 
   // "2026-08" / "2026-08-15"
@@ -232,6 +263,37 @@ function invoiceCoversMonth(row, targetMonth) {
 function getMonthLabel(date) {
   var d = date || new Date();
   return MONTHS[d.getMonth()] + " " + d.getFullYear();
+}
+
+// ───────────────────────────────────────────────────────────────────────
+//  CENTRE NORMALISATION
+//  Two writers, two naming schemes: the website writes Firestore's full
+//  names, Centre_Config / SHEETS.PAYMENTS use the short ones. Compare
+//  canonicalCentre(a) === canonicalCentre(b), never raw centre strings.
+// ───────────────────────────────────────────────────────────────────────
+
+var CENTRE_ALIASES = {
+  "dadar"                         : "Dadar",
+  "dadar railway officers colony" : "Dadar",
+  "ruia"                          : "Ruia College",
+  "ruia college"                  : "Ruia College",
+  "ruia college matunga"          : "Ruia College",
+  "bandra"                        : "Bandra Gymkhana",
+  "bandra gymkhana"               : "Bandra Gymkhana",
+  "rbi"                           : "RBI Colony",
+  "rbi colony"                    : "RBI Colony"
+};
+
+function canonicalCentre(v) {
+  var raw = String(v === null || v === undefined ? "" : v)
+    .replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+  return CENTRE_ALIASES[raw.toLowerCase()] || raw;
+}
+
+/** Lower-cased, whitespace-collapsed name for matching. */
+function normName(v) {
+  return String(v === null || v === undefined ? "" : v)
+    .replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 /** Month label for the month before the given date (default: now). */
@@ -886,6 +948,11 @@ function findOrCreateStudent(name, mobile, email, centre, batch) {
 // ═══════════════════════════════════════════════════════════════════════
 
 function onFeeFormSubmit(e) {
+  if (!LEGACY_FORMS_ENABLED) {
+    adminLog("LEGACY FORM IGNORED", (e && e.values && e.values[2]) || "Unknown", "—",
+      "Fee form submission ignored — intake is bbashuttle.com/fees only");
+    return;
+  }
   var r = e.values;
 
   var timestamp = r[0];
@@ -1014,6 +1081,11 @@ function appendMonthSafeRow(sheet, values, monthIdx) {
 // ═══════════════════════════════════════════════════════════════════════
 
 function onRegistrationFormSubmit(e) {
+  if (!LEGACY_FORMS_ENABLED) {
+    adminLog("LEGACY FORM IGNORED", (e && e.values && e.values[1]) || "Unknown", "—",
+      "Registration form submission ignored — intake is bbashuttle.com/fees only");
+    return;
+  }
   var r = e.values;
 
   var name      = r[1];
@@ -1092,7 +1164,7 @@ function runMonthlyFeeCheck() {
 
   var statusSheet = ss.getSheetByName(tabName);
   if (!statusSheet) statusSheet = ss.insertSheet(tabName);
-  else statusSheet.clearContents();
+  else statusSheet.clear();   // contents AND stale row colours
 
   var headers = [
     "Centre", "Student_ID", "Student_Name", "Batch",
@@ -1107,33 +1179,79 @@ function runMonthlyFeeCheck() {
   var invoices = getSheet(SHEETS.INVOICES).getDataRange().getValues().slice(1);
   var config   = getSheet(SHEETS.CONFIG).getDataRange().getValues();
 
+  // ── Centre_Config fee columns, by HEADER NAME (v7 used a hard-coded
+  //    index map that was off by one column).
+  var cfgHeader = config[0].map(function (h) { return String(h).trim(); });
+  var PLAN_COL = {
+    "2-Day": "Fee_2Day", "3-Day": "Fee_3Day", "4-Day": "Fee_4Day", "5-Day": "Fee_5Day",
+    "Games Day": "Fee_GamesDay", "Bundle": "Fee_Bundle"
+  };
+  var feeMap = {};
+  config.slice(1).forEach(function (row) { feeMap[canonicalCentre(row[0])] = row; });
+
+  // ── Player indexes. byNameCentre resolves invoices whose Student_ID is not
+  //    in Player_Directory (Firestore gave a pre-website student a new ID).
+  //    Only used when the name+centre pair is unique among active students.
+  var knownIds = {};
+  var byNameCentre = {};
+  players.forEach(function (p) {
+    var id = String(p[0]).trim();
+    if (!id) return;
+    knownIds[id] = true;
+    if (String(p[7]).trim() !== "Active") return;
+    var key = normName(p[1]) + "|" + canonicalCentre(p[4]);
+    byNameCentre[key] = byNameCentre[key] ? "__AMBIGUOUS__" : id;
+  });
+
+  function resolveStudentId(row) {
+    var id = String(row[INV_COL.STUDENT_ID]).trim();
+    if (knownIds[id]) return id;
+    var hit = byNameCentre[normName(row[INV_COL.NAME]) + "|" + canonicalCentre(row[INV_COL.CENTRE])];
+    return (hit && hit !== "__AMBIGUOUS__") ? hit : id;
+  }
+
   // Coverage-aware: a quarterly payment counts for all three of its months.
   // (canonicalMonth on BOTH sides — the v6 raw === here is why every student
   // who paid through the website still showed as unpaid.)
-  var target  = canonicalMonth(month);
-  var paidMap = {};
+  var target   = canonicalMonth(month);
+  var paidMap  = {};
   var cycleMap = {};
-  invoices.forEach(function(row) {
+  var lastMonthly = {};   // studentId → { rank, amount } — expected-fee fallback
+  invoices.forEach(function (row) {
+    if (!row[INV_COL.INVOICE]) return;
+    var sid = resolveStudentId(row);
     if (invoiceCoversMonth(row, target)) {
-      paidMap[row[INV_COL.STUDENT_ID]]  = row[INV_COL.INVOICE];
-      cycleMap[row[INV_COL.STUDENT_ID]] = canonicalMonth(row[INV_COL.COVERS_UNTIL]) || target;
+      paidMap[sid]  = row[INV_COL.INVOICE];
+      cycleMap[sid] = canonicalMonth(row[INV_COL.COVERS_UNTIL]) || target;
+    }
+    var cycle = String(row[INV_COL.CYCLE] || "").trim().toUpperCase();
+    var amt   = Number(row[INV_COL.AMOUNT]);
+    var rank  = monthRank(row[INV_COL.MONTH]);
+    if (cycle !== "QUARTERLY" && amt > 0 && rank >= 0 &&
+        (!lastMonthly[sid] || rank >= lastMonthly[sid].rank)) {
+      lastMonthly[sid] = { rank: rank, amount: amt };
     }
   });
 
-  var batchColMap = { "2-Day": 2, "3-Day": 3, "5-Day": 4, "Games Day": 5, "Bundle": 6 };
-  var feeMap = {};
-  config.slice(1).forEach(function(row) { feeMap[row[0]] = row; });
+  function expectedFeeFor(studentID, centre, batch) {
+    var plan = cleanBatchLabel(String(batch || ""));
+    var col  = PLAN_COL[plan] ? cfgHeader.indexOf(PLAN_COL[plan]) : -1;
+    var row  = feeMap[centre];
+    var fee  = (row && col >= 0) ? row[col] : "";
+    if (fee === "" || fee === null || fee === undefined) {
+      fee = lastMonthly[studentID] ? lastMonthly[studentID].amount : "";
+    }
+    return fee;
+  }
 
   var results = [];
-  players.forEach(function(p) {
-    if (p[7] !== "Active") return;
+  players.forEach(function (p) {
+    if (String(p[7]).trim() !== "Active") return;
 
-    var studentID   = p[0];
-    var centre      = p[4];
+    var studentID   = String(p[0]).trim();
+    var centre      = canonicalCentre(p[4]);
     var batch       = p[5];
-    var centreRow   = feeMap[centre];
-    var colIdx      = batchColMap[batch];
-    var expectedFee = (centreRow && colIdx) ? centreRow[colIdx] : "";
+    var expectedFee = expectedFeeFor(studentID, centre, batch);
     var invoiceNo   = paidMap[studentID] || "";
 
     results.push([
@@ -1146,16 +1264,22 @@ function runMonthlyFeeCheck() {
     ]);
   });
 
-  results.sort(function(a, b) {
+  results.sort(function (a, b) {
     return String(a[0]).localeCompare(String(b[0])) || String(a[2]).localeCompare(String(b[2]));
   });
 
   if (results.length > 0) {
-    statusSheet.getRange(2, 1, results.length, results[0].length).setValues(results);
-    results.forEach(function(row, i) {
-      statusSheet.getRange(i + 2, 1, 1, results[0].length)
-                 .setBackground(row[5] === "YES" ? "#e8f5e9" : "#fff8f5");
-    });
+    var width = results[0].length;
+    var range = statusSheet.getRange(2, 1, results.length, width);
+    // Month + Paid_Through are labels — keep them text so Sheets can't date-parse them.
+    statusSheet.getRange(2, 8, results.length, 2).setNumberFormat("@");
+    range.setValues(results);
+    range.setBackgrounds(results.map(function (row) {
+      var c = row[5] === "YES" ? "#e8f5e9" : "#fff8f5";
+      var line = [];
+      for (var i = 0; i < width; i++) line.push(c);
+      return line;
+    }));
   }
 
   var paidCount = results.filter(function (r) { return r[5] === "YES"; }).length;
@@ -1781,7 +1905,8 @@ function footer() {
 // ═══════════════════════════════════════════════════════════════════════
 
 function syncPaymentToFirebase(payload) {
-  if (!FIREBASE_SYNC_URL || !FIREBASE_API_KEY) {
+  var apiKey = getFirebaseApiKey();
+  if (!FIREBASE_SYNC_URL || !apiKey) {
     Logger.log("Firebase sync skipped — URL or API key not configured");
     return;
   }
@@ -1790,7 +1915,7 @@ function syncPaymentToFirebase(payload) {
     var response = UrlFetchApp.fetch(FIREBASE_SYNC_URL, {
       method: "post",
       contentType: "application/json",
-      headers: { "x-api-key": FIREBASE_API_KEY },
+      headers: { "x-api-key": apiKey },
       payload: JSON.stringify(payload),
       muteHttpExceptions: true
     });
@@ -1812,7 +1937,7 @@ function syncPaymentToFirebase(payload) {
 }
 
 function retryFailedSyncs() {
-  if (!FIREBASE_SYNC_URL || !FIREBASE_API_KEY) {
+  if (!FIREBASE_SYNC_URL || !getFirebaseApiKey()) {
     SpreadsheetApp.getUi().alert("Firebase sync not configured.");
     return;
   }
