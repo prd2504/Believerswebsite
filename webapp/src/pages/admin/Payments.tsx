@@ -839,8 +839,8 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
                   <td className="px-4 py-2.5 font-medium text-brand-secondary">
                     {b.participantName}
                     {b.month !== month && (
-                      <span className="ml-2 inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
-                        Quarterly · booked {fmtMonth(b.month)}
+                      <span className="mt-1 block w-fit whitespace-nowrap rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                        Quarterly · {fmtMonth(b.month)}
                       </span>
                     )}
                   </td>
