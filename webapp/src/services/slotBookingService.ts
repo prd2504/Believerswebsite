@@ -239,8 +239,19 @@ export async function getBookingsForMonth(
     where('month', '==', month),
     orderBy('createdAt', 'asc'),
   );
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => fromFirestore(d.id, d.data()));
+  // A quarterly booking lives under the month it was made in but holds the
+  // slot for every month in coversMonths — include those too, exactly as the
+  // public page does, so the admin view and fill rates match what parents see.
+  const coverage = query(
+    collection(db, COL),
+    where('centreId', '==', centreId),
+    where('coversMonths', 'array-contains', month),
+    where('status', 'in', ROSTER_STATUSES),
+  );
+  const [snap, coverSnap] = await Promise.all([getDocs(q), getDocs(coverage)]);
+  const merged = new Map<string, SlotBookingDocument>();
+  [...snap.docs, ...coverSnap.docs].forEach((d) => merged.set(d.id, fromFirestore(d.id, d.data())));
+  return Array.from(merged.values()).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export async function verifyBooking(bookingId: string, adminUid: string): Promise<void> {

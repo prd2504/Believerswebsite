@@ -836,7 +836,14 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
             <tbody className="divide-y divide-gray-50">
               {filtered.map((b) => (
                 <tr key={b.id} className="transition hover:bg-gray-50">
-                  <td className="px-4 py-2.5 font-medium text-brand-secondary">{b.participantName}</td>
+                  <td className="px-4 py-2.5 font-medium text-brand-secondary">
+                    {b.participantName}
+                    {b.month !== month && (
+                      <span className="ml-2 inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                        Quarterly · booked {fmtMonth(b.month)}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5 text-gray-600">
                     {contacts.get(b.id)?.participantPhone ?? '—'}
                   </td>
@@ -884,13 +891,18 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
                           {b.rejectionReason}
                         </span>
                       )}
-                      <button
-                        onClick={() => handleDelete(b)}
-                        className="rounded-lg p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 transition"
-                        title="Delete booking"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {/* A carried-over quarterly booking is one record for all
+                          three months — deleting it here would erase the months
+                          before too. Manage it from the month it was booked in. */}
+                      {b.month === month && (
+                        <button
+                          onClick={() => handleDelete(b)}
+                          className="rounded-lg p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 transition"
+                          title="Delete booking"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
