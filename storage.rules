@@ -1,0 +1,72 @@
+rules_version = '2';
+
+// =========================================================================================
+// BBA Sports — Firebase Storage Security Rules
+// -----------------------------------------------------------------------------------------
+// Covers profile photos, student photos, and receipt PDFs.
+// =========================================================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Profile photos: /photos/users/{uid}/profile.jpg
+    // Users can read/write their own photo; admins can read any.
+    match /photos/users/{uid}/{filename} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid
+        && request.resource.size < 5 * 1024 * 1024  // 5 MB max
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Student photos: /photos/students/{studentId}/{filename}
+    // Admins and coaches can write; all signed-in users can read.
+    match /photos/students/{studentId}/{filename} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // PDF receipts: /receipts/{paymentId}/receipt.pdf
+    // Only signed-in users with admin role write; student can read their own.
+    match /receipts/{paymentId}/{filename} {
+      allow read: if request.auth != null;
+      allow write: if false; // Cloud Functions admin SDK writes only
+    }
+
+    // Payment screenshots from the two anonymous pages: /fees and the
+    // unlisted /court booking page.
+    //
+    // Both uploaders are unauthenticated by design, so create must be open —
+    // and getDownloadURL() on the way back needs a matching read, which means
+    // the object path is the only access control there is. See
+    // webapp/src/lib/uploadPath.ts: paths are a random 128-bit id, not a
+    // timestamp, so there is nothing to enumerate. Whoever holds the URL can
+    // read it; nobody else can find it.
+    //
+    // update/delete stay closed so a screenshot can never be swapped for a
+    // different one after a payment has been recorded against it.
+    match /fee-screenshots/{centreId}/{filename} {
+      allow read: if true;
+      allow create: if request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+
+    // Court booking screenshots. Previously absent, so every upload from the
+    // /court page hit the catch-all deny and was swallowed by the page's
+    // optional-screenshot fallback — bookings arrived with no proof of payment
+    // and no error anywhere.
+    match /court-bookings/{centreId}/{filename} {
+      allow read: if true;
+      allow create: if request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+
+    // Everything else: deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

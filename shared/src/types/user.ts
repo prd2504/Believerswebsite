@@ -16,7 +16,8 @@ export interface NotificationPreferences {
   absenceAlerts: boolean;
   progressReports: boolean;
   scheduleChanges: boolean;
-  tournamentUpdates: boolean;
+  feedbackAlerts: boolean;
+  issueUpdates: boolean;
   broadcasts: boolean;
 }
 
@@ -25,9 +26,24 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   absenceAlerts: true,
   progressReports: true,
   scheduleChanges: true,
-  tournamentUpdates: true,
+  feedbackAlerts: true,
+  issueUpdates: true,
   broadcasts: true,
 };
+
+/**
+ * Lifecycle state for an account. Only relevant for COACH accounts today — other roles
+ * are always ACTIVE. Existing docs without this field default to ACTIVE at read time.
+ */
+export const AccountStatus = {
+  /** Account is fully operational. */
+  ACTIVE: 'ACTIVE',
+  /** Coach self-registered and is waiting for admin approval + centre assignment. */
+  PENDING_APPROVAL: 'PENDING_APPROVAL',
+  /** Admin has suspended the account (e.g. coach left). */
+  SUSPENDED: 'SUSPENDED',
+} as const;
+export type AccountStatus = (typeof AccountStatus)[keyof typeof AccountStatus];
 
 export interface UserDocument extends BaseDocument {
   /** Firebase Auth uid — also the document id. */
@@ -45,11 +61,23 @@ export interface UserDocument extends BaseDocument {
   photoPath: string | null;
 
   /**
+   * When true, a CENTRE_MANAGER has access to ALL centres without needing each centreId
+   * listed. Survives new centre creation automatically. Only meaningful for CENTRE_MANAGER.
+   */
+  allCentreAccess: boolean;
+
+  /**
    * Centre scope for CENTRE_MANAGER and COACH users. Empty array for SUPER_ADMIN (who has
    * implicit access to all centres) and for STUDENT / PARENT (whose scope is implicit from
    * their enrolled batches). Never null — always an array.
    */
   centreIds: string[];
+
+  /**
+   * Batch ids explicitly assigned to a COACH. Drives the coach's attendance and roster
+   * views. Managed by the admin Coaches page — not by the coach themselves.
+   */
+  assignedBatchIds: string[];
 
   /**
    * For STUDENT and PARENT users: the list of student profile ids they represent. A STUDENT
@@ -65,6 +93,13 @@ export interface UserDocument extends BaseDocument {
 
   /** Soft-delete / deactivation flag. Disabled users cannot log in. */
   disabled: boolean;
+
+  /**
+   * Account lifecycle state. Defaults to ACTIVE for all existing and new non-coach users.
+   * COACH accounts created via self-registration start as PENDING_APPROVAL until an admin
+   * approves them.
+   */
+  accountStatus: AccountStatus;
 }
 
 /** Shape of the profile fields a user can edit themselves (subset of UserDocument). */

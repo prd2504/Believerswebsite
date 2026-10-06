@@ -32,7 +32,7 @@ export interface OperatingHours {
 export interface CentreDocument extends BaseDocument {
   id: string;
 
-  /** Display name, e.g. "Believers Badminton Academy — Andheri". Entirely admin-defined. */
+  /** Display name, e.g. "BBA Sports Academy — Andheri". Entirely admin-defined. */
   name: string;
   /** Free-text street address. */
   address: string;
@@ -66,4 +66,11 @@ export interface CentreDocument extends BaseDocument {
   contactPhone: string | null;
   /** Contact email for bookings. */
   contactEmail: string | null;
+
+  /** Short unique code (3-4 uppercase chars), e.g. "DAD", "RBI". Used in external IDs. */
+  centreCode: string | null;
+  /** Auto-incrementing counter for externalStudentId assignment. Starts at 0. */
+  lastStudentNo: number;
+  /** Auto-incrementing counter for externalInvoiceNo assignment. Starts at 0. */
+  lastInvoiceNo: number;
 }
