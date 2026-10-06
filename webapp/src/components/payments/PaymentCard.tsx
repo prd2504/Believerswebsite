@@ -2,6 +2,7 @@
  * Card display for a single payment record.
  */
 
+import type { ReactNode } from 'react';
 import { IndianRupee, Calendar, Pencil, Trash2, CheckCircle, XCircle } from 'lucide-react';
 import type { PaymentDocument } from '@bba/shared';
 import { formatINR } from '@bba/shared';
@@ -27,6 +28,7 @@ interface PaymentCardProps {
   payment: PaymentDocument;
   studentName?: string;
   batchName?: string;
+  tag?: ReactNode;
   onEdit?: (payment: PaymentDocument) => void;
   onDelete?: (payment: PaymentDocument) => void;
   onMarkPaid?: (payment: PaymentDocument) => void;
@@ -37,6 +39,7 @@ export function PaymentCard({
   payment,
   studentName,
   batchName,
+  tag,
   onEdit,
   onDelete,
   onMarkPaid,
@@ -81,6 +84,7 @@ export function PaymentCard({
       {/* Student & batch */}
       {studentName && <h3 className="text-sm font-semibold text-brand-secondary">{studentName}</h3>}
       {batchName && <p className="text-xs text-gray-400">{batchName}</p>}
+      {tag}
 
       {/* Amount & month */}
       <div className="mt-3 flex items-center justify-between">

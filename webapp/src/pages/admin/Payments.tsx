@@ -2,7 +2,7 @@
  * Admin payments page — create fees, record cash payments, track overdue.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 import {
   Plus,
   IndianRupee,
@@ -82,6 +82,12 @@ import {
   DEFAULT_SLOT_CONFIG,
   TUE_THU_SLOT,
   RUIA_SLOT_BOOKING_CENTRE_ID,
+  QUARTERLY_LAUNCH_MONTH,
+  monthRank,
+  paymentCoverage,
+  paymentCoversMonth,
+  formatCoverage,
+  quarterlyAmountPaise,
 } from '@bba/shared';
 import { buildDayRoster, ROSTER_STATUSES, type DayRoster } from '@/lib/slotRoster';
 import type {
@@ -145,6 +151,28 @@ const STATUS_PILL: Record<string, string> = {
   REFUNDED: 'bg-gray-100 text-gray-500',
 };
 
+function CycleTag({ payment, suspect }: { payment: PaymentDocument; suspect: boolean }) {
+  const cov = paymentCoverage(payment);
+  if (cov.months > 1) {
+    return (
+      <span className="mt-1 block w-fit whitespace-nowrap rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+        Quarterly · {formatCoverage(cov.start, cov.months)}
+      </span>
+    );
+  }
+  if (suspect) {
+    return (
+      <span
+        className="mt-1 block w-fit whitespace-nowrap rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+        title="Amount matches a 3-month price, but the payment was saved as monthly — so it only covers this one month"
+      >
+        Saved as monthly · looks quarterly
+      </span>
+    );
+  }
+  return null;
+}
+
 // ─── Sort header for table view ───────────────────────────────────────────────
 
 function SortButton({
@@ -179,6 +207,8 @@ function DetailRow({
   studentName,
   batchName,
   centreName,
+  tag,
+  carryOver,
   onMarkPaid,
   onWaive,
   onEdit,
@@ -187,12 +217,14 @@ function DetailRow({
   studentName: string;
   batchName: string;
   centreName: string;
+  tag: ReactNode;
+  carryOver: boolean;
   onMarkPaid: () => void;
   onWaive: () => void;
   onEdit: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const isPending = p.status === 'PENDING' || p.status === 'OVERDUE';
+  const isPending = !carryOver && (p.status === 'PENDING' || p.status === 'OVERDUE');
 
   return (
     <div>
@@ -208,6 +240,7 @@ function DetailRow({
             </span>
           </div>
           <p className="text-xs text-gray-400 mt-0.5">{fmtMonth(p.month)} · {batchName}</p>
+          {tag}
         </div>
         <div className="text-right shrink-0">
           <p className="text-sm font-semibold text-brand-secondary">{formatINR(p.totalAmountPaise, { withDecimals: false })}</p>
@@ -1207,18 +1240,65 @@ export default function PaymentsPage() {
     return m;
   }, [centres]);
 
+  /**
+   * Every 3-month price a centre charges. Built from the batch plans AND from
+   * monthly amounts actually paid there, so it still works for a centre whose
+   * batch plans were never filled in.
+   */
+  const quarterlyPricesByCentre = useMemo(() => {
+    const m = new Map<string, Set<number>>();
+    const add = (centreId: string, monthlyPaise: number) => {
+      if (!centreId || monthlyPaise <= 0) return;
+      if (!m.has(centreId)) m.set(centreId, new Set());
+      m.get(centreId)!.add(quarterlyAmountPaise(monthlyPaise));
+    };
+    batches.forEach((b) => (b.frequencyPlans ?? []).forEach((fp) => add(b.centreId, fp.monthlyFeePaise)));
+    SLOT_PLANS.forEach((sp) => add(RUIA_SLOT_BOOKING_CENTRE_ID, sp.amountPaise));
+    payments.forEach((p) => {
+      if (paymentCoverage(p).months === 1 && p.status === 'PAID') add(p.centreId, p.totalAmountPaise);
+    });
+    return m;
+  }, [batches, payments]);
+
+  // A paid single-month payment, made since quarterly launched, whose amount
+  // is exactly a 3-month price at its centre — almost certainly a quarterly
+  // payment saved as monthly, which then only covers its first month.
+  const looksQuarterly = useCallback((p: PaymentDocument) =>
+    p.status === 'PAID' &&
+    paymentCoverage(p).months === 1 &&
+    monthRank(p.month) >= monthRank(QUARTERLY_LAUNCH_MONTH) &&
+    !!quarterlyPricesByCentre.get(p.centreId)?.has(p.totalAmountPaise),
+  [quarterlyPricesByCentre]);
+
+  const suspectCount = useMemo(() => payments.filter((p) => {
+    if (centreFilter && p.centreId !== centreFilter) return false;
+    return looksQuarterly(p);
+  }).length, [payments, centreFilter, looksQuarterly]);
+
+  const [onlySuspect, setOnlySuspect] = useState(false);
+
+  // Filed under an earlier month but covering the one being viewed.
+  const isCarryOver = useCallback(
+    (p: PaymentDocument) => !onlySuspect && !!monthFilter && p.month !== monthFilter,
+    [monthFilter, onlySuspect],
+  );
+
   function handleExport() {
-    if (filtered.length === 0) {
+    // Carry-overs were collected in their own month — exporting them again
+    // here would count the same money twice in any month-by-month total.
+    const rows = filtered.filter((p) => !isCarryOver(p));
+    if (rows.length === 0) {
       toast.info('Nothing to export.');
       return;
     }
-    exportPaymentsCsv(filtered, studentMap, batchMap, centreMap);
-    toast.success(`Exported ${filtered.length} payment records`);
+    exportPaymentsCsv(rows, studentMap, batchMap, centreMap);
+    toast.success(`Exported ${rows.length} payment records`);
   }
 
   // Filtered list
   const filtered = useMemo(() => {
     let result = payments;
+    if (onlySuspect) result = result.filter(looksQuarterly);
     if (search) {
       const q = search.toLowerCase();
       result = result.filter((p) => {
@@ -1229,7 +1309,11 @@ export default function PaymentsPage() {
     }
     if (centreFilter) result = result.filter((p) => p.centreId === centreFilter);
     if (statusFilter) result = result.filter((p) => p.status === statusFilter);
-    if (monthFilter) result = result.filter((p) => p.month === monthFilter);
+    if (monthFilter && !onlySuspect) {
+      result = result.filter((p) =>
+        p.month === monthFilter ||
+        (p.status === 'PAID' && paymentCoversMonth(p, monthFilter)));
+    }
 
     const dir = sortDir === 'asc' ? 1 : -1;
     result = [...result].sort((a, b) => {
@@ -1243,12 +1327,14 @@ export default function PaymentsPage() {
       }
     });
     return result;
-  }, [payments, search, studentMap, batchMap, centreFilter, statusFilter, monthFilter, sortField, sortDir]);
+  }, [payments, search, studentMap, batchMap, centreFilter, statusFilter, monthFilter, sortField, sortDir, onlySuspect, looksQuarterly]);
 
-  // Summary stats
-  const totalBilled = filtered.reduce((sum, p) => sum + p.totalAmountPaise, 0);
-  const totalCollected = filtered.filter((p) => p.status === 'PAID').reduce((sum, p) => sum + p.totalAmountPaise, 0);
-  const pendingCount = filtered.filter((p) => p.status === 'PENDING' || p.status === 'OVERDUE').length;
+  // Summary stats — money counts only in the month it was filed under.
+  const ownMonth = filtered.filter((p) => !isCarryOver(p));
+  const carryOverCount = filtered.length - ownMonth.length;
+  const totalBilled = ownMonth.reduce((sum, p) => sum + p.totalAmountPaise, 0);
+  const totalCollected = ownMonth.filter((p) => p.status === 'PAID').reduce((sum, p) => sum + p.totalAmountPaise, 0);
+  const pendingCount = ownMonth.filter((p) => p.status === 'PENDING' || p.status === 'OVERDUE').length;
 
   const load = useCallback(async () => {
     try {
@@ -1546,7 +1632,10 @@ export default function PaymentsPage() {
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-bold text-brand-secondary">Payments</h1>
-          <p className="text-sm text-gray-500">{filtered.length} record{filtered.length !== 1 ? 's' : ''}</p>
+          <p className="text-sm text-gray-500">
+            {ownMonth.length} record{ownMonth.length !== 1 ? 's' : ''}
+            {carryOverCount > 0 && ` + ${carryOverCount} quarterly carried over`}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/* View toggle */}
@@ -1735,6 +1824,25 @@ export default function PaymentsPage() {
         </button>
       </div>
 
+      {(suspectCount > 0 || onlySuspect) && (
+        <div className="mb-5 flex flex-col gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex items-start gap-2">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+            <span>
+              <strong>{suspectCount}</strong> paid {suspectCount === 1 ? 'payment matches' : 'payments match'} a 3-month price
+              but {suspectCount === 1 ? 'was' : 'were'} saved as monthly, so {suspectCount === 1 ? 'it covers' : 'they cover'} only one month.
+            </span>
+          </p>
+          <button
+            type="button"
+            onClick={() => setOnlySuspect((v) => !v)}
+            className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+          >
+            {onlySuspect ? 'Back to month view' : 'Show them'}
+          </button>
+        </div>
+      )}
+
       {/* Content */}
       {loading ? (
         <CardSkeleton count={6} />
@@ -1754,18 +1862,22 @@ export default function PaymentsPage() {
           {/* ── Card view ── */}
           {viewMode === 'card' && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filtered.map((p) => (
-                <PaymentCard
-                  key={p.id}
-                  payment={p}
-                  studentName={studentMap.get(p.studentId)}
-                  batchName={batchMap.get(p.batchId)}
-                  onEdit={handleEdit}
-                  onDelete={handleDelete}
-                  onMarkPaid={handleMarkPaid}
-                  onWaive={handleWaive}
-                />
-              ))}
+              {filtered.map((p) => {
+                const carry = isCarryOver(p);
+                return (
+                  <PaymentCard
+                    key={p.id}
+                    payment={p}
+                    studentName={studentMap.get(p.studentId)}
+                    batchName={batchMap.get(p.batchId)}
+                    tag={<CycleTag payment={p} suspect={looksQuarterly(p)} />}
+                    onEdit={carry ? undefined : handleEdit}
+                    onDelete={carry ? undefined : handleDelete}
+                    onMarkPaid={carry ? undefined : handleMarkPaid}
+                    onWaive={carry ? undefined : handleWaive}
+                  />
+                );
+              })}
             </div>
           )}
 
@@ -1802,8 +1914,9 @@ export default function PaymentsPage() {
                 <tbody className="divide-y divide-gray-50">
                   {filtered.map((p) => (
                     <tr key={p.id} className="hover:bg-gray-50 transition">
-                      <td className="px-4 py-2.5 font-medium text-brand-secondary max-w-[160px] truncate">
-                        {studentMap.get(p.studentId) ?? p.studentId}
+                      <td className="px-4 py-2.5 font-medium text-brand-secondary max-w-[200px]">
+                        <span className="block truncate">{studentMap.get(p.studentId) ?? p.studentId}</span>
+                        <CycleTag payment={p} suspect={looksQuarterly(p)} />
                       </td>
                       <td className="px-4 py-2.5 text-gray-500 max-w-[120px] truncate hidden md:table-cell">
                         {batchMap.get(p.batchId) ?? p.batchId}
@@ -1822,7 +1935,7 @@ export default function PaymentsPage() {
                         {p.method === 'NONE' ? '—' : p.method.replace('_', ' ')}
                       </td>
                       <td className="px-4 py-2.5">
-                        {(p.status === 'PENDING' || p.status === 'OVERDUE') && (
+                        {!isCarryOver(p) && (p.status === 'PENDING' || p.status === 'OVERDUE') && (
                           <button
                             onClick={() => handleMarkPaid(p)}
                             className="rounded-lg bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-100 whitespace-nowrap"
@@ -1848,6 +1961,8 @@ export default function PaymentsPage() {
                   studentName={studentMap.get(p.studentId) ?? p.studentId}
                   batchName={batchMap.get(p.batchId) ?? p.batchId}
                   centreName={centreMap.get(p.centreId) ?? p.centreId}
+                  tag={<CycleTag payment={p} suspect={looksQuarterly(p)} />}
+                  carryOver={isCarryOver(p)}
                   onMarkPaid={() => handleMarkPaid(p)}
                   onWaive={() => handleWaive(p)}
                   onEdit={() => handleEdit(p)}
