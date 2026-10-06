@@ -7,7 +7,7 @@
  * children cleanly.
  */
 
-import type { BaseDocument, IsoDate, IsoTimestamp } from './common.js';
+import type { BaseDocument, IsoDate, IsoTimestamp, YearMonth } from './common.js';
 import type { BatchLevel } from './batch.js';
 
 export const StudentStatus = {
@@ -113,4 +113,13 @@ export interface StudentDocument extends BaseDocument {
 
   /** Any medical notes relevant for coaching (asthma, allergies, etc.). Free text. */
   medicalNotes: string | null;
+
+  /**
+   * Months (YYYY-MM) covered by this student's paid payments. Written only by
+   * Cloud Functions from /payments, so coaches — who cannot read payments —
+   * can still see who is expected on a register. Absent until first synced.
+   */
+  feeMonths?: YearMonth[];
+  /** Last month covered, or null if never paid. Mirrors feeMonths. */
+  feeCoveredThrough?: YearMonth | null;
 }

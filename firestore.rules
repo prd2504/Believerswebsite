@@ -426,6 +426,17 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ── /attendanceDaily/{date} — nightly register punctuality (written by Cloud Functions) ──
+    match /attendanceDaily/{date} {
+      allow read: if isAdminLike();
+      allow write: if false;
+    }
+
+    // ── /attendanceAlerts/{id} — watchdog dedup (Cloud Functions only) ──────────────────
+    match /attendanceAlerts/{alertId} {
+      allow read, write: if false;
+    }
+
     // ── /broadcasts/{broadcastId} ─────────────────────────────────────────────────────────
     match /broadcasts/{broadcastId} {
       allow read: if isAdminLike();

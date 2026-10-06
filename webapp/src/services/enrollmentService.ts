@@ -295,3 +295,9 @@ export async function getEnrollmentsForBatchOnDay(
   const snap = await getDocs(q);
   return snap.docs.map((d) => fromFirestore(d.id, d.data())).filter((e) => e.status === 'ACTIVE');
 }
+
+/** Every ACTIVE enrolment — for views that reason across all batches at once. */
+export async function getActiveEnrollments(): Promise<EnrollmentDocument[]> {
+  const snap = await getDocs(query(collection(db, COLLECTIONS.enrollments), where('status', '==', 'ACTIVE')));
+  return snap.docs.map((d) => fromFirestore(d.id, d.data()));
+}

@@ -22,6 +22,9 @@ import {
   type AttendanceRecord,
   type AttendeeType,
   type DayOfWeek,
+  registerFeeState,
+  isExpectedOnRegister,
+  formatMonthLabel,
 } from '@bba/shared';
 import {
   getOrCreateSession,
@@ -92,6 +95,8 @@ export function AttendanceMarker({ batches, centreId, userId, onDone }: Attendan
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showPicker, setShowPicker] = useState<null | 'student' | 'trial'>(null);
+  /** Enrolled students left off because they have no fee for the month. */
+  const [hiddenUnpaid, setHiddenUnpaid] = useState<string[]>([]);
 
   const selectedBatch = useMemo(
     () => batches.find((b) => b.id === selectedBatchId),
@@ -119,8 +124,25 @@ export function AttendanceMarker({ batches, centreId, userId, onDone }: Attendan
           await Promise.all(enrollments.map((e) => getStudentById(e.studentId)))
         ).filter((s): s is StudentDocument => s !== null);
 
+        // Same rule as the coach register: only the fee-expected (or already
+        // marked) are listed, so unpaid leavers aren't recorded absent daily.
+        const enrolById = new Map(enrollments.map((e) => [e.studentId, e]));
+        const hidden: string[] = [];
+        const expectedDocs = studentDocs.filter((s) => {
+          if (recordById.has(s.id)) return true;
+          if (s.status !== 'ACTIVE') return false;
+          const e = enrolById.get(s.id);
+          const state = s.feeMonths
+            ? registerFeeState({ feeMonths: s.feeMonths, enrolledOn: e?.startDate, pausedMonths: e?.pausedMonths, sessionDate })
+            : 'PAID';
+          if (isExpectedOnRegister(state)) return true;
+          if (state === 'UNPAID') hidden.push(s.name);
+          return false;
+        });
+        setHiddenUnpaid(hidden.sort());
+
         // Build REGULAR rows from enrolments
-        const regularRows: RowState[] = studentDocs.map((s) => {
+        const regularRows: RowState[] = expectedDocs.map((s) => {
           const r = recordById.get(s.id);
           return {
             key: s.id,
@@ -305,6 +327,13 @@ export function AttendanceMarker({ batches, centreId, userId, onDone }: Attendan
       {existingRecords.length > 0 && (
         <p className="text-xs text-yellow-600">
           Attendance was already recorded for this session. You are editing existing records.
+        </p>
+      )}
+
+      {hiddenUnpaid.length > 0 && !loading && (
+        <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+          <strong>{hiddenUnpaid.length}</strong> enrolled but not paid for {formatMonthLabel(sessionDate.slice(0, 7))}, so not expected:{' '}
+          {hiddenUnpaid.join(', ')}. If one came, add them with “Add another student”.
         </p>
       )}
 

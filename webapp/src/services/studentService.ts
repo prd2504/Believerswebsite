@@ -68,6 +68,9 @@ function fromFirestore(id: string, data: DocumentData): StudentDocument {
       : [],
     joinedDate: data.joinedDate ?? '',
     medicalNotes: data.medicalNotes ?? null,
+    // Undefined (not []) until first synced — "no data yet" must not read as "unpaid".
+    feeMonths: Array.isArray(data.feeMonths) ? data.feeMonths : undefined,
+    feeCoveredThrough: data.feeCoveredThrough ?? null,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     createdBy: data.createdBy ?? null,

@@ -14,6 +14,7 @@ import { QuickAttendance } from '@/components/attendance/QuickAttendance';
 import { AttendanceMarker } from '@/components/attendance/AttendanceMarker';
 import { SessionHistory } from '@/components/attendance/SessionHistory';
 import { MonthlyRoster } from '@/components/attendance/MonthlyRoster';
+import { TodayBoard } from '@/components/attendance/TodayBoard';
 import {
   getSessionsByBatch,
   getAttendanceRecords,
@@ -23,7 +24,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
 import type { BatchDocument, CentreDocument, StudentDocument } from '@bba/shared';
 
-type Tab = 'quick' | 'batch' | 'roster' | 'history';
+type Tab = 'today' | 'quick' | 'batch' | 'roster' | 'history';
 
 export default function AttendancePage() {
   const { profile } = useAuth();
@@ -31,7 +32,7 @@ export default function AttendancePage() {
   const [centres, setCentres] = useState<CentreDocument[]>([]);
   const [students, setStudents] = useState<StudentDocument[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>('quick');
+  const [tab, setTab] = useState<Tab>('today');
   const [centreFilter, setCentreFilter] = useState('');
   const [search, setSearch] = useState('');
   const [historyBatchId, setHistoryBatchId] = useState('');
@@ -142,10 +143,18 @@ export default function AttendancePage() {
       </div>
 
       {/* Tabs */}
-      <div className="mb-5 flex gap-1 rounded-lg bg-gray-100 p-1">
+      <div className="mb-5 flex gap-1 overflow-x-auto rounded-lg bg-gray-100 p-1">
+        <button
+          onClick={() => setTab('today')}
+          className={`flex-1 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+            tab === 'today' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Today
+        </button>
         <button
           onClick={() => setTab('quick')}
-          className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+          className={`flex-1 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${
             tab === 'quick' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
@@ -153,7 +162,7 @@ export default function AttendancePage() {
         </button>
         <button
           onClick={() => setTab('batch')}
-          className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+          className={`flex-1 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${
             tab === 'batch' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
@@ -161,7 +170,7 @@ export default function AttendancePage() {
         </button>
         <button
           onClick={() => setTab('roster')}
-          className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+          className={`flex-1 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${
             tab === 'roster' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
@@ -169,7 +178,7 @@ export default function AttendancePage() {
         </button>
         <button
           onClick={() => setTab('history')}
-          className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+          className={`flex-1 whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition-colors ${
             tab === 'history' ? 'bg-white text-brand-secondary shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
@@ -178,6 +187,12 @@ export default function AttendancePage() {
       </div>
 
       {/* Content */}
+      {tab === 'today' && (
+        <div className="card">
+          <TodayBoard batches={batches} centres={centres} students={students} centreFilter={centreFilter} />
+        </div>
+      )}
+
       {tab === 'quick' && profile && (
         <div className="card">
           <p className="mb-3 text-xs text-gray-500">

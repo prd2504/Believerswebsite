@@ -85,6 +85,7 @@ function sessionFromFirestore(id: string, data: DocumentData): SessionDocument {
     punchOutGeo: data.punchOutGeo ?? null,
     latePunchIn: data.latePunchIn ?? false,
     logStatus: data.logStatus ?? null,
+    firstTakenAt: data.firstTakenAt ? toIso(data.firstTakenAt) : null,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     createdBy: data.createdBy ?? null,
@@ -106,6 +107,7 @@ function recordFromFirestore(id: string, data: DocumentData): AttendanceRecord {
     status: (data.status ?? 'ABSENT') as AttendanceStatus,
     note: data.note ?? null,
     markedBy: data.markedBy ?? '',
+    feeState: data.feeState ?? null,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     createdBy: data.createdBy ?? null,
@@ -210,6 +212,8 @@ export interface AttendanceMarkInput {
   note?: string;
   /** Required when studentId is null (pure trial walk-in). */
   walkIn?: { name: string; phone: string; notes?: string };
+  /** RegisterFeeState at the time of marking; kept on the record for reporting. */
+  feeState?: string;
   /**
    * Explicit record id, for attendees that are neither a student nor a
    * phone-identified walk-in — Ruia's register is keyed by slot BOOKING id,
@@ -256,6 +260,11 @@ export async function saveAttendanceMarks(
   const existingIds = new Set(
     (await getDocs(recordsCol(batchId, sessionId)).catch(() => null))?.docs.map((d) => d.id) ?? [],
   );
+  // firstTakenAt is what punctuality is judged on; endedAt moves on every edit.
+  const sessionSnap = await getDoc(sessionRef(batchId, sessionId)).catch(() => null);
+  const firstTaken = sessionSnap?.exists() && sessionSnap.data().firstTakenAt
+    ? {}
+    : { firstTakenAt: new Date().toISOString() };
 
   // Record id strategy:
   //   - student-linked records: id = studentId (one per student per session)
@@ -280,6 +289,7 @@ export async function saveAttendanceMarks(
         status: mark.status,
         note: mark.note?.trim() || null,
         markedBy: userId,
+        ...(mark.feeState ? { feeState: mark.feeState } : {}),
         ...(isNew ? { createdAt: serverTimestamp(), createdBy: userId } : {}),
         updatedAt: serverTimestamp(),
         updatedBy: userId,
@@ -296,6 +306,9 @@ export async function saveAttendanceMarks(
     // register and the fact that it was completed land together.
     if (i + MAX_BATCH_OPS >= ops.length) {
       wb.update(sessionRef(batchId, sessionId), {
+        ...firstTaken,
+        cancelled: false,
+        cancellationReason: null,
         endedAt: new Date().toISOString(),
         updatedAt: serverTimestamp(),
         updatedBy: userId,
@@ -308,11 +321,38 @@ export async function saveAttendanceMarks(
   // session with nobody expected and saves has genuinely finished it.
   if (ops.length === 0) {
     await updateDoc(sessionRef(batchId, sessionId), {
+      ...firstTaken,
       endedAt: new Date().toISOString(),
       updatedAt: serverTimestamp(),
       updatedBy: userId,
     });
   }
+}
+
+/** The session doc for a batch on a date, or null if none exists yet. */
+export async function getSession(batchId: string, sessionDate: string): Promise<SessionDocument | null> {
+  const snap = await getDoc(sessionRef(batchId, sessionDate));
+  return snap.exists() ? sessionFromFirestore(snap.id, snap.data()) : null;
+}
+
+/**
+ * Mark a session as not held (rain, holiday…) or undo that with reason=null.
+ * A not-held session is excluded from register punctuality and reminders.
+ */
+export async function setSessionNotHeld(
+  batchId: string,
+  centreId: string,
+  sessionDate: string,
+  reason: string | null,
+  userId: string,
+): Promise<void> {
+  await getOrCreateSession(batchId, centreId, sessionDate, userId);
+  await updateDoc(sessionRef(batchId, sessionDate), {
+    cancelled: reason !== null,
+    cancellationReason: reason,
+    updatedAt: serverTimestamp(),
+    updatedBy: userId,
+  });
 }
 
 /** Get all attendance records for a session. */

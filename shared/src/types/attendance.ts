@@ -97,6 +97,12 @@ export interface SessionDocument extends BaseDocument {
 
   latePunchIn: boolean;
   logStatus: SessionLogStatus | null;
+
+  /**
+   * When the register was FIRST saved. endedAt moves on every edit, so it
+   * cannot answer "was it taken on time"; this never moves once set.
+   */
+  firstTakenAt?: IsoTimestamp | null;
 }
 
 /**
@@ -130,6 +136,12 @@ export interface AttendanceRecord extends BaseDocument {
 
   /** User id of whoever marked it. */
   markedBy: string;
+
+  /**
+   * Fee standing when marked (RegisterFeeState). UNPAID on a PRESENT mark
+   * means they trained without a fee on record — surfaced in the nightly email.
+   */
+  feeState?: string | null;
 }
 
 /**

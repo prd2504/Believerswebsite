@@ -82,7 +82,7 @@ export function MonthlyRoster({ batches, students, centreFilter }: MonthlyRoster
     return () => { cancelled = true; };
   }, [batchId]);
 
-  const batchStudents = useMemo(() => {
+  const enrolledStudents = useMemo(() => {
     const ids = new Set(enrolledIds);
     return students
       .filter((s) => ids.has(s.id))
@@ -94,7 +94,7 @@ export function MonthlyRoster({ batches, students, centreFilter }: MonthlyRoster
    * Silently dropping them is how a roster quietly loses a person; naming the
    * count at least says the grid is short.
    */
-  const missingStudentCount = Math.max(0, new Set(enrolledIds).size - batchStudents.length);
+  const missingStudentCount = Math.max(0, new Set(enrolledIds).size - enrolledStudents.length);
 
   // Dates in month
   const datesInMonth = useMemo(() => {
@@ -146,7 +146,7 @@ export function MonthlyRoster({ batches, students, centreFilter }: MonthlyRoster
   // Build grid data: studentId -> date -> status
   const grid = useMemo(() => {
     const map = new Map<string, Map<string, string>>();
-    batchStudents.forEach((s) => map.set(s.id, new Map()));
+    enrolledStudents.forEach((s) => map.set(s.id, new Map()));
     records.forEach((recs, date) => {
       recs.forEach((r) => {
         if (r.studentId && map.has(r.studentId)) {
@@ -155,7 +155,19 @@ export function MonthlyRoster({ batches, students, centreFilter }: MonthlyRoster
       });
     });
     return map;
-  }, [batchStudents, records]);
+  }, [enrolledStudents, records]);
+
+  /**
+   * Rows shown: paid for the month, or actually came at least once. An
+   * enrolled student who neither paid nor turned up isn't part of this
+   * month — listing them fills the grid with absences that never happened.
+   */
+  const batchStudents = useMemo(() => enrolledStudents.filter((s) => {
+    if (!s.feeMonths || s.feeMonths.includes(month)) return true;
+    const row = grid.get(s.id);
+    return !!row && Array.from(row.values()).some((st) => st === 'PRESENT' || st === 'LATE');
+  }), [enrolledStudents, grid, month]);
+  const notThisMonth = enrolledStudents.length - batchStudents.length;
 
   // Summary stats per student
   const studentStats = useMemo(() => {
@@ -274,6 +286,12 @@ export function MonthlyRoster({ batches, students, centreFilter }: MonthlyRoster
       </div>
 
       {/* Grid */}
+      {notThisMonth > 0 && (
+        <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+          {notThisMonth} enrolled student{notThisMonth === 1 ? '' : 's'} with no fee for {monthLabel()} and no attendance are hidden.
+        </p>
+      )}
+
       {missingStudentCount > 0 && (
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
           {missingStudentCount} enrolled student{missingStudentCount === 1 ? ' has' : 's have'} no

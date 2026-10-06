@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, X, Clock, ShieldCheck, UserPlus, Sparkles, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { Check, X, Clock, ShieldCheck, UserPlus, Sparkles, Trash2, ChevronDown, ChevronUp, Ban, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
 import {
@@ -16,12 +16,19 @@ import {
   type AttendanceRecord,
   type AttendeeType,
   type DayOfWeek,
+  type RegisterFeeState,
   DAY_OF_WEEK_LABELS,
+  SESSION_NOT_HELD_REASONS,
+  registerFeeState,
+  isExpectedOnRegister,
+  formatMonthLabel,
 } from '@bba/shared';
 import {
   getOrCreateSession,
   saveAttendanceMarks,
   getAttendanceRecords,
+  getSession,
+  setSessionNotHeld,
   type AttendanceMarkInput,
 } from '@/services/attendanceService';
 import { getEnrollmentsForBatchOnDay } from '@/services/enrollmentService';
@@ -50,7 +57,15 @@ interface QuickRow {
   note: string;
   timeSlot: string;
   walkIn?: { name: string; phone: string; notes?: string };
+  /** Fee standing for this session's month. Undefined for walk-ins / ad-hoc rows. */
+  feeState?: RegisterFeeState;
 }
+
+const FEE_TAG: Partial<Record<RegisterFeeState, [string, string]>> = {
+  DUE: ['Fee due', 'bg-amber-100 text-amber-800'],
+  NEW: ['New', 'bg-sky-100 text-sky-700'],
+  UNPAID: ['Unpaid', 'bg-red-100 text-red-700'],
+};
 
 interface SlotGroup {
   slotLabel: string;
@@ -97,6 +112,12 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
   const [showPicker, setShowPicker] = useState<null | 'student' | 'trial'>(null);
   const [pickerBatchId, setPickerBatchId] = useState('');
   const [collapsedSlots, setCollapsedSlots] = useState<Set<string>>(new Set());
+  /** Enrolled but not expected this month (no fee). Not saved unless moved onto the register. */
+  const [offRegister, setOffRegister] = useState<QuickRow[]>([]);
+  const [showOffRegister, setShowOffRegister] = useState(false);
+  /** batchId → reason, for sessions marked as not held today. */
+  const [notHeld, setNotHeld] = useState<Map<string, string>>(new Map());
+  const [notHeldFor, setNotHeldFor] = useState<string | null>(null);
 
   const dayOfWeek = useMemo(() => dayOfWeekFromIso(sessionDate), [sessionDate]);
 
@@ -110,6 +131,8 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
     setSavedAt(null);
     if (batchesForDay.length === 0) {
       setRows([]);
+      setOffRegister([]);
+      setNotHeld(new Map());
       setHasExisting(false);
       return;
     }
@@ -138,6 +161,8 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
     (async () => {
       try {
         const allRows: QuickRow[] = [];
+        const offRows: QuickRow[] = [];
+        const heldMap = new Map<string, string>();
         let foundExisting = false;
         // Enrolled people who never make it onto the register, and why. A
         // roster that is quietly short is worse than one that says so — it is
@@ -145,13 +170,15 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
         const dropped: string[] = [];
 
         for (const batch of batchesForDay) {
-          const [enrollments, records] = await Promise.race([
+          const [enrollments, records, session] = await Promise.race([
             Promise.all([
               getEnrollmentsForBatchOnDay(batch.id, dayOfWeek),
               getAttendanceRecords(batch.id, sessionDate).catch(() => []),
+              getSession(batch.id, sessionDate).catch(() => null),
             ]),
             deadline,
           ]);
+          if (session?.cancelled) heldMap.set(batch.id, session.cancellationReason ?? 'Not held');
 
           if (records.length > 0) foundExisting = true;
           const recordById = new Map(records.map((r) => [r.id, r]));
@@ -180,7 +207,19 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
               timeSlot = `${batch.startTime}–${batch.endTime}`;
             }
 
-            allRows.push({
+            // No fee data yet (never synced) reads as paid, not unpaid — an
+            // empty register on rollout day would be worse than a long one.
+            const feeState: RegisterFeeState = s.feeMonths
+              ? registerFeeState({
+                  feeMonths: s.feeMonths,
+                  enrolledOn: enrollment.startDate,
+                  pausedMonths: enrollment.pausedMonths,
+                  sessionDate,
+                })
+              : 'PAID';
+            if (!r && feeState === 'PAUSED') { dropped.push(`${s.name} (paused this month)`); continue; }
+
+            const row: QuickRow = {
               key: `${s.id}_${batch.id}`,
               studentId: s.id,
               batchId: batch.id,
@@ -190,7 +229,12 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
               status: r?.status ?? 'PRESENT',
               note: r?.note ?? '',
               timeSlot,
-            });
+              feeState,
+            };
+            // Already marked (an earlier save) stays put; otherwise only the
+            // expected go on the register — the rest wait in "Not paid".
+            if (r || isExpectedOnRegister(feeState)) allRows.push(row);
+            else offRows.push(row);
           }
 
           const regularStudentIds = new Set(enrollments.map((e) => e.studentId));
@@ -225,6 +269,9 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
 
         if (cancelled) return;
         setRows(allRows);
+        setOffRegister(offRows.sort((a, b) => a.displayName.localeCompare(b.displayName)));
+        setShowOffRegister(false);
+        setNotHeld(heldMap);
         setHasExisting(foundExisting);
         setDroppedNames(dropped);
       } catch (err) {
@@ -249,9 +296,16 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
     return () => { cancelled = true; };
   }, [batchesForDay, sessionDate, dayOfWeek, reloadNonce]);
 
+  /** Rows for batches that are actually running today. */
+  const liveRows = useMemo(() => rows.filter((r) => !notHeld.has(r.batchId)), [rows, notHeld]);
+  const liveOffRegister = useMemo(
+    () => offRegister.filter((r) => !notHeld.has(r.batchId)),
+    [offRegister, notHeld],
+  );
+
   const slotGroups = useMemo((): SlotGroup[] => {
     const map = new Map<string, QuickRow[]>();
-    rows.forEach((r) => {
+    liveRows.forEach((r) => {
       const arr = map.get(r.timeSlot) ?? [];
       arr.push(r);
       map.set(r.timeSlot, arr);
@@ -263,7 +317,30 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
         slotKey: slotLabel,
         rows: slotRows.sort((a, b) => a.displayName.localeCompare(b.displayName)),
       }));
-  }, [rows]);
+  }, [liveRows]);
+
+  function cameToday(row: QuickRow) {
+    setOffRegister((prev) => prev.filter((r) => r.key !== row.key));
+    setRows((prev) => [...prev, { ...row, status: 'PRESENT' }]);
+    toast.info(`${row.displayName} added — they'll be flagged as attending without a fee.`);
+  }
+
+  async function markNotHeld(batch: BatchDocument, reason: string | null) {
+    setNotHeldFor(null);
+    try {
+      await setSessionNotHeld(batch.id, batch.centreId, sessionDate, reason, userId);
+      setNotHeld((prev) => {
+        const next = new Map(prev);
+        if (reason) next.set(batch.id, reason); else next.delete(batch.id);
+        return next;
+      });
+      toast.success(reason ? `${batch.name} marked as not held` : `${batch.name} is back on today's register`);
+      onDone?.();
+    } catch (err) {
+      console.error(err);
+      toast.error("Couldn't update the session — check your connection and try again.");
+    }
+  }
 
   function patch(key: string, p: Partial<QuickRow>) {
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...p } : r)));
@@ -301,6 +378,7 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
     const batch = batchesForDay.find((b) => b.id === batchId);
     if (!batch) return;
 
+    setOffRegister((prev) => prev.filter((r) => r.key !== `${student.id}_${batchId}`));
     setRows((prev) => [
       ...prev,
       {
@@ -352,13 +430,13 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
   }
 
   async function handleSave() {
-    if (rows.length === 0) return;
+    if (liveRows.length === 0) return;
     setSaving(true);
     setSaveError('');
 
     try {
       const byBatch = new Map<string, QuickRow[]>();
-      rows.forEach((r) => {
+      liveRows.forEach((r) => {
         const arr = byBatch.get(r.batchId) ?? [];
         arr.push(r);
         byBatch.set(r.batchId, arr);
@@ -375,11 +453,12 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
           status: r.status,
           note: r.note || undefined,
           walkIn: r.walkIn,
+          feeState: r.feeState,
         }));
         await saveAttendanceMarks(batchId, sessionDate, sessionDate, marks, userId);
       }
 
-      toast.success(`Attendance saved for ${rows.length} students across ${byBatch.size} batch${byBatch.size !== 1 ? 'es' : ''}`);
+      toast.success(`Attendance saved for ${liveRows.length} students across ${byBatch.size} batch${byBatch.size !== 1 ? 'es' : ''}`);
       setSavedAt(new Date());
       setHasExisting(true);
       onDone?.();
@@ -404,14 +483,14 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
   }
 
   const counts = useMemo(() => {
-    return rows.reduce(
+    return liveRows.reduce(
       (acc, r) => {
         acc[r.status] = (acc[r.status] ?? 0) + 1;
         return acc;
       },
       {} as Record<AttendanceStatus, number>,
     );
-  }, [rows]);
+  }, [liveRows]);
 
   return (
     <div className="space-y-5">
@@ -437,7 +516,7 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
           </p>
           <p className="text-xs text-gray-400">
             {batchesForDay.length} batch{batchesForDay.length !== 1 ? 'es' : ''} scheduled
-            {rows.length > 0 && ` · ${rows.length} students`}
+            {liveRows.length > 0 && ` · ${liveRows.length} students`}
           </p>
         </div>
       </div>
@@ -457,8 +536,46 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
         </div>
       )}
 
+      {/* Today's sessions — a session that didn't happen is marked, not left missing */}
+      {batchesForDay.length > 0 && !loading && (
+        <div className="space-y-1.5">
+          {batchesForDay.map((b) => {
+            const reason = notHeld.get(b.id);
+            return (
+              <div key={b.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-100 px-3 py-2">
+                <p className="min-w-0 text-xs">
+                  <span className="font-medium text-brand-secondary">{b.name}</span>
+                  <span className="ml-1 text-gray-400">{b.startTime}–{b.endTime}</span>
+                </p>
+                {reason ? (
+                  <span className="flex items-center gap-2">
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">Not held · {reason}</span>
+                    <button type="button" onClick={() => markNotHeld(b, null)} className="flex items-center gap-1 text-[11px] font-medium text-brand-primary" disabled={saving}>
+                      <Undo2 size={12} /> Undo
+                    </button>
+                  </span>
+                ) : notHeldFor === b.id ? (
+                  <span className="flex flex-wrap items-center gap-1">
+                    {SESSION_NOT_HELD_REASONS.map((r) => (
+                      <button key={r} type="button" onClick={() => markNotHeld(b, r)} className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-50">
+                        {r}
+                      </button>
+                    ))}
+                    <button type="button" onClick={() => setNotHeldFor(null)} className="btn-ghost p-1"><X size={12} /></button>
+                  </span>
+                ) : (
+                  <button type="button" onClick={() => setNotHeldFor(b.id)} className="flex items-center gap-1 text-[11px] font-medium text-gray-500 hover:text-gray-700" disabled={saving}>
+                    <Ban size={12} /> Not held today?
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Quick "mark all" */}
-      {rows.length > 0 && (
+      {liveRows.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-gray-500">Mark all:</span>
           {STATUS_OPTIONS.map((opt) => (
@@ -494,11 +611,13 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
             <div key={i} className="h-16 animate-pulse rounded-lg bg-gray-100" />
           ))}
         </div>
-      ) : rows.length === 0 ? (
+      ) : liveRows.length === 0 ? (
         <p className="py-6 text-center text-sm text-gray-400">
           {batchesForDay.length === 0
             ? 'No batches scheduled for this day.'
-            : 'No expected attendees today.'}
+            : batchesForDay.every((b) => notHeld.has(b.id))
+              ? 'All sessions today are marked as not held.'
+              : 'No paid students expected today.'}
         </p>
       ) : (
         <div className="space-y-4">
@@ -571,6 +690,11 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
                               <p className="truncate text-sm font-medium text-brand-secondary">
                                 {row.displayName}
                               </p>
+                              {row.feeState && FEE_TAG[row.feeState] && (
+                                <span className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium', FEE_TAG[row.feeState]![1])}>
+                                  {FEE_TAG[row.feeState]![0]}
+                                </span>
+                              )}
                               {row.attendeeType !== 'REGULAR' && (
                                 <span className={cn(
                                   'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
@@ -640,6 +764,47 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
         </div>
       )}
 
+      {/* Enrolled but not paid for this month — not expected, one tap away if they came */}
+      {!loading && !loadError && liveOffRegister.length > 0 && (
+        <div className="rounded-lg border border-dashed border-gray-300">
+          <button
+            type="button"
+            onClick={() => setShowOffRegister((v) => !v)}
+            className="flex w-full items-center justify-between px-4 py-2.5 text-left"
+          >
+            <span className="text-sm font-medium text-gray-600">
+              Not paid for {formatMonthLabel(sessionDate.slice(0, 7))}
+              <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">{liveOffRegister.length}</span>
+            </span>
+            {showOffRegister ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+          </button>
+          {showOffRegister && (
+            <div className="space-y-1.5 border-t border-gray-100 p-3">
+              <p className="text-xs text-gray-500">
+                Enrolled, but no fee for this month — so they are not expected and won&apos;t be marked absent.
+                If one of them came today, tap <strong>Came today</strong>. They&apos;ll be recorded and flagged to the centre manager.
+              </p>
+              {liveOffRegister.map((row) => (
+                <div key={row.key} className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2">
+                  <p className="min-w-0 truncate text-sm text-gray-700">
+                    {row.displayName}
+                    <span className="ml-1.5 text-xs text-gray-400">{row.timeSlot}</span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => cameToday(row)}
+                    className="shrink-0 rounded-full border border-green-300 bg-white px-2.5 py-1 text-xs font-medium text-green-700 hover:bg-green-50"
+                    disabled={saving}
+                  >
+                    Came today
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Add attendee */}
       {batchesForDay.length > 0 && (
         <div className="flex flex-wrap gap-2 border-t border-gray-100 pt-3">
@@ -669,18 +834,18 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
       )}
 
       {/* Summary & save */}
-      {rows.length > 0 && (
+      {liveRows.length > 0 && (
         <div className="flex items-center justify-between border-t border-gray-100 pt-4">
           <div className="flex flex-wrap gap-3 text-xs text-gray-500">
             <span className="text-green-600">{counts.PRESENT ?? 0} present</span>
             <span className="text-yellow-600">{counts.LATE ?? 0} late</span>
             <span className="text-red-600">{counts.ABSENT ?? 0} absent</span>
             <span className="text-blue-600">{counts.EXCUSED ?? 0} excused</span>
-            <span className="text-gray-500">{rows.length} total</span>
+            <span className="text-gray-500">{liveRows.length} total</span>
           </div>
-          <button onClick={handleSave} disabled={saving || rows.length === 0} className="btn-primary">
+          <button onClick={handleSave} disabled={saving || liveRows.length === 0} className="btn-primary">
             {saving
-              ? `Saving ${rows.length}…`
+              ? `Saving ${liveRows.length}…`
               : hasExisting ? 'Update Attendance' : 'Save Attendance'}
           </button>
         </div>

@@ -99,3 +99,9 @@ export {
   createCourtBookingPublic,
   createCourtPlanPublic,
 } from './slots/courtBookingApi.js';
+
+// --- Daily operations: fee standing on students, register watchdog, nightly digest
+//     (see ops/ — the register is fee-aware; these keep it honest) ------------
+export { onPaymentFeeStanding } from './ops/feeStanding.js';
+export { attendanceWatch } from './ops/attendanceWatch.js';
+export { nightlyOpsDigest, runOpsDigest } from './ops/nightlyDigest.js';

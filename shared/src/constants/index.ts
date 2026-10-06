@@ -158,6 +158,7 @@ export const COLLECTIONS = {
   staff: 'staff',
   payrollRuns: 'payrollRuns',
   feeAttendanceReports: 'feeAttendanceReports',
+  attendanceDaily: 'attendanceDaily',
   courtBookings: 'courtBookings',
   courtRentalConfig: 'courtRentalConfig',
   courtRentalPlans: 'courtRentalPlans',
