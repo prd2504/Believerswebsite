@@ -5,12 +5,14 @@
  * back to the correct batch sessions.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, X, Clock, ShieldCheck, UserPlus, Sparkles, Trash2, ChevronDown, ChevronUp, Ban, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
 import {
   type BatchDocument,
+  type CentreDocument,
+  type CentreClosure,
   type StudentDocument,
   type AttendanceStatus,
   type AttendanceRecord,
@@ -21,6 +23,7 @@ import {
   SESSION_NOT_HELD_REASONS,
   registerFeeState,
   isExpectedOnRegister,
+  centreClosureOn,
   formatMonthLabel,
 } from '@bba/shared';
 import {
@@ -82,6 +85,8 @@ interface QuickAttendanceProps {
    * it never was.
    */
   batches: BatchDocument[];
+  /** Used to leave out centres that are closed on the chosen date. */
+  centres?: CentreDocument[];
   userId: string;
   onDone?: () => void;
 }
@@ -97,7 +102,7 @@ function dayOfWeekFromIso(iso: string): DayOfWeek {
   return date.getUTCDay() as DayOfWeek;
 }
 
-export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProps) {
+export function QuickAttendance({ batches, centres = [], userId, onDone }: QuickAttendanceProps) {
   const [sessionDate, setSessionDate] = useState(todayStr);
   const [rows, setRows] = useState<QuickRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -121,12 +126,35 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
 
   const dayOfWeek = useMemo(() => dayOfWeekFromIso(sessionDate), [sessionDate]);
 
+  /** centreId → closure in force on the chosen date. */
+  const closedCentres = useMemo(() => {
+    const m = new Map<string, { name: string; closure: CentreClosure }>();
+    centres.forEach((c) => {
+      const closure = centreClosureOn(c.centreCode, sessionDate);
+      if (closure) m.set(c.id, { name: c.name, closure });
+    });
+    return m;
+  }, [centres, sessionDate]);
+
   const batchesForDay = useMemo(
-    () => batches.filter((b) => b.status === 'ACTIVE' && b.offeredDays.includes(dayOfWeek)),
-    [batches, dayOfWeek],
+    () => batches.filter((b) =>
+      b.status === 'ACTIVE' && b.offeredDays.includes(dayOfWeek) && !closedCentres.has(b.centreId)),
+    [batches, dayOfWeek, closedCentres],
+  );
+  const closedHere = useMemo(
+    () => Array.from(closedCentres.entries()).filter(([id]) => batches.some((b) => b.centreId === id)),
+    [closedCentres, batches],
   );
 
+  // The parent refreshes its batch list after every save, handing over a new
+  // array with the same batches. Keying the load on the ids (not the array)
+  // stops that refresh from reloading the register and wiping "Saved at".
+  const batchKey = batchesForDay.map((b) => b.id).join(',');
+  const batchesRef = useRef(batchesForDay);
+  batchesRef.current = batchesForDay;
+
   useEffect(() => {
+    const batchesForDay = batchesRef.current;
     setSaveError('');
     setSavedAt(null);
     if (batchesForDay.length === 0) {
@@ -169,25 +197,36 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
         // what turns "a student is missing" into a week of nobody noticing.
         const dropped: string[] = [];
 
-        for (const batch of batchesForDay) {
-          const [enrollments, records, session] = await Promise.race([
-            Promise.all([
-              getEnrollmentsForBatchOnDay(batch.id, dayOfWeek),
-              getAttendanceRecords(batch.id, sessionDate).catch(() => []),
-              getSession(batch.id, sessionDate).catch(() => null),
-            ]),
-            deadline,
-          ]);
+        // Every batch at once, then every student at once: a coach on weak
+        // courtside data waits for ~3 round trips, not ~2 per batch.
+        const perBatch = await Promise.race([
+          Promise.all(batchesForDay.map((batch) => Promise.all([
+            getEnrollmentsForBatchOnDay(batch.id, dayOfWeek),
+            getAttendanceRecords(batch.id, sessionDate).catch(() => [] as AttendanceRecord[]),
+            getSession(batch.id, sessionDate).catch(() => null),
+          ]))),
+          deadline,
+        ]);
+
+        const studentIds = new Set<string>();
+        perBatch.forEach(([enrollments, records]) => {
+          enrollments.forEach((e) => studentIds.add(e.studentId));
+          records.forEach((r) => { if (r.studentId) studentIds.add(r.studentId); });
+        });
+        const fetched = await Promise.race([
+          Promise.all(Array.from(studentIds).map((id) => getStudentById(id))),
+          deadline,
+        ]);
+        const studentDocMap = new Map(
+          fetched.filter((s): s is StudentDocument => s !== null).map((s) => [s.id, s]),
+        );
+
+        batchesForDay.forEach((batch, i) => {
+          const [enrollments, records, session] = perBatch[i];
           if (session?.cancelled) heldMap.set(batch.id, session.cancellationReason ?? 'Not held');
 
           if (records.length > 0) foundExisting = true;
           const recordById = new Map(records.map((r) => [r.id, r]));
-
-          const studentDocs: StudentDocument[] = (
-            await Promise.all(enrollments.map((e) => getStudentById(e.studentId)))
-          ).filter((s): s is StudentDocument => s !== null);
-
-          const studentDocMap = new Map(studentDocs.map((s) => [s.id, s]));
 
           for (const enrollment of enrollments) {
             const s = studentDocMap.get(enrollment.studentId);
@@ -243,11 +282,8 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
           );
 
           for (const r of adhocRecords) {
-            let displayName = r.walkInName ?? 'Walk-in';
-            if (r.studentId) {
-              const stu = await getStudentById(r.studentId);
-              if (stu) displayName = stu.name;
-            }
+            const stu = r.studentId ? studentDocMap.get(r.studentId) : undefined;
+            const displayName = stu?.name ?? r.walkInName ?? 'Walk-in';
 
             allRows.push({
               key: `adhoc_${r.id}_${batch.id}`,
@@ -265,7 +301,7 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
                   : undefined,
             });
           }
-        }
+        });
 
         if (cancelled) return;
         setRows(allRows);
@@ -294,7 +330,7 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
     })();
 
     return () => { cancelled = true; };
-  }, [batchesForDay, sessionDate, dayOfWeek, reloadNonce]);
+  }, [batchKey, sessionDate, dayOfWeek, reloadNonce]);
 
   /** Rows for batches that are actually running today. */
   const liveRows = useMemo(() => rows.filter((r) => !notHeld.has(r.batchId)), [rows, notHeld]);
@@ -442,9 +478,10 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
         byBatch.set(r.batchId, arr);
       });
 
-      for (const [batchId, batchRows] of byBatch) {
+      // Each batch writes its own session + records, so they save in parallel.
+      await Promise.all(Array.from(byBatch).map(async ([batchId, batchRows]) => {
         const batch = batchesForDay.find((b) => b.id === batchId);
-        if (!batch) continue;
+        if (!batch) return;
 
         await getOrCreateSession(batchId, batch.centreId, sessionDate, userId);
         const marks: AttendanceMarkInput[] = batchRows.map((r) => ({
@@ -456,7 +493,7 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
           feeState: r.feeState,
         }));
         await saveAttendanceMarks(batchId, sessionDate, sessionDate, marks, userId);
-      }
+      }));
 
       toast.success(`Attendance saved for ${liveRows.length} students across ${byBatch.size} batch${byBatch.size !== 1 ? 'es' : ''}`);
       setSavedAt(new Date());
@@ -520,6 +557,13 @@ export function QuickAttendance({ batches, userId, onDone }: QuickAttendanceProp
           </p>
         </div>
       </div>
+
+      {closedHere.map(([id, { name, closure }]) => (
+        <p key={id} className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">
+          <strong>{name}</strong> is closed ({closure.reason.toLowerCase()}) until{' '}
+          {new Date(`${closure.to}T12:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })} — no attendance to mark there.
+        </p>
+      ))}
 
       {hasExisting && (
         <p className="text-xs text-yellow-600">

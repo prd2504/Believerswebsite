@@ -171,3 +171,27 @@ export interface AttendanceDailyDocument {
   generatedAt: string;
   sessions: AttendanceDailySession[];
 }
+
+// ── Centre closures ─────────────────────────────────────────────────────────
+
+/**
+ * A centre that is shut for a stretch (renovation, venue unavailable). While
+ * closed, no sessions are expected there: no registers, no reminders, and the
+ * nightly email says why instead of reporting it as missing.
+ */
+export interface CentreClosure {
+  centreCode: string;
+  from: IsoDate;
+  /** Inclusive. */
+  to: IsoDate;
+  reason: string;
+}
+
+export const CENTRE_CLOSURES: readonly CentreClosure[] = [
+  { centreCode: 'RUI', from: '2026-10-01', to: '2026-10-31', reason: 'Under renovation' },
+];
+
+export function centreClosureOn(centreCode: string | null | undefined, date: IsoDate): CentreClosure | null {
+  if (!centreCode) return null;
+  return CENTRE_CLOSURES.find((c) => c.centreCode === centreCode && date >= c.from && date <= c.to) ?? null;
+}

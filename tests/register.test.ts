@@ -93,3 +93,13 @@ describe('register punctuality', () => {
     expect(batchEndTime({ endTime: '', timeSlots: [] })).toBe('23:59');
   });
 });
+
+describe('centre closures', () => {
+  it('Ruia is closed for renovation through 31 October and open again on 1 November', async () => {
+    const { centreClosureOn } = await import('@bba/shared');
+    expect(centreClosureOn('RUI', '2026-10-17')?.reason).toBe('Under renovation');
+    expect(centreClosureOn('RUI', '2026-10-31')).not.toBeNull();
+    expect(centreClosureOn('RUI', '2026-11-01')).toBeNull();
+    expect(centreClosureOn('DAD', '2026-10-17')).toBeNull();
+  });
+});

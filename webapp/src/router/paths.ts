@@ -22,6 +22,7 @@ export const paths = {
     coaches: '/admin/coaches',
     roster: '/admin/roster',
     attendance: '/admin/attendance',
+    dataHealth: '/admin/data-health',
     payments: '/admin/payments',
     progress: '/admin/progress',
     sessionLogs: '/admin/session-logs',

@@ -24,6 +24,7 @@ import {
   AlertTriangle,
   BellRing,
   Settings,
+  ShieldCheck,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -53,6 +54,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: paths.admin.roster, label: 'Daily Roster', icon: <CalendarDays size={18} /> },
   { to: paths.admin.attendance, label: 'Attendance', icon: <ClipboardCheck size={18} /> },
   { to: paths.admin.payments, label: 'Payments', icon: <CreditCard size={18} /> },
+  { to: paths.admin.dataHealth, label: 'Data Health', icon: <ShieldCheck size={18} /> },
   { to: paths.admin.progress, label: 'Progress', icon: <TrendingUp size={18} /> },
   { to: paths.admin.sessionLogs, label: 'Session Logs', icon: <ClipboardList size={18} /> },
   { to: paths.admin.parentFeedback, label: 'Parent Feedback', icon: <MessageSquare size={18} /> },

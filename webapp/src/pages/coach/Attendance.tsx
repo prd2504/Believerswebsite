@@ -150,6 +150,7 @@ export default function CoachAttendance() {
         {profile && (
           <QuickAttendance
             batches={visibleBatches}
+            centres={centres}
             userId={profile.id}
             onDone={() => load(true)}
           />

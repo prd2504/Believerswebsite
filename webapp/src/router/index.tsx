@@ -38,6 +38,7 @@ const AdminStudents = lazy(() => import('@/pages/admin/Students'));
 const AdminCoaches = lazy(() => import('@/pages/admin/Coaches'));
 const AdminRoster = lazy(() => import('@/pages/admin/Roster'));
 const AdminAttendance = lazy(() => import('@/pages/admin/Attendance'));
+const AdminDataHealth = lazy(() => import('@/pages/admin/DataHealth'));
 const AdminPayments = lazy(() => import('@/pages/admin/Payments'));
 const AdminProgress = lazy(() => import('@/pages/admin/Progress'));
 const AdminSessionLogs = lazy(() => import('@/pages/admin/SessionLogs'));
@@ -132,6 +133,7 @@ const routes: RouteObject[] = [
               { path: '/admin/coaches', element: <Lazy><AdminCoaches /></Lazy> },
               { path: '/admin/roster', element: <Lazy><AdminRoster /></Lazy> },
               { path: '/admin/attendance', element: <Lazy><AdminAttendance /></Lazy> },
+              { path: '/admin/data-health', element: <Lazy><AdminDataHealth /></Lazy> },
               { path: '/admin/payments', element: <Lazy><AdminPayments /></Lazy> },
               { path: '/admin/progress', element: <Lazy><AdminProgress /></Lazy> },
               { path: '/admin/session-logs', element: <Lazy><AdminSessionLogs /></Lazy> },

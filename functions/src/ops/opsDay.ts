@@ -10,6 +10,8 @@
 import { db } from '../admin.js';
 import {
   batchEndTime,
+  centreClosureOn,
+  type CentreClosure,
   isExpectedOnRegister,
   registerFeeState,
   registerStatus,
@@ -22,6 +24,7 @@ export interface StudentLite {
   id: string;
   name: string;
   phone: string | null;
+  email: string | null;
   status: string;
   primaryCentreId: string;
   externalStudentId: string | null;
@@ -65,6 +68,8 @@ export interface DayContext {
   enrollments: EnrollmentLite[];
   people: Map<string, Person>;
   sessions: DaySession[];
+  /** Centres shut on this date (renovation etc.) — no sessions expected there. */
+  closures: Map<string, CentreClosure>;
 }
 
 export function weekdayOf(date: string): number {
@@ -108,6 +113,7 @@ export async function loadDay(date: string, nowMs: number, opts: { withRecords: 
       id: d.id,
       name: (s.name as string) ?? d.id,
       phone: (s.phone as string) ?? null,
+      email: (s.email as string) ?? null,
       status: (s.status as string) ?? 'ACTIVE',
       primaryCentreId: (s.primaryCentreId as string) ?? '',
       externalStudentId: (s.externalStudentId as string) ?? null,
@@ -138,7 +144,13 @@ export async function loadDay(date: string, nowMs: number, opts: { withRecords: 
     }] as const;
   }));
 
-  const ctx: DayContext = { date, nowMs, centres, students, enrollments, people, sessions: [] };
+  const closures = new Map<string, CentreClosure>();
+  centres.forEach((c) => {
+    const closure = centreClosureOn(c.code, date);
+    if (closure) closures.set(c.id, closure);
+  });
+
+  const ctx: DayContext = { date, nowMs, centres, students, enrollments, people, sessions: [], closures };
   const weekday = weekdayOf(date);
 
   const perBatch = await Promise.all(batchesSnap.docs.map(async (batchDoc) => {
@@ -148,7 +160,7 @@ export async function loadDay(date: string, nowMs: number, opts: { withRecords: 
     const expected = todays.filter((e) => isExpectedOnRegister(feeStateFor(ctx, e.studentId, batchDoc.id, date))).length;
     const sessionSnap = await db.doc(`attendance/${batchDoc.id}/sessions/${date}`).get();
     // Nobody paid → nobody should be there → not an expected session.
-    const runsToday = offered.includes(weekday) && expected > 0;
+    const runsToday = offered.includes(weekday) && expected > 0 && !closures.has((b.centreId as string) ?? '');
     if (!runsToday && !sessionSnap.exists) return null;
 
     const ses = sessionSnap.exists ? sessionSnap.data()! : null;

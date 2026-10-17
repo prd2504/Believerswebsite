@@ -106,7 +106,9 @@ async function buildStandingPass(studentId: string, token: string): Promise<Pass
   let upcoming: { month: string; months: number; end: string } | null = null;
   paySnap.docs.forEach((d) => {
     const p = d.data();
-    if (p.status === 'REFUNDED') return;
+    // Only money actually received buys entry — a PENDING bill from "Generate
+    // Fees" must not hand out a valid pass. Same rule as the register.
+    if (p.status !== 'PAID') return;
     const months = Number(p.coverageMonths) > 0 ? Number(p.coverageMonths) : 1;
     const start = String(p.month);
     const end = String(p.coverageEndMonth || coveredMonths(start, months).slice(-1)[0]);
@@ -426,7 +428,7 @@ export const bulkStandingPasses = onRequest(
       const best = new Map<string, { month: string; months: number; end: string }>();
       paySnap.docs.forEach((d) => {
         const p = d.data();
-        if (p.status === 'REFUNDED' || !p.studentId) return;
+        if (p.status !== 'PAID' || !p.studentId) return;
         const months = Number(p.coverageMonths) > 0 ? Number(p.coverageMonths) : 1;
         const end = String(p.coverageEndMonth || coveredMonths(String(p.month), months).slice(-1)[0]);
         if (!paymentCoversMonth(

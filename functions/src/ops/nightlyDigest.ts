@@ -179,6 +179,26 @@ function toDaily(s: DaySession): AttendanceDailySession {
   };
 }
 
+/** One line of counts pointing at Admin → Data Health, where the full lists live. */
+function dataToFixHtml(ctx: DayContext): string {
+  const month = ctx.date.slice(0, 7);
+  const active = Array.from(ctx.students.values()).filter((s) => s.status === 'ACTIVE');
+  const enrolled = new Set(ctx.enrollments.map((e) => e.studentId));
+  const digits = (p: string | null) => {
+    const d = (p ?? '').replace(/\D/g, '');
+    return d.length === 12 && d.startsWith('91') ? d.slice(2) : d;
+  };
+  const parts = [
+    [active.filter((s) => s.feeMonths.includes(month) && !enrolled.has(s.id)).length, 'paid but in no batch'],
+    [active.filter((s) => digits(s.phone).length !== 10).length, 'missing or wrong phone'],
+    [active.filter((s) => !s.email?.trim()).length, 'no email (no receipts or gate passes)'],
+  ].filter(([n]) => (n as number) > 0) as [number, string][];
+  if (!parts.length) return '';
+  return `<p style="${H3}">Data to fix</p>
+    <p style="margin:0;font-size:13px">${parts.map(([n, label]) => `<strong>${n}</strong> ${label}`).join(' · ')}
+    — <a href="${APP_URL}/admin/data-health" style="color:#E8593C">full lists in Data Health</a> (copy-paste ready for Jaydeep).</p>`;
+}
+
 // ── Email ───────────────────────────────────────────────────────────────────
 
 function inr(paise: number): string {
@@ -216,8 +236,10 @@ export function buildNightlyHtml(
   const late = ctx.sessions.filter((s) => s.status === 'LATE');
   const unpaidPresent = ctx.sessions.flatMap((s) => s.unpaidPresent);
   const streakCount = Array.from(streaks.values()).reduce((t, l) => t + l.length, 0);
-  const lapsedCount = Array.from(roll.values()).reduce((t, r) => t + r.lapsed.length, 0);
-  const renewCount = Array.from(roll.values()).reduce((t, r) => t + r.renewalPending.length, 0);
+  // A closed centre's roll is reported in its block but doesn't raise alarms.
+  const openRolls = Array.from(roll.entries()).filter(([cid]) => !ctx.closures.has(cid)).map(([, r]) => r);
+  const lapsedCount = openRolls.reduce((t, r) => t + r.lapsed.length, 0);
+  const renewCount = openRolls.reduce((t, r) => t + r.renewalPending.length, 0);
   const present = ctx.sessions.reduce((t, s) => t + s.present, 0);
   const expected = ctx.sessions.filter((s) => s.status !== 'NOT_HELD').reduce((t, s) => t + s.expected, 0);
   const feesToday = Array.from(fees.values()).reduce((t, f) => t + f.todayPaise, 0);
@@ -233,6 +255,7 @@ export function buildNightlyHtml(
     ...ctx.sessions.map((s) => s.centreId),
     ...roll.keys(),
     ...fees.keys(),
+    ...ctx.closures.keys(),
   ])).filter((id) => ctx.centres.has(id))
     .sort((a, b) => (ctx.centres.get(a)!.name).localeCompare(ctx.centres.get(b)!.name));
 
@@ -242,6 +265,7 @@ export function buildNightlyHtml(
     const r = roll.get(cid) ?? { paid: [], renewalPending: [], lapsed: [], newJoiners: [] };
     const f = fees.get(cid);
     const st = streaks.get(cid) ?? [];
+    const closure = ctx.closures.get(cid);
 
     const sessionRows = sessions.map((s) => {
       const [label, colour] = STATUS_BADGE[s.status] ?? ['?', '#64748b'];
@@ -271,8 +295,11 @@ export function buildNightlyHtml(
         ${f ? ` · ${inr(f.monthPaise)} collected this month` : ''}
       </p>
 
+      ${closure ? `<p style="margin:12px 0 0;padding:10px 12px;background:#f1f5f9;border-radius:8px;font-size:13px;color:#334155">
+        <strong>Closed — ${esc(closure.reason)}</strong> until ${esc(new Date(`${closure.to}T12:00:00+05:30`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }))}.
+        No sessions or registers are expected here, so none are reported as missing.</p>` : ''}
       ${sessions.length ? `<p style="${H3}">Registers today</p>
-      <table style="width:100%;border-collapse:collapse">${sessionRows}</table>` : `<p style="${H3}">No sessions scheduled today</p>`}
+      <table style="width:100%;border-collapse:collapse">${sessionRows}</table>` : closure ? '' : `<p style="${H3}">No sessions scheduled today</p>`}
 
       ${unpaid.length ? `<p style="${H3};color:#b91c1c">Trained without a fee for ${formatMonthLabel(month)}</p><p style="margin:0;font-size:13px">${unpaid.join(', ')}</p>` : ''}
       ${trials.length ? `<p style="${H3}">Trials — follow up</p><p style="margin:0;font-size:13px">${trials.join(' · ')}</p>` : ''}
@@ -311,6 +338,7 @@ export function buildNightlyHtml(
   </div>
   <div style="padding:18px 22px">
     ${centreBlocks || '<p>No activity recorded.</p>'}
+    ${dataToFixHtml(ctx)}
     ${coaches.length ? `<p style="${H3}">Coach punctuality — ${formatMonthLabel(month)} to date</p>
     <table style="width:100%;border-collapse:collapse">
       <tr><th style="${TD};text-align:left">Coach</th><th style="${TD};text-align:right">On time</th><th style="${TD};text-align:right">Taken</th><th style="${TD};text-align:right">Late</th><th style="${TD};text-align:right">Missing</th></tr>

@@ -74,16 +74,14 @@ export default function AttendancePage() {
       setBatches(bData);
       setCentres(cData);
       setStudents(sData);
-      if (bData.length > 0 && !historyBatchId) {
-        setHistoryBatchId(bData[0].id);
-      }
+      if (bData.length > 0) setHistoryBatchId((id) => id || bData[0].id);
     } catch (err) {
       console.error(err);
       toast.error('Failed to load data');
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [historyBatchId]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -200,6 +198,7 @@ export default function AttendancePage() {
           </p>
           <QuickAttendance
             batches={activeBatches}
+            centres={centres}
             userId={profile.id}
             onDone={() => load(true)}
           />

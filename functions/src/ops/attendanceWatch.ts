@@ -14,6 +14,7 @@ import { logger } from 'firebase-functions';
 import { db } from '../admin.js';
 import { sendMail } from '../fees/mailer.js';
 import {
+  batchEndTime,
   istNow,
   istWallClockMs,
   REGISTER_REMINDER_AFTER_MINUTES,
@@ -53,6 +54,20 @@ function wrap(title: string, body: string): string {
 export async function runAttendanceWatch(nowMs: number): Promise<{ reminded: number; escalated: number }> {
   const { date, time } = istNow(new Date(nowMs));
   if (time < '06:00' || time > '22:45') return { reminded: 0, escalated: 0 };
+
+  // Cheap gate first: only do the full read when some batch running today
+  // ended inside the window where a reminder or escalation could be due.
+  // Most half-hour runs fall outside every window and stop here (~25 reads).
+  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+  const batchesSnap = await db.collection('batches').where('status', '==', 'ACTIVE').get();
+  const windowMs = (REGISTER_ESCALATE_AFTER_MINUTES + 60) * 60_000;
+  const anyDue = batchesSnap.docs.some((d) => {
+    const b = d.data();
+    if (!Array.isArray(b.offeredDays) || !b.offeredDays.includes(weekday)) return false;
+    const sinceEnd = nowMs - istWallClockMs(date, batchEndTime(b));
+    return sinceEnd >= REGISTER_REMINDER_AFTER_MINUTES * 60_000 && sinceEnd <= windowMs;
+  });
+  if (!anyDue) return { reminded: 0, escalated: 0 };
 
   const ctx = await loadDay(date, nowMs, { withRecords: false });
   const overdue = ctx.sessions.filter((s) =>

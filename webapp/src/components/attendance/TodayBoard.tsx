@@ -19,6 +19,7 @@ import { getAllCoaches } from '@/services/userService';
 import {
   COLLECTIONS,
   batchEndTime,
+  centreClosureOn,
   formatMonthLabel,
   isExpectedOnRegister,
   istNow,
@@ -109,7 +110,9 @@ export function TodayBoard({
           studentById.get(e.studentId)?.status === 'ACTIVE');
         const expected = todays.filter((e) => isExpectedOnRegister(stateOf(e, e.studentId))).length;
         const session = await getSession(batch.id, date).catch(() => null);
-        if (!(batch.offeredDays.includes(weekday as never) && expected > 0) && !session) return null;
+        const centre = centres.find((c) => c.id === batch.centreId);
+        const closed = !!centreClosureOn(centre?.centreCode, date);
+        if (!(batch.offeredDays.includes(weekday as never) && expected > 0 && !closed) && !session) return null;
 
         const endTime = batchEndTime(batch);
         const takenAt = session?.firstTakenAt ?? session?.endedAt ?? null;
@@ -147,7 +150,7 @@ export function TodayBoard({
     } finally {
       setLoading(false);
     }
-  }, [date, batches, studentById]);
+  }, [date, batches, centres, studentById]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -221,6 +224,17 @@ export function TodayBoard({
           Expected = paid for {formatMonthLabel(date.slice(0, 7))}, last month&apos;s payers until the 7th, and new joiners.
         </span>
       </p>
+
+      {centres
+        .filter((c) => (!centreFilter || c.id === centreFilter) && centreClosureOn(c.centreCode, date))
+        .map((c) => {
+          const cl = centreClosureOn(c.centreCode, date)!;
+          return (
+            <p key={c.id} className="rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-700">
+              <strong>{c.name}</strong> — closed ({cl.reason.toLowerCase()}) until {new Date(`${cl.to}T12:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })}. No registers expected.
+            </p>
+          );
+        })}
 
       {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
