@@ -25,6 +25,7 @@ import {
   paymentCoverage,
   monthRank,
   formatMonthLabel,
+  isFeeExemptCentre,
   feeAttendanceReportId,
   type FeeAttendanceRow,
 } from '@bba/shared';
@@ -143,6 +144,8 @@ export async function buildReports(yearMonth: string): Promise<BuiltReport[]> {
 
   return centresSnap.docs.map((centreDoc) => {
     const centre = centreDoc.data();
+    // Fees here are paid to the venue (Bandra Gymkhana); attending is proof of payment.
+    const feeExempt = isFeeExemptCentre(centre.centreCode as string);
     const rows: FeeAttendanceRow[] = [];
 
     attendance.forEach((sessions, studentId) => {
@@ -160,9 +163,9 @@ export async function buildReports(yearMonth: string): Promise<BuiltReport[]> {
         phone: s.phone ?? null,
         batchName: (batch?.name as string) ?? '—',
         sessionsAttended: sessions,
-        isPaid: !!cov,
-        coveredThrough: cov?.end ?? null,
-        billingCycle: cov?.cycle ?? null,
+        isPaid: feeExempt || !!cov,
+        coveredThrough: cov?.end ?? (feeExempt ? yearMonth : null),
+        billingCycle: cov?.cycle ?? (feeExempt ? 'PAID_TO_VENUE' : null),
         expectedFeePaise: (enrol?.monthlyFeePaise as number) ?? 0,
       });
     });
