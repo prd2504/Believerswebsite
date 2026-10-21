@@ -23,6 +23,7 @@ import {
   SESSION_NOT_HELD_REASONS,
   registerFeeState,
   isExpectedOnRegister,
+  isFeeExemptCentre,
   centreClosureOn,
   formatMonthLabel,
 } from '@bba/shared';
@@ -227,6 +228,7 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
 
           if (records.length > 0) foundExisting = true;
           const recordById = new Map(records.map((r) => [r.id, r]));
+          const feeExempt = isFeeExemptCentre(centres.find((c) => c.id === batch.centreId)?.centreCode);
 
           for (const enrollment of enrollments) {
             const s = studentDocMap.get(enrollment.studentId);
@@ -254,6 +256,7 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
                   enrolledOn: enrollment.startDate,
                   pausedMonths: enrollment.pausedMonths,
                   sessionDate,
+                  feeExempt,
                 })
               : 'PAID';
             if (!r && feeState === 'PAUSED') { dropped.push(`${s.name} (paused this month)`); continue; }

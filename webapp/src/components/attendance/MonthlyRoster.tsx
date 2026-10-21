@@ -13,7 +13,8 @@ import {
 } from '@/services/attendanceService';
 import { getEnrollmentsByBatch } from '@/services/enrollmentService';
 import { cn } from '@/lib/cn';
-import type { BatchDocument, StudentDocument, AttendanceRecord, SessionDocument } from '@bba/shared';
+import { isFeeExemptCentre } from '@bba/shared';
+import type { BatchDocument, CentreDocument, StudentDocument, AttendanceRecord, SessionDocument } from '@bba/shared';
 
 const STATUS_CELL: Record<string, { label: string; bg: string; text: string }> = {
   PRESENT: { label: 'P', bg: 'bg-green-100', text: 'text-green-700' },
@@ -25,10 +26,11 @@ const STATUS_CELL: Record<string, { label: string; bg: string; text: string }> =
 interface MonthlyRosterProps {
   batches: BatchDocument[];
   students: StudentDocument[];
+  centres?: CentreDocument[];
   centreFilter: string;
 }
 
-export function MonthlyRoster({ batches, students, centreFilter }: MonthlyRosterProps) {
+export function MonthlyRoster({ batches, students, centres = [], centreFilter }: MonthlyRosterProps) {
   const [batchId, setBatchId] = useState(batches[0]?.id ?? '');
   /**
    * Student ids with an ACTIVE enrolment in the selected batch.
@@ -162,11 +164,12 @@ export function MonthlyRoster({ batches, students, centreFilter }: MonthlyRoster
    * enrolled student who neither paid nor turned up isn't part of this
    * month — listing them fills the grid with absences that never happened.
    */
+  const feeExempt = isFeeExemptCentre(centres.find((c) => c.id === selectedBatch?.centreId)?.centreCode);
   const batchStudents = useMemo(() => enrolledStudents.filter((s) => {
-    if (!s.feeMonths || s.feeMonths.includes(month)) return true;
+    if (feeExempt || !s.feeMonths || s.feeMonths.includes(month)) return true;
     const row = grid.get(s.id);
     return !!row && Array.from(row.values()).some((st) => st === 'PRESENT' || st === 'LATE');
-  }), [enrolledStudents, grid, month]);
+  }), [enrolledStudents, grid, month, feeExempt]);
   const notThisMonth = enrolledStudents.length - batchStudents.length;
 
   // Summary stats per student

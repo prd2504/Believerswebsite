@@ -16,7 +16,7 @@ import { getAllBatches } from '@/services/batchService';
 import { getAllCentres } from '@/services/centreService';
 import { getAllCoaches } from '@/services/userService';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
-import { istNow } from '@bba/shared';
+import { istNow, isFeeExemptCentre } from '@bba/shared';
 import type {
   BatchDocument, CentreDocument, EnrollmentDocument, StudentDocument, UserDocument,
 } from '@bba/shared';
@@ -43,7 +43,8 @@ export default function DataHealthPage() {
   const centreName = (id: string) => centres.find((c) => c.id === id)?.name ?? '—';
 
   const checks = useMemo(() => {
-    const all = buildChecks({ students, enrollments, batches, coaches, month });
+    const feeExemptCentreIds = new Set(centres.filter((c) => isFeeExemptCentre(c.centreCode)).map((c) => c.id));
+    const all = buildChecks({ students, enrollments, batches, coaches, month, feeExemptCentreIds });
     return all.map((c) => ({
       ...c,
       items: (centreFilter ? c.items.filter((i) => i.centreId === centreFilter) : c.items)

@@ -24,6 +24,7 @@ import {
   isExpectedOnRegister,
   istNow,
   registerFeeState,
+  isFeeExemptCentre,
   registerStatus,
   type AttendanceDailyDocument,
   type BatchDocument,
@@ -98,8 +99,9 @@ export function TodayBoard({
       const stateOf = (e: EnrollmentDocument | undefined, studentId: string) => {
         const s = studentById.get(studentId);
         if (!s?.feeMonths) return 'PAID' as const;
+        const feeExempt = isFeeExemptCentre(centres.find((c) => c.id === e?.centreId)?.centreCode);
         return registerFeeState({
-          feeMonths: s.feeMonths, enrolledOn: e?.startDate, pausedMonths: e?.pausedMonths, sessionDate: date,
+          feeMonths: s.feeMonths, enrolledOn: e?.startDate, pausedMonths: e?.pausedMonths, sessionDate: date, feeExempt,
         });
       };
 

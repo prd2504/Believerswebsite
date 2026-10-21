@@ -209,6 +209,7 @@ export default function AttendancePage() {
         <div className="card">
           <AttendanceMarker
             batches={activeBatches}
+            centres={centres}
             centreId={centreFilter || centres[0]?.id || ''}
             userId={profile.id}
             onDone={() => load(true)}
@@ -220,6 +221,7 @@ export default function AttendancePage() {
         <div className="card">
           <MonthlyRoster
             batches={activeBatches}
+            centres={centres}
             students={students}
             centreFilter={centreFilter}
           />

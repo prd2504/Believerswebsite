@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
 import {
   type BatchDocument,
+  type CentreDocument,
   type StudentDocument,
   type AttendanceStatus,
   type AttendanceRecord,
@@ -24,6 +25,7 @@ import {
   type DayOfWeek,
   registerFeeState,
   isExpectedOnRegister,
+  isFeeExemptCentre,
   formatMonthLabel,
 } from '@bba/shared';
 import {
@@ -68,6 +70,7 @@ interface RowState {
 
 interface AttendanceMarkerProps {
   batches: BatchDocument[];
+  centres?: CentreDocument[];
   centreId: string;
   userId: string;
   onDone?: () => void;
@@ -87,7 +90,7 @@ function dayOfWeekFromIso(iso: string): DayOfWeek {
   return date.getUTCDay() as DayOfWeek;
 }
 
-export function AttendanceMarker({ batches, centreId, userId, onDone }: AttendanceMarkerProps) {
+export function AttendanceMarker({ batches, centres = [], centreId, userId, onDone }: AttendanceMarkerProps) {
   const [selectedBatchId, setSelectedBatchId] = useState(batches[0]?.id ?? '');
   const [sessionDate, setSessionDate] = useState(todayStr);
   const [rows, setRows] = useState<RowState[]>([]);
@@ -128,12 +131,14 @@ export function AttendanceMarker({ batches, centreId, userId, onDone }: Attendan
         // marked) are listed, so unpaid leavers aren't recorded absent daily.
         const enrolById = new Map(enrollments.map((e) => [e.studentId, e]));
         const hidden: string[] = [];
+        const batchCentreId = batches.find((b) => b.id === selectedBatchId)?.centreId;
+        const feeExempt = isFeeExemptCentre(centres.find((c) => c.id === batchCentreId)?.centreCode);
         const expectedDocs = studentDocs.filter((s) => {
           if (recordById.has(s.id)) return true;
           if (s.status !== 'ACTIVE') return false;
           const e = enrolById.get(s.id);
           const state = s.feeMonths
-            ? registerFeeState({ feeMonths: s.feeMonths, enrolledOn: e?.startDate, pausedMonths: e?.pausedMonths, sessionDate })
+            ? registerFeeState({ feeMonths: s.feeMonths, enrolledOn: e?.startDate, pausedMonths: e?.pausedMonths, sessionDate, feeExempt })
             : 'PAID';
           if (isExpectedOnRegister(state)) return true;
           if (state === 'UNPAID') hidden.push(s.name);

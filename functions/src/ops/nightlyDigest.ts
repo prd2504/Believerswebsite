@@ -26,6 +26,7 @@ import {
   formatMonthLabel,
   FEE_GRACE_DAY,
   NEW_JOINER_GRACE_DAYS,
+  isFeeExemptCentre,
   type AttendanceDailyDocument,
   type AttendanceDailySession,
 } from '@bba/shared';
@@ -67,7 +68,8 @@ export function rollByCentre(ctx: DayContext): Map<string, CentreRoll> {
     if (!s) continue;
     if (!out.has(e.centreId)) out.set(e.centreId, { paid: [], renewalPending: [], lapsed: [], newJoiners: [] });
     const roll = out.get(e.centreId)!;
-    if (s.feeMonths.includes(month)) roll.paid.push(s);
+    // Fees paid outside the app (Bandra Gymkhana): everyone enrolled counts as paid.
+    if (s.feeMonths.includes(month) || isFeeExemptCentre(ctx.centres.get(e.centreId)?.code)) roll.paid.push(s);
     else if (e.startDate && dayDiff(e.startDate, ctx.date) >= 0 && dayDiff(e.startDate, ctx.date) <= NEW_JOINER_GRACE_DAYS) roll.newJoiners.push(s);
     else if (s.feeMonths.includes(prev)) roll.renewalPending.push(s);
     else roll.lapsed.push(s);
@@ -96,7 +98,8 @@ async function absenceStreaks(ctx: DayContext): Promise<Map<string, { student: S
   const out = new Map<string, { student: StudentLite; lastPresent: string | null }[]>();
   byStudent.forEach((marks, sid) => {
     const s = ctx.students.get(sid);
-    if (!s || s.status !== 'ACTIVE' || !s.feeMonths.includes(month)) return;
+    if (!s || s.status !== 'ACTIVE') return;
+    if (!s.feeMonths.includes(month) && !isFeeExemptCentre(ctx.centres.get(s.primaryCentreId)?.code)) return;
     marks.sort((a, b) => b.date.localeCompare(a.date));
     if (marks.length < ABSENCE_STREAK || !marks.slice(0, ABSENCE_STREAK).every((m) => m.status === 'ABSENT')) return;
     const lastPresent = marks.find((m) => m.status === 'PRESENT' || m.status === 'LATE')?.date ?? null;

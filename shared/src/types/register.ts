@@ -47,11 +47,14 @@ export function registerFeeState(input: {
   enrolledOn: IsoDate | null | undefined;
   pausedMonths?: readonly YearMonth[] | null;
   sessionDate: IsoDate;
+  /** The student's centre collects fees outside the app (isFeeExemptCentre). */
+  feeExempt?: boolean;
 }): RegisterFeeState {
   const month = input.sessionDate.slice(0, 7);
   const months = input.feeMonths ?? [];
   if (months.includes(month)) return 'PAID';
   if (input.pausedMonths?.includes(month)) return 'PAUSED';
+  if (input.feeExempt) return 'PAID';
   if (input.enrolledOn) {
     const age = dayNumber(input.sessionDate) - dayNumber(input.enrolledOn);
     if (age >= 0 && age <= NEW_JOINER_GRACE_DAYS) return 'NEW';
@@ -194,4 +197,19 @@ export const CENTRE_CLOSURES: readonly CentreClosure[] = [
 export function centreClosureOn(centreCode: string | null | undefined, date: IsoDate): CentreClosure | null {
   if (!centreCode) return null;
   return CENTRE_CLOSURES.find((c) => c.centreCode === centreCode && date >= c.from && date <= c.to) ?? null;
+}
+
+// ── Centres that collect fees outside the app ───────────────────────────────
+
+/**
+ * Fees here never reach /payments, so "no payment on record" says nothing
+ * about whether a student has paid. Everyone enrolled is expected on the
+ * register, and no unpaid / renewal / lapsed alerts are raised for them.
+ */
+export const FEE_EXEMPT_CENTRES: readonly { centreCode: string; reason: string }[] = [
+  { centreCode: 'BAN', reason: 'Fees are paid quarterly, directly to Bandra Gymkhana — entry requires them' },
+];
+
+export function isFeeExemptCentre(centreCode: string | null | undefined): boolean {
+  return !!centreCode && FEE_EXEMPT_CENTRES.some((c) => c.centreCode === centreCode);
 }

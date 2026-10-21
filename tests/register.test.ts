@@ -103,3 +103,17 @@ describe('centre closures', () => {
     expect(centreClosureOn('DAD', '2026-10-17')).toBeNull();
   });
 });
+
+describe('Bandra Gymkhana — fees paid to the gymkhana, not through the app', () => {
+  it('every enrolled student is expected even with no payment on record', async () => {
+    const { isFeeExemptCentre, registerFeeState } = await import('@bba/shared');
+    expect(isFeeExemptCentre('BAN')).toBe(true);
+    expect(isFeeExemptCentre('DAD')).toBe(false);
+    expect(registerFeeState({ feeMonths: [], enrolledOn: '2025-06-01', sessionDate: '2026-10-21', feeExempt: true })).toBe('PAID');
+  });
+
+  it('a paused month still keeps them off', async () => {
+    const { registerFeeState } = await import('@bba/shared');
+    expect(registerFeeState({ feeMonths: [], enrolledOn: '2025-06-01', pausedMonths: ['2026-10'], sessionDate: '2026-10-21', feeExempt: true })).toBe('PAUSED');
+  });
+});

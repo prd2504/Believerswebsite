@@ -83,4 +83,14 @@ describe('data health', () => {
     });
     expect(out.duplicates).toHaveLength(2);
   });
+
+  it('never lists Bandra-style fee-exempt centres as lapsed', () => {
+    const out = buildChecks({
+      students: [student('1', { primaryCentreId: 'ban', feeMonths: [] })],
+      enrollments: [enrol('1', 'b1', { centreId: 'ban' })],
+      batches: [batch('b1', { centreId: 'ban' })],
+      coaches: [], month: '2026-10', feeExemptCentreIds: new Set(['ban']),
+    });
+    expect(out.find((c) => c.id === 'lapsed')!.items).toEqual([]);
+  });
 });

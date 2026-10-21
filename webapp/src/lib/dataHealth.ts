@@ -42,8 +42,11 @@ export function buildChecks(input: {
   batches: BatchDocument[];
   coaches: UserDocument[];
   month: string;
+  /** Centres whose fees are collected outside the app (no lapsed check there). */
+  feeExemptCentreIds?: ReadonlySet<string>;
 }): Check[] {
   const { students, enrollments, batches, coaches, month } = input;
+  const exempt = input.feeExemptCentreIds ?? new Set<string>();
   const active = students.filter((s) => s.status === 'ACTIVE');
   const batchById = new Map(batches.map((b) => [b.id, b]));
   const studentById = new Map(students.map((s) => [s.id, s]));
@@ -81,7 +84,7 @@ export function buildChecks(input: {
 
   const prev = addMonths(month, -1);
   const lapsed = active
-    .filter((s) => s.feeMonths && (enrolByStudent.get(s.id)?.length ?? 0) > 0
+    .filter((s) => s.feeMonths && !exempt.has(s.primaryCentreId) && (enrolByStudent.get(s.id)?.length ?? 0) > 0
       && !s.feeMonths.includes(month) && !s.feeMonths.includes(prev))
     .map((s) => item(s, s.feeCoveredThrough ? `Last paid ${formatMonthLabel(s.feeCoveredThrough)}` : 'Never paid'));
 

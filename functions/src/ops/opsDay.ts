@@ -13,6 +13,7 @@ import {
   centreClosureOn,
   type CentreClosure,
   isExpectedOnRegister,
+  isFeeExemptCentre,
   registerFeeState,
   registerStatus,
   type RegisterStatus,
@@ -78,7 +79,7 @@ export function weekdayOf(date: string): number {
 
 /** The fee state of a student in a batch on a date, from loaded data. */
 export function feeStateFor(
-  ctx: Pick<DayContext, 'students' | 'enrollments'>,
+  ctx: Pick<DayContext, 'students' | 'enrollments' | 'centres'>,
   studentId: string,
   batchId: string,
   date: string,
@@ -90,6 +91,7 @@ export function feeStateFor(
     enrolledOn: e?.startDate ?? null,
     pausedMonths: e?.pausedMonths ?? [],
     sessionDate: date,
+    feeExempt: isFeeExemptCentre(ctx.centres.get(e?.centreId ?? s?.primaryCentreId ?? '')?.code),
   });
 }
 
