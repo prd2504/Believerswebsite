@@ -15,8 +15,8 @@
     "noUnusedLocals": false,
     "resolveJsonModule": true,
     "paths": {
-      "@bba/shared": ["../shared/src"],
-      "@bba/shared/*": ["../shared/src/*"]
+      "@bba/shared": ["../shared/dist"],
+      "@bba/shared/*": ["../shared/dist/*"]
     }
   },
   "include": ["src/**/*"],
