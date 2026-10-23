@@ -248,6 +248,7 @@ export function buildNightlyHtml(
   const feesToday = Array.from(fees.values()).reduce((t, f) => t + f.todayPaise, 0);
 
   const actions: string[] = [];
+  if (ctx.idleBatches.length) actions.push(`<strong>${ctx.idleBatches.length}</strong> batch${ctx.idleBatches.length === 1 ? '' : 'es'} scheduled today had nobody on the register — see the reason under each centre`);
   if (missing.length) actions.push(`<strong>${missing.length}</strong> register${missing.length === 1 ? '' : 's'} never taken`);
   if (unpaidPresent.length) actions.push(`<strong>${unpaidPresent.length}</strong> trained without a fee for ${formatMonthLabel(month)}`);
   if (streakCount) actions.push(`<strong>${streakCount}</strong> paid student${streakCount === 1 ? '' : 's'} absent ${ABSENCE_STREAK}+ sessions in a row`);
@@ -259,6 +260,7 @@ export function buildNightlyHtml(
     ...roll.keys(),
     ...fees.keys(),
     ...ctx.closures.keys(),
+    ...ctx.idleBatches.map((b) => b.centreId),
   ])).filter((id) => ctx.centres.has(id))
     .sort((a, b) => (ctx.centres.get(a)!.name).localeCompare(ctx.centres.get(b)!.name));
 
@@ -302,7 +304,21 @@ export function buildNightlyHtml(
         <strong>Closed — ${esc(closure.reason)}</strong> until ${esc(new Date(`${closure.to}T12:00:00+05:30`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' }))}.
         No sessions or registers are expected here, so none are reported as missing.</p>` : ''}
       ${sessions.length ? `<p style="${H3}">Registers today</p>
-      <table style="width:100%;border-collapse:collapse">${sessionRows}</table>` : closure ? '' : `<p style="${H3}">No sessions scheduled today</p>`}
+      <table style="width:100%;border-collapse:collapse">${sessionRows}</table>` : ''}
+      ${(() => {
+        if (closure) return '';
+        const idle = ctx.idleBatches.filter((b) => b.centreId === cid);
+        if (idle.length) {
+          return `<p style="${H3};color:#b45309">Scheduled today, but nobody on the register</p>
+          <table style="width:100%;border-collapse:collapse">${idle.map((b) => `<tr>
+            <td style="${TD}">${esc(b.batchName)}</td>
+            <td style="${TD};color:#9a3412">${esc(b.reason)} — fix in Admin → Roster</td></tr>`).join('')}</table>`;
+        }
+        if (sessions.length) return '';
+        return (ctx.activeBatchesByCentre.get(cid) ?? 0) === 0
+          ? `<p style="${H3};color:#b45309">No active batches are set up for this centre — create them in Admin → Batches</p>`
+          : `<p style="${H3}">No batch here runs on this day of the week</p>`;
+      })()}
 
       ${unpaid.length ? `<p style="${H3};color:#b91c1c">Trained without a fee for ${formatMonthLabel(month)}</p><p style="margin:0;font-size:13px">${unpaid.join(', ')}</p>` : ''}
       ${trials.length ? `<p style="${H3}">Trials — follow up</p><p style="margin:0;font-size:13px">${trials.join(' · ')}</p>` : ''}

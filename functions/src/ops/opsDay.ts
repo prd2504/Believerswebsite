@@ -71,6 +71,13 @@ export interface DayContext {
   sessions: DaySession[];
   /** Centres shut on this date (renovation etc.) — no sessions expected there. */
   closures: Map<string, CentreClosure>;
+  /**
+   * Active batches that run on this weekday but are not on today's list, and
+   * why — so "no sessions" in a report always comes with a reason to fix.
+   */
+  idleBatches: { batchId: string; batchName: string; centreId: string; reason: string }[];
+  /** centreId → number of ACTIVE batches (0 means nothing is set up there). */
+  activeBatchesByCentre: Map<string, number>;
 }
 
 export function weekdayOf(date: string): number {
@@ -152,7 +159,17 @@ export async function loadDay(date: string, nowMs: number, opts: { withRecords: 
     if (closure) closures.set(c.id, closure);
   });
 
-  const ctx: DayContext = { date, nowMs, centres, students, enrollments, people, sessions: [], closures };
+  const activeBatchesByCentre = new Map<string, number>();
+  batchesSnap.docs.forEach((d) => {
+    const cid = (d.data().centreId as string) ?? '';
+    activeBatchesByCentre.set(cid, (activeBatchesByCentre.get(cid) ?? 0) + 1);
+  });
+
+  const ctx: DayContext = {
+    date, nowMs, centres, students, enrollments, people, sessions: [], closures,
+    idleBatches: [], activeBatchesByCentre,
+  };
+  const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const weekday = weekdayOf(date);
 
   const perBatch = await Promise.all(batchesSnap.docs.map(async (batchDoc) => {
@@ -163,7 +180,19 @@ export async function loadDay(date: string, nowMs: number, opts: { withRecords: 
     const sessionSnap = await db.doc(`attendance/${batchDoc.id}/sessions/${date}`).get();
     // Nobody paid → nobody should be there → not an expected session.
     const runsToday = offered.includes(weekday) && expected > 0 && !closures.has((b.centreId as string) ?? '');
-    if (!runsToday && !sessionSnap.exists) return null;
+    if (!runsToday && !sessionSnap.exists) {
+      const centreId = (b.centreId as string) ?? '';
+      if (offered.includes(weekday) && !closures.has(centreId)) {
+        const inBatch = enrollments.filter((e) => e.batchId === batchDoc.id).length;
+        const reason = inBatch === 0
+          ? 'No active students are enrolled in this batch'
+          : todays.length === 0
+            ? `${inBatch} enrolled, but none has ${DAY_NAMES[weekday]} among their days`
+            : `All ${todays.length} enrolled for ${DAY_NAMES[weekday]} are unpaid or paused for ${date.slice(0, 7)}`;
+        ctx.idleBatches.push({ batchId: batchDoc.id, batchName: (b.name as string) ?? batchDoc.id, centreId, reason });
+      }
+      return null;
+    }
 
     const ses = sessionSnap.exists ? sessionSnap.data()! : null;
     const endTime = batchEndTime(b);
