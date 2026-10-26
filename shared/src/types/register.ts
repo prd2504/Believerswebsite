@@ -191,7 +191,8 @@ export interface CentreClosure {
 }
 
 export const CENTRE_CLOSURES: readonly CentreClosure[] = [
-  { centreCode: 'RUI', from: '2026-10-01', to: '2026-10-31', reason: 'Under renovation' },
+  // Courts shut 12 Oct; renovation overran, reopening 15 Nov.
+  { centreCode: 'RUI', from: '2026-10-12', to: '2026-11-14', reason: 'Under renovation' },
 ];
 
 export function centreClosureOn(centreCode: string | null | undefined, date: IsoDate): CentreClosure | null {
