@@ -51,7 +51,10 @@ function fromFirestore(id: string, data: DocumentData): EnrollmentDocument {
     centreId: data.centreId ?? '',
     daysPerWeek: data.daysPerWeek ?? 0,
     monthlyFeePaise: data.monthlyFeePaise ?? 0,
-    selectedDays: Array.isArray(data.selectedDays) ? (data.selectedDays as DayOfWeek[]) : [],
+    // Number(): days saved as text ("3") would otherwise never match a weekday.
+    selectedDays: Array.isArray(data.selectedDays)
+      ? (data.selectedDays as unknown[]).map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6) as DayOfWeek[]
+      : [],
     startDate: data.startDate ?? '',
     endDate: data.endDate ?? null,
     status: (data.status ?? 'ACTIVE') as EnrollmentStatus,
@@ -287,13 +290,35 @@ export async function getEnrollmentsForBatchOnDay(
   batchId: string,
   dayOfWeek: DayOfWeek,
 ): Promise<EnrollmentDocument[]> {
-  const q = query(
-    collection(db, COLLECTIONS.enrollments),
-    where('batchId', '==', batchId),
-    where('selectedDays', 'array-contains', dayOfWeek),
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => fromFirestore(d.id, d.data())).filter((e) => e.status === 'ACTIVE');
+  return (await getBatchRosterForDay(batchId, dayOfWeek)).today;
+}
+
+/**
+ * A batch's enrolments, split by whether they belong on this day's register.
+ *
+ * Read by batch and filtered here rather than with array-contains on
+ * selectedDays: that query silently misses days saved as text, and can't say
+ * why a register came up empty. A batch has tens of enrolments, so this is
+ * cheap — and an empty register now comes with its reason.
+ */
+export async function getBatchRosterForDay(batchId: string, dayOfWeek: DayOfWeek): Promise<{
+  /** ACTIVE and attending this weekday. */
+  today: EnrollmentDocument[];
+  /** ACTIVE but no days set — invisible on every register until fixed. */
+  noDays: EnrollmentDocument[];
+  /** ACTIVE, attending other weekdays only. */
+  otherDays: number;
+  ended: number;
+}> {
+  const snap = await getDocs(query(collection(db, COLLECTIONS.enrollments), where('batchId', '==', batchId)));
+  const all = snap.docs.map((d) => fromFirestore(d.id, d.data()));
+  const active = all.filter((e) => e.status === 'ACTIVE');
+  return {
+    today: active.filter((e) => e.selectedDays.includes(dayOfWeek)),
+    noDays: active.filter((e) => e.selectedDays.length === 0),
+    otherDays: active.filter((e) => e.selectedDays.length > 0 && !e.selectedDays.includes(dayOfWeek)).length,
+    ended: all.length - active.length,
+  };
 }
 
 /** Every ACTIVE enrolment — for views that reason across all batches at once. */

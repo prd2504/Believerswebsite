@@ -136,7 +136,10 @@ export async function loadDay(date: string, nowMs: number, opts: { withRecords: 
       studentId: (e.studentId as string) ?? '',
       batchId: (e.batchId as string) ?? '',
       centreId: (e.centreId as string) ?? '',
-      selectedDays: Array.isArray(e.selectedDays) ? (e.selectedDays as number[]) : [],
+      // Number(): days saved as text ("3") must still match the weekday.
+      selectedDays: Array.isArray(e.selectedDays)
+        ? (e.selectedDays as unknown[]).map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+        : [],
       startDate: (e.startDate as string) ?? null,
       pausedMonths: Array.isArray(e.pausedMonths) ? (e.pausedMonths as string[]) : [],
     };
@@ -183,11 +186,13 @@ export async function loadDay(date: string, nowMs: number, opts: { withRecords: 
     if (!runsToday && !sessionSnap.exists) {
       const centreId = (b.centreId as string) ?? '';
       if (offered.includes(weekday) && !closures.has(centreId)) {
-        const inBatch = enrollments.filter((e) => e.batchId === batchDoc.id).length;
+        const inBatchList = enrollments.filter((e) => e.batchId === batchDoc.id);
+        const inBatch = inBatchList.length;
+        const noDays = inBatchList.filter((e) => e.selectedDays.length === 0).length;
         const reason = inBatch === 0
           ? 'No active students are enrolled in this batch'
           : todays.length === 0
-            ? `${inBatch} enrolled, but none has ${DAY_NAMES[weekday]} among their days`
+            ? `${inBatch} enrolled, but none has ${DAY_NAMES[weekday]} among their days${noDays ? ` (${noDays} have no days set at all)` : ''}`
             : `All ${todays.length} enrolled for ${DAY_NAMES[weekday]} are unpaid or paused for ${date.slice(0, 7)}`;
         ctx.idleBatches.push({ batchId: batchDoc.id, batchName: (b.name as string) ?? batchDoc.id, centreId, reason });
       }

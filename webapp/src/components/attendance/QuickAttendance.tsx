@@ -35,7 +35,7 @@ import {
   setSessionNotHeld,
   type AttendanceMarkInput,
 } from '@/services/attendanceService';
-import { getEnrollmentsForBatchOnDay } from '@/services/enrollmentService';
+import { getBatchRosterForDay } from '@/services/enrollmentService';
 import { getStudentById, getAllStudents } from '@/services/studentService';
 
 const STATUS_OPTIONS: {
@@ -63,6 +63,8 @@ interface QuickRow {
   walkIn?: { name: string; phone: string; notes?: string };
   /** Fee standing for this session's month. Undefined for walk-ins / ad-hoc rows. */
   feeState?: RegisterFeeState;
+  /** Why an enrolled student is not on today's register. */
+  offReason?: 'UNPAID' | 'NO_DAYS';
 }
 
 const FEE_TAG: Partial<Record<RegisterFeeState, [string, string]>> = {
@@ -124,6 +126,8 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
   /** batchId → reason, for sessions marked as not held today. */
   const [notHeld, setNotHeld] = useState<Map<string, string>>(new Map());
   const [notHeldFor, setNotHeldFor] = useState<string | null>(null);
+  /** batchId → why nobody is on its register today (shown under the batch). */
+  const [emptyWhy, setEmptyWhy] = useState<Map<string, string>>(new Map());
 
   const dayOfWeek = useMemo(() => dayOfWeekFromIso(sessionDate), [sessionDate]);
 
@@ -202,7 +206,7 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
         // courtside data waits for ~3 round trips, not ~2 per batch.
         const perBatch = await Promise.race([
           Promise.all(batchesForDay.map((batch) => Promise.all([
-            getEnrollmentsForBatchOnDay(batch.id, dayOfWeek),
+            getBatchRosterForDay(batch.id, dayOfWeek),
             getAttendanceRecords(batch.id, sessionDate).catch(() => [] as AttendanceRecord[]),
             getSession(batch.id, sessionDate).catch(() => null),
           ]))),
@@ -210,8 +214,8 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
         ]);
 
         const studentIds = new Set<string>();
-        perBatch.forEach(([enrollments, records]) => {
-          enrollments.forEach((e) => studentIds.add(e.studentId));
+        perBatch.forEach(([roster, records]) => {
+          [...roster.today, ...roster.noDays].forEach((e) => studentIds.add(e.studentId));
           records.forEach((r) => { if (r.studentId) studentIds.add(r.studentId); });
         });
         const fetched = await Promise.race([
@@ -222,8 +226,38 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
           fetched.filter((s): s is StudentDocument => s !== null).map((s) => [s.id, s]),
         );
 
+        const whyMap = new Map<string, string>();
         batchesForDay.forEach((batch, i) => {
-          const [enrollments, records, session] = perBatch[i];
+          const [roster, records, session] = perBatch[i];
+          const enrollments = roster.today;
+          if (enrollments.length === 0 && records.length === 0) {
+            const parts = [
+              roster.otherDays ? `${roster.otherDays} enrolled on other days only` : '',
+              roster.noDays.length ? `${roster.noDays.length} with no days set` : '',
+              roster.ended ? `${roster.ended} ended` : '',
+            ].filter(Boolean);
+            whyMap.set(batch.id, `Nobody is enrolled for ${DAY_OF_WEEK_LABELS[dayOfWeek]}`
+              + (parts.length ? ` (${parts.join(', ')})` : ' — no active enrolments in this batch')
+              + '. Fix in Admin → Roster.');
+          }
+          // Active but no days set: never on any register by day, so surface
+          // them here rather than let them vanish.
+          roster.noDays.forEach((e) => {
+            const s = studentDocMap.get(e.studentId);
+            if (!s || s.status !== 'ACTIVE' || records.some((r) => r.id === s.id)) return;
+            offRows.push({
+              key: `${s.id}_${batch.id}`,
+              studentId: s.id,
+              batchId: batch.id,
+              batchName: batch.name,
+              attendeeType: 'REGULAR',
+              displayName: s.name,
+              status: 'PRESENT',
+              note: '',
+              timeSlot: `${batch.startTime}–${batch.endTime}`,
+              offReason: 'NO_DAYS',
+            });
+          });
           if (session?.cancelled) heldMap.set(batch.id, session.cancellationReason ?? 'Not held');
 
           if (records.length > 0) foundExisting = true;
@@ -276,7 +310,7 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
             // Already marked (an earlier save) stays put; otherwise only the
             // expected go on the register — the rest wait in "Not paid".
             if (r || isExpectedOnRegister(feeState)) allRows.push(row);
-            else offRows.push(row);
+            else offRows.push({ ...row, offReason: 'UNPAID' });
           }
 
           const regularStudentIds = new Set(enrollments.map((e) => e.studentId));
@@ -311,6 +345,7 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
         setOffRegister(offRows.sort((a, b) => a.displayName.localeCompare(b.displayName)));
         setShowOffRegister(false);
         setNotHeld(heldMap);
+        setEmptyWhy(whyMap);
         setHasExisting(foundExisting);
         setDroppedNames(dropped);
       } catch (err) {
@@ -361,7 +396,9 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
   function cameToday(row: QuickRow) {
     setOffRegister((prev) => prev.filter((r) => r.key !== row.key));
     setRows((prev) => [...prev, { ...row, status: 'PRESENT' }]);
-    toast.info(`${row.displayName} added — they'll be flagged as attending without a fee.`);
+    toast.info(row.offReason === 'NO_DAYS'
+      ? `${row.displayName} added. Set their days in Roster so they appear automatically.`
+      : `${row.displayName} added — they'll be flagged as attending without a fee.`);
   }
 
   async function markNotHeld(batch: BatchDocument, reason: string | null) {
@@ -590,10 +627,15 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
             const reason = notHeld.get(b.id);
             return (
               <div key={b.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-100 px-3 py-2">
-                <p className="min-w-0 text-xs">
-                  <span className="font-medium text-brand-secondary">{b.name}</span>
-                  <span className="ml-1 text-gray-400">{b.startTime}–{b.endTime}</span>
-                </p>
+                <div className="min-w-0 text-xs">
+                  <p>
+                    <span className="font-medium text-brand-secondary">{b.name}</span>
+                    <span className="ml-1 text-gray-400">{b.startTime}–{b.endTime}</span>
+                  </p>
+                  {!reason && emptyWhy.get(b.id) && (
+                    <p className="mt-0.5 text-amber-700">{emptyWhy.get(b.id)}</p>
+                  )}
+                </div>
                 {reason ? (
                   <span className="flex items-center gap-2">
                     <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">Not held · {reason}</span>
@@ -811,7 +853,7 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
         </div>
       )}
 
-      {/* Enrolled but not paid for this month — not expected, one tap away if they came */}
+      {/* Enrolled but not expected today (no fee, or no days set) — one tap away if they came */}
       {!loading && !loadError && liveOffRegister.length > 0 && (
         <div className="rounded-lg border border-dashed border-gray-300">
           <button
@@ -820,7 +862,7 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
             className="flex w-full items-center justify-between px-4 py-2.5 text-left"
           >
             <span className="text-sm font-medium text-gray-600">
-              Not paid for {formatMonthLabel(sessionDate.slice(0, 7))}
+              Not on today&apos;s register
               <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">{liveOffRegister.length}</span>
             </span>
             {showOffRegister ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
@@ -828,14 +870,18 @@ export function QuickAttendance({ batches, centres = [], userId, onDone }: Quick
           {showOffRegister && (
             <div className="space-y-1.5 border-t border-gray-100 p-3">
               <p className="text-xs text-gray-500">
-                Enrolled, but no fee for this month — so they are not expected and won&apos;t be marked absent.
-                If one of them came today, tap <strong>Came today</strong>. They&apos;ll be recorded and flagged to the centre manager.
+                Enrolled, but not expected today — so they won&apos;t be marked absent.
+                If one of them came, tap <strong>Came today</strong> and they&apos;ll be recorded.
               </p>
               {liveOffRegister.map((row) => (
                 <div key={row.key} className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2">
                   <p className="min-w-0 truncate text-sm text-gray-700">
                     {row.displayName}
-                    <span className="ml-1.5 text-xs text-gray-400">{row.timeSlot}</span>
+                    <span className={cn('ml-1.5 text-xs', row.offReason === 'NO_DAYS' ? 'text-amber-700' : 'text-gray-400')}>
+                      {row.offReason === 'NO_DAYS'
+                        ? 'Days not set in Roster'
+                        : `Not paid for ${formatMonthLabel(sessionDate.slice(0, 7))}`}
+                    </span>
                   </p>
                   <button
                     type="button"
