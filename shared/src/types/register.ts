@@ -14,7 +14,7 @@ import type { IsoDate, YearMonth } from './common.js';
 import { addMonths, coveredMonths, paymentCoverage } from './payment.js';
 
 /** Fees for a month are due by this day; until then last month's payers stay on the register. */
-export const FEE_GRACE_DAY = 7;
+export const FEE_GRACE_DAY = 5;
 /** A new enrolment stays on the register this many days while its first fee is collected. */
 export const NEW_JOINER_GRACE_DAYS = 14;
 

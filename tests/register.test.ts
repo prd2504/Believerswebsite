@@ -34,9 +34,9 @@ describe('registerFeeState', () => {
     expect(isExpectedOnRegister(s)).toBe(true);
   });
 
-  it("last month's payer stays on until the 7th, then drops off", () => {
-    expect(registerFeeState({ ...base, feeMonths: ['2026-09'], sessionDate: '2026-10-07' })).toBe('DUE');
-    expect(registerFeeState({ ...base, feeMonths: ['2026-09'], sessionDate: '2026-10-08' })).toBe('UNPAID');
+  it("last month's payer stays on until the 5th (fee due date), then drops off", () => {
+    expect(registerFeeState({ ...base, feeMonths: ['2026-09'], sessionDate: '2026-10-05' })).toBe('DUE');
+    expect(registerFeeState({ ...base, feeMonths: ['2026-09'], sessionDate: '2026-10-06' })).toBe('UNPAID');
   });
 
   it('someone unpaid for two months is not expected — the 16-absentees case', () => {

@@ -73,7 +73,7 @@ export function PendingFeesTab({ month }: { month: string }) {
           No report yet for {formatMonthLabel(month)}
         </p>
         <p className="mx-auto mt-1 max-w-md text-xs text-gray-400">
-          Reports are generated automatically on the 8th of each month, a day after fees
+          Reports are generated automatically on the 6th of each month, a day after fees
           are due. Nothing has been computed for this month yet.
         </p>
       </div>

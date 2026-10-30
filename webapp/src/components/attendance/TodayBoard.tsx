@@ -21,6 +21,7 @@ import {
   batchEndTime,
   centreClosureOn,
   formatMonthLabel,
+  FEE_GRACE_DAY,
   isExpectedOnRegister,
   istNow,
   registerFeeState,
@@ -223,7 +224,7 @@ export function TodayBoard({
       <p className="text-sm text-gray-600">
         <strong>{present}</strong> of <strong>{expected}</strong> expected students attended.
         <span className="ml-1 text-xs text-gray-400">
-          Expected = paid for {formatMonthLabel(date.slice(0, 7))}, last month&apos;s payers until the 7th, and new joiners.
+          Expected = paid for {formatMonthLabel(date.slice(0, 7))}, last month&apos;s payers until the {FEE_GRACE_DAY}th, and new joiners.
         </span>
       </p>
 

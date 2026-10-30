@@ -5,7 +5,7 @@
  * student could attend every session in a month with no payment on record and
  * nothing would ever surface it. This joins the two, per centre, per month.
  *
- * Runs on a schedule (8th of each month, after fees are due on the 7th) and
+ * Runs on a schedule (6th of each month, after fees are due on the 5th) and
  * can also be triggered manually. Each run stores one document per centre and
  * sends a single consolidated email.
  *
@@ -313,7 +313,7 @@ function previousMonth(d: Date): string {
 }
 
 /**
- * 8th of each month, 09:00 IST — a day after fees are due on the 7th, so the
+ * 6th of each month, 09:00 IST — a day after fees are due on the 5th, so the
  * list reflects who genuinely missed the deadline.
  *
  * Reports on the CURRENT month: that is the month people are attending and
@@ -321,7 +321,7 @@ function previousMonth(d: Date): string {
  * for catching up on an earlier period.
  */
 export const scheduledFeeAttendanceReport = onSchedule(
-  { schedule: '0 9 8 * *', timeZone: 'Asia/Kolkata', region: REGION, timeoutSeconds: 540 },
+  { schedule: '0 9 6 * *', timeZone: 'Asia/Kolkata', region: REGION, timeoutSeconds: 540 },
   async () => {
     const now = new Date();
     const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
