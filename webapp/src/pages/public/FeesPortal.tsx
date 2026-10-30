@@ -27,6 +27,7 @@ import {
   isBookingWindowOpen, getSlotPlanDays,
   BillingCycle, QUARTERLY_LAUNCH_MONTH, CYCLE_MONTHS,
   cycleAmountPaise, cycleSavingPaise, formatCoverage, monthRank, coveredMonths,
+  activeFeeNotices, istNow,
   type SlotPlanType, type SlotBookingDocument,
 } from '@bba/shared';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -711,6 +712,30 @@ export default function FeesPortal() {
       </div>
 
       <main className="mx-auto max-w-md px-4 pb-12">
+
+        {/* Dated centre notices (fees deadline, gate pass, holidays) — expire on their own */}
+        {(() => {
+          const code = step === 'centre' ? null : selectedCentre?.centreCode;
+          const notices = activeFeeNotices(code, istNow().date);
+          if (!notices.length) return null;
+          const nameOf = (c: string) => centres.find((x) => x.centreCode === c)?.name ?? c;
+          return (
+            <div className="mb-5 space-y-2">
+              {notices.map((n) => (
+                <div key={n.id} className={cn(
+                  'rounded-xl border p-3 text-sm',
+                  n.tone === 'warning' ? 'border-amber-400/40 bg-amber-400/10 text-amber-100' : 'border-sky-400/30 bg-sky-400/10 text-sky-100',
+                )}>
+                  <p className="font-semibold text-white">
+                    {n.title}
+                    {!code && <span className="ml-2 text-xs font-normal text-gray-300">{n.centreCodes.map(nameOf).join(' · ')}</span>}
+                  </p>
+                  <p className="mt-0.5 text-xs leading-relaxed">{n.body}</p>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* ── 1. Centre selection ──────────────────────────────────── */}
         {step === 'centre' && (
