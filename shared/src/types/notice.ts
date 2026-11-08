@@ -40,12 +40,12 @@ export const FEE_NOTICES: readonly FeeNotice[] = [
   },
   {
     id: 'diwali-2026',
-    centreCodes: ['DAD', 'RBI'],
-    from: '2026-10-30',
-    until: '2026-11-01',
+    centreCodes: ['DAD', 'RBI', 'BAN'],
+    from: '2026-11-02',
+    until: '2026-11-11',
     tone: 'info',
-    title: 'Diwali vacation',
-    body: 'Diwali vacation dates will be shared tomorrow.',
+    title: 'Diwali vacation: 8–11 November',
+    body: 'No classes from Sunday 8 to Wednesday 11 November. Classes resume on Thursday, 12 November. Happy Diwali!',
   },
 ];
 

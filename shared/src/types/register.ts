@@ -193,6 +193,10 @@ export interface CentreClosure {
 export const CENTRE_CLOSURES: readonly CentreClosure[] = [
   // Courts shut 12 Oct; renovation overran, reopening 15 Nov.
   { centreCode: 'RUI', from: '2026-10-12', to: '2026-11-14', reason: 'Under renovation' },
+  // Diwali vacation — classes resume Thursday 12 Nov.
+  { centreCode: 'DAD', from: '2026-11-08', to: '2026-11-11', reason: 'Diwali vacation' },
+  { centreCode: 'RBI', from: '2026-11-08', to: '2026-11-11', reason: 'Diwali vacation' },
+  { centreCode: 'BAN', from: '2026-11-08', to: '2026-11-11', reason: 'Diwali vacation' },
 ];
 
 export function centreClosureOn(centreCode: string | null | undefined, date: IsoDate): CentreClosure | null {

@@ -118,3 +118,15 @@ describe('Bandra Gymkhana — fees paid to the gymkhana, not through the app', (
     expect(registerFeeState({ feeMonths: [], enrolledOn: '2025-06-01', pausedMonths: ['2026-10'], sessionDate: '2026-10-21', feeExempt: true })).toBe('PAUSED');
   });
 });
+
+describe('Diwali vacation 2026', () => {
+  it('Dadar, RBI and Bandra are closed 8–11 Nov and open on Thursday 12 Nov', async () => {
+    const { centreClosureOn } = await import('@bba/shared');
+    for (const c of ['DAD', 'RBI', 'BAN']) {
+      expect(centreClosureOn(c, '2026-11-07')).toBeNull();
+      expect(centreClosureOn(c, '2026-11-08')?.reason).toBe('Diwali vacation');
+      expect(centreClosureOn(c, '2026-11-11')?.reason).toBe('Diwali vacation');
+      expect(centreClosureOn(c, '2026-11-12')).toBeNull();
+    }
+  });
+});
