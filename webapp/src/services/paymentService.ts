@@ -40,6 +40,7 @@ function fromFirestore(id: string, d: DocumentData): PaymentDocument {
     billingCycle: d.billingCycle ?? null,
     coverageMonths: d.coverageMonths ?? null,
     coverageEndMonth: d.coverageEndMonth ?? null,
+    cycleConfirmedMonthly: d.cycleConfirmedMonthly ?? false,
     baseAmountPaise: d.baseAmountPaise ?? 0,
     gstAmountPaise: d.gstAmountPaise ?? 0,
     totalAmountPaise: d.totalAmountPaise ?? 0,
@@ -141,6 +142,15 @@ export async function updatePayment(
 
 export async function deletePayment(paymentId: string): Promise<void> {
   await deleteDoc(doc(db, COLLECTIONS.payments, paymentId));
+}
+
+/** Clear the "looks quarterly" flag: this amount really is a monthly fee. */
+export async function confirmPaymentMonthly(paymentId: string, userId: string): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.payments, paymentId), {
+    cycleConfirmedMonthly: true,
+    updatedAt: serverTimestamp(),
+    updatedBy: userId,
+  });
 }
 
 export async function waivePayment(

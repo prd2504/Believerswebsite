@@ -216,6 +216,12 @@ export interface PaymentDocument extends BaseDocument {
    * cannot compute it at read time.
    */
   coverageEndMonth?: YearMonth | null;
+  /**
+   * An admin confirmed this is a monthly fee even though the amount matches a
+   * 3-month price (e.g. a student on a longer daily session). Stops the
+   * "looks quarterly" flag.
+   */
+  cycleConfirmedMonthly?: boolean | null;
 
   /** Base amount in paise — excludes GST. */
   baseAmountPaise: number;

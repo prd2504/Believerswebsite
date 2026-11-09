@@ -158,9 +158,11 @@ const routes: RouteObject[] = [
                 element: <RoleRoute allowed={[UserRole.SUPER_ADMIN]} />,
                 children: [
                   { path: '/admin/financials', element: <Lazy><AdminFinancials /></Lazy> },
-                  { path: '/admin/payroll', element: <Lazy><AdminPayroll /></Lazy> },
                 ],
               },
+              // Payroll: the manager can view it; only a super admin can change,
+              // approve or pay it (enforced by the Firestore rules).
+              { path: '/admin/payroll', element: <Lazy><AdminPayroll /></Lazy> },
             ],
           },
         ],

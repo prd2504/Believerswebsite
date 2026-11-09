@@ -7,6 +7,7 @@
 import { Outlet } from 'react-router-dom';
 import { TopBar } from './TopBar';
 import { BottomNav } from './BottomNav';
+import { PayrollNotice } from '@/components/coach/PayrollNotice';
 
 export function MobileLayout() {
   return (
@@ -16,6 +17,7 @@ export function MobileLayout() {
         <Outlet />
       </main>
       <BottomNav />
+      <PayrollNotice />
     </div>
   );
 }

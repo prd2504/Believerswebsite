@@ -44,6 +44,7 @@ import {
   markPaymentPaid,
   waivePayment,
   generateMonthlyFees,
+  confirmPaymentMonthly,
 } from '@/services/paymentService';
 import {
   getBookingsForMonth,
@@ -151,7 +152,11 @@ const STATUS_PILL: Record<string, string> = {
   REFUNDED: 'bg-gray-100 text-gray-500',
 };
 
-function CycleTag({ payment, suspect }: { payment: PaymentDocument; suspect: boolean }) {
+function CycleTag({ payment, suspect, onConfirmMonthly }: {
+  payment: PaymentDocument;
+  suspect: boolean;
+  onConfirmMonthly?: (p: PaymentDocument) => void;
+}) {
   const cov = paymentCoverage(payment);
   if (cov.months > 1) {
     return (
@@ -162,11 +167,23 @@ function CycleTag({ payment, suspect }: { payment: PaymentDocument; suspect: boo
   }
   if (suspect) {
     return (
-      <span
-        className="mt-1 block w-fit whitespace-nowrap rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
-        title="Amount matches a 3-month price, but the payment was saved as monthly — so it only covers this one month"
-      >
-        Saved as monthly · looks quarterly
+      <span className="mt-1 flex w-fit flex-wrap items-center gap-1.5">
+        <span
+          className="whitespace-nowrap rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+          title="Amount matches a 3-month price, but the payment was saved as monthly — so it only covers this one month"
+        >
+          Saved as monthly · looks quarterly
+        </span>
+        {onConfirmMonthly && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onConfirmMonthly(payment); }}
+            className="whitespace-nowrap rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-medium text-gray-600 hover:bg-gray-50"
+            title="This really is a monthly fee (e.g. a longer daily session) — stop flagging it"
+          >
+            It&apos;s monthly
+          </button>
+        )}
       </span>
     );
   }
@@ -1265,6 +1282,7 @@ export default function PaymentsPage() {
   // payment saved as monthly, which then only covers its first month.
   const looksQuarterly = useCallback((p: PaymentDocument) =>
     p.status === 'PAID' &&
+    !p.cycleConfirmedMonthly &&
     paymentCoverage(p).months === 1 &&
     monthRank(p.month) >= monthRank(QUARTERLY_LAUNCH_MONTH) &&
     !!quarterlyPricesByCentre.get(p.centreId)?.has(p.totalAmountPaise),
@@ -1415,6 +1433,19 @@ export default function PaymentsPage() {
     } catch (err) {
       console.error(err);
       toast.error('Failed to mark as paid');
+    }
+  };
+
+  const handleConfirmMonthly = async (payment: PaymentDocument) => {
+    if (!profile) return;
+    if (!confirm(`Confirm ${studentMap.get(payment.studentId) ?? 'this'} payment of ${formatINR(payment.totalAmountPaise, { withDecimals: false })} is a MONTHLY fee? It will stop being flagged.`)) return;
+    try {
+      await confirmPaymentMonthly(payment.id, profile.id);
+      setPayments((prev) => prev.map((p) => (p.id === payment.id ? { ...p, cycleConfirmedMonthly: true } : p)));
+      toast.success('Marked as a monthly fee');
+    } catch (err) {
+      console.error(err);
+      toast.error('Could not update the payment');
     }
   };
 
@@ -1870,7 +1901,7 @@ export default function PaymentsPage() {
                     payment={p}
                     studentName={studentMap.get(p.studentId)}
                     batchName={batchMap.get(p.batchId)}
-                    tag={<CycleTag payment={p} suspect={looksQuarterly(p)} />}
+                    tag={<CycleTag payment={p} suspect={looksQuarterly(p)} onConfirmMonthly={handleConfirmMonthly} />}
                     onEdit={carry ? undefined : handleEdit}
                     onDelete={carry ? undefined : handleDelete}
                     onMarkPaid={carry ? undefined : handleMarkPaid}
@@ -1916,7 +1947,7 @@ export default function PaymentsPage() {
                     <tr key={p.id} className="hover:bg-gray-50 transition">
                       <td className="px-4 py-2.5 font-medium text-brand-secondary max-w-[200px]">
                         <span className="block truncate">{studentMap.get(p.studentId) ?? p.studentId}</span>
-                        <CycleTag payment={p} suspect={looksQuarterly(p)} />
+                        <CycleTag payment={p} suspect={looksQuarterly(p)} onConfirmMonthly={handleConfirmMonthly} />
                       </td>
                       <td className="px-4 py-2.5 text-gray-500 max-w-[120px] truncate hidden md:table-cell">
                         {batchMap.get(p.batchId) ?? p.batchId}
@@ -1961,7 +1992,7 @@ export default function PaymentsPage() {
                   studentName={studentMap.get(p.studentId) ?? p.studentId}
                   batchName={batchMap.get(p.batchId) ?? p.batchId}
                   centreName={centreMap.get(p.centreId) ?? p.centreId}
-                  tag={<CycleTag payment={p} suspect={looksQuarterly(p)} />}
+                  tag={<CycleTag payment={p} suspect={looksQuarterly(p)} onConfirmMonthly={handleConfirmMonthly} />}
                   carryOver={isCarryOver(p)}
                   onMarkPaid={() => handleMarkPaid(p)}
                   onWaive={() => handleWaive(p)}

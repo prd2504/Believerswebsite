@@ -19,6 +19,7 @@ import {
   setDoc,
   updateDoc,
   writeBatch,
+  arrayUnion,
   serverTimestamp,
   query,
   where,
@@ -307,6 +308,8 @@ export async function saveAttendanceMarks(
     if (i + MAX_BATCH_OPS >= ops.length) {
       wb.update(sessionRef(batchId, sessionId), {
         ...firstTaken,
+        // Payroll credits whoever saved the register.
+        coachIds: arrayUnion(userId),
         cancelled: false,
         cancellationReason: null,
         endedAt: new Date().toISOString(),
@@ -322,6 +325,8 @@ export async function saveAttendanceMarks(
   if (ops.length === 0) {
     await updateDoc(sessionRef(batchId, sessionId), {
       ...firstTaken,
+      // Payroll credits whoever saved the register.
+      coachIds: arrayUnion(userId),
       endedAt: new Date().toISOString(),
       updatedAt: serverTimestamp(),
       updatedBy: userId,

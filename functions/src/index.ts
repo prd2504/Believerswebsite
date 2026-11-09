@@ -107,3 +107,5 @@ export { attendanceWatch } from './ops/attendanceWatch.js';
 export { nightlyOpsDigest, runOpsDigest } from './ops/nightlyDigest.js';
 // One-off fee credits (e.g. Ruia October carried to November); preview by default.
 export { applyFeeCredit } from './ops/feeCredit.js';
+// Payroll drafts generated from the registers coaches save in the app.
+export { scheduledPayroll, generatePayroll } from './payroll/autoPayroll.js';

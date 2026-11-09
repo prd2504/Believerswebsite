@@ -8,9 +8,11 @@ import {
   Trash2,
   Users,
   FileText,
+  RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
+import { auth } from '@/lib/firebase';
 import { getAllCentres } from '@/services/centreService';
 import { getAllCoaches } from '@/services/userService';
 import { getAllBatches } from '@/services/batchService';
@@ -51,6 +53,9 @@ const STATUS_BADGE: Record<PayrollRunStatus, string> = {
   PAID: 'bg-green-100 text-green-700',
 };
 
+const FN_BASE = import.meta.env.VITE_FUNCTIONS_BASE_URL
+  || `https://${import.meta.env.VITE_FUNCTIONS_REGION || 'asia-south1'}-${import.meta.env.VITE_FIREBASE_PROJECT_ID}.cloudfunctions.net`;
+
 function currentMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -71,6 +76,35 @@ export default function PayrollPage() {
   const [filterMonth, setFilterMonth] = useState(currentMonth);
   const [paymentRefInput, setPaymentRefInput] = useState('');
   const [payingRunId, setPayingRunId] = useState<string | null>(null);
+  /** Only a super admin changes payroll; the centre manager sees it read-only. */
+  const canEdit = profile?.role === 'SUPER_ADMIN';
+  const [generating, setGenerating] = useState(false);
+
+  async function handleGenerate() {
+    const user = auth.currentUser;
+    if (!user) { toast.error('Signed out — reload and sign in again.'); return; }
+    setGenerating(true);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`${FN_BASE}/generatePayroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ month: filterMonth }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      const skipped = (data.skipped ?? []) as { staff: string; reason: string }[];
+      toast.success(`Updated ${data.generated?.length ?? 0} payroll draft(s) from attendance`
+        + (skipped.length ? ` · skipped: ${skipped.map((x) => `${x.staff} (${x.reason})`).join('; ')}` : ''),
+        { duration: skipped.length ? 12_000 : 4_000 });
+      await load();
+    } catch (err) {
+      console.error(err);
+      toast.error(`Could not generate payroll: ${(err as Error).message}`);
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   const centreMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -353,19 +387,33 @@ export default function PayrollPage() {
           <h1 className="text-xl font-bold text-brand-secondary">Payroll</h1>
           <p className="text-sm text-gray-500">{staff.length} staff · {runs.length} payroll runs</p>
         </div>
-        <div className="flex gap-2">
-          {tab === 'staff' && (
-            <button onClick={() => setMode('create-staff')} className="btn-primary text-sm">
-              <Plus size={16} /> Add Staff
-            </button>
-          )}
-          {tab === 'runs' && (
-            <button onClick={() => setMode('create-run')} className="btn-primary text-sm">
-              <Plus size={16} /> New Run
-            </button>
-          )}
-        </div>
+        {canEdit && (
+          <div className="flex flex-wrap gap-2">
+            {tab === 'staff' && (
+              <button onClick={() => setMode('create-staff')} className="btn-primary text-sm">
+                <Plus size={16} /> Add Staff
+              </button>
+            )}
+            {tab === 'runs' && (
+              <>
+                <button onClick={handleGenerate} className="btn-secondary text-sm" disabled={generating}>
+                  <RefreshCw size={16} className={cn(generating && 'animate-spin')} /> Refresh from attendance
+                </button>
+                <button onClick={() => setMode('create-run')} className="btn-primary text-sm">
+                  <Plus size={16} /> New Run
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
+
+      <p className="mb-5 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800">
+        Payroll is generated automatically every night from the registers coaches save in the app — one
+        session for each register they save (sessions marked &ldquo;not held&rdquo; don&apos;t count).
+        Allowances and deductions you add to a draft are kept when it refreshes.
+        {!canEdit && ' You can view payroll; only a super admin can approve or pay it.'}
+      </p>
 
       {/* Tabs */}
       <div className="mb-5 flex gap-1 rounded-lg bg-gray-100 p-1">
@@ -421,7 +469,7 @@ export default function PayrollPage() {
             <EmptyState
               icon={<FileText size={48} />}
               title="No payroll runs"
-              description={`No payroll entries for ${filterMonth}. Click "New Run" to create one.`}
+              description={`No payroll entries for ${filterMonth} yet. Drafts appear automatically from saved registers each night.`}
             />
           ) : (
             <div className="space-y-3">
@@ -450,9 +498,18 @@ export default function PayrollPage() {
                       {run.notes && (
                         <p className="mt-1 text-xs text-gray-400 italic">{run.notes}</p>
                       )}
+                      {run.autoGenerated && (
+                        <p className="mt-1 text-xs text-sky-700">
+                          From attendance: {run.sessionsCount} register{run.sessionsCount === 1 ? '' : 's'} saved
+                          {run.sessionBreakdown && Object.keys(run.sessionBreakdown).length > 0 && (
+                            <> — {Object.entries(run.sessionBreakdown).map(([b, n]) => `${b}: ${n}`).join(' · ')}</>
+                          )}
+                          {run.generatedAt && <span className="text-gray-400"> · updated {new Date(run.generatedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</span>}
+                        </p>
+                      )}
                     </div>
                     <div className="flex shrink-0 gap-1.5">
-                      {run.status === 'DRAFT' && (
+                      {canEdit && run.status === 'DRAFT' && (
                         <>
                           <button
                             onClick={() => handleApprove(run)}
@@ -476,7 +533,10 @@ export default function PayrollPage() {
                           </button>
                         </>
                       )}
-                      {run.status === 'APPROVED' && (
+                      {!canEdit && run.status !== 'PAID' && (
+                        <span className="text-xs text-gray-500">{run.status === 'DRAFT' ? 'Draft' : 'Approved'}</span>
+                      )}
+                      {canEdit && run.status === 'APPROVED' && (
                         <>
                           {payingRunId === run.id ? (
                             <div className="flex items-center gap-2">
@@ -550,7 +610,7 @@ export default function PayrollPage() {
                       )}
                       {s.phone && <p className="text-xs text-gray-400">{s.phone}</p>}
                     </div>
-                    <div className="flex shrink-0 gap-1.5">
+                    {canEdit && <div className="flex shrink-0 gap-1.5">
                       <button
                         onClick={() => { setEditTarget(s); setMode('edit-staff'); }}
                         className="btn-secondary text-xs py-1.5"
@@ -563,7 +623,7 @@ export default function PayrollPage() {
                       >
                         <Trash2 size={13} />
                       </button>
-                    </div>
+                    </div>}
                   </div>
                 </div>
               ))}
