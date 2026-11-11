@@ -90,6 +90,8 @@ interface QuickAttendanceProps {
   batches: BatchDocument[];
   /** Used to leave out centres that are closed on the chosen date. */
   centres?: CentreDocument[];
+  /** Open on this date (YYYY-MM-DD) instead of today — e.g. a missed register. */
+  initialDate?: string;
   userId: string;
   onDone?: () => void;
 }
@@ -105,8 +107,9 @@ function dayOfWeekFromIso(iso: string): DayOfWeek {
   return date.getUTCDay() as DayOfWeek;
 }
 
-export function QuickAttendance({ batches, centres = [], userId, onDone }: QuickAttendanceProps) {
-  const [sessionDate, setSessionDate] = useState(todayStr);
+export function QuickAttendance({ batches, centres = [], initialDate, userId, onDone }: QuickAttendanceProps) {
+  const [sessionDate, setSessionDate] = useState(() =>
+    (initialDate && /^\d{4}-\d{2}-\d{2}$/.test(initialDate) ? initialDate : todayStr()));
   const [rows, setRows] = useState<QuickRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);

@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ClipboardCheck, Building2, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
@@ -22,6 +23,7 @@ const ALL = '__all__';
 
 export default function CoachAttendance() {
   const { profile } = useAuth();
+  const [searchParams] = useSearchParams();
   const [batches, setBatches] = useState<BatchDocument[]>([]);
   const [centres, setCentres] = useState<CentreDocument[]>([]);
   const [centreFilter, setCentreFilter] = useState<string>(ALL);
@@ -151,6 +153,7 @@ export default function CoachAttendance() {
           <QuickAttendance
             batches={visibleBatches}
             centres={centres}
+            initialDate={searchParams.get('date') ?? undefined}
             userId={profile.id}
             onDone={() => load(true)}
           />
