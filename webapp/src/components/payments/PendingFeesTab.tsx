@@ -172,6 +172,9 @@ export function PendingFeesTab({ month }: { month: string }) {
                           <tr key={x.studentId} className="hover:bg-gray-50">
                             <td className="px-3 py-2 font-medium text-brand-secondary">
                               {x.studentName}
+                              {x.phone && (
+                                <a href={`tel:${x.phone}`} className="block text-xs font-normal text-brand-primary lg:hidden">{x.phone}</a>
+                              )}
                               {x.externalStudentId && (
                                 <span className="ml-1 font-mono text-[10px] text-gray-400">{x.externalStudentId}</span>
                               )}

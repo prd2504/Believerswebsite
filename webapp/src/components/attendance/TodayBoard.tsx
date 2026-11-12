@@ -297,6 +297,7 @@ export function TodayBoard({
             Filled in nightly at 10:30 PM — nothing recorded for this month yet.
           </p>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-gray-500">
               <tr>
@@ -322,6 +323,7 @@ export function TodayBoard({
               })}
             </tbody>
           </table>
+          </div>
         )}
         <p className="px-4 pb-3 text-[11px] text-gray-400">On time = saved within an hour of the session ending. Sessions marked not held don&apos;t count.</p>
       </div>

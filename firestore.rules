@@ -171,12 +171,27 @@ service cloud.firestore {
 
     // ── /attendance/{batchId}/sessions/{sessionId}/records/{studentId} ───────────────────
     match /attendance/{batchId}/sessions/{sessionId} {
+      // A coach marks only the batches they are assigned to (the same list
+      // their app shows), and who-took-the-register is fixed once set — it
+      // is what payroll pays.
+      function coachesThisBatch() {
+        return isCoach() && uid() in get(/databases/$(database)/documents/batches/$(batchId)).data.get('coachIds', []);
+      }
+      function keepsTakenStamp() {
+        return !('firstTakenAt' in resource.data) || (
+          request.resource.data.get('firstTakenAt', null) == resource.data.firstTakenAt
+          && request.resource.data.get('takenBy', null) == resource.data.get('takenBy', null)
+        );
+      }
+
       allow read: if isAdminOrCoach() || isStudentOrParent();
-      allow write: if isAdminOrCoach();
+      allow create: if isAdminLike() || coachesThisBatch();
+      allow update: if isAdminLike() || (coachesThisBatch() && keepsTakenStamp());
+      allow delete: if isAdminLike();
 
       match /records/{recordId} {
         allow read: if isAdminOrCoach() || isStudentOrParent();
-        allow write: if isAdminOrCoach();
+        allow write: if isAdminLike() || coachesThisBatch();
       }
     }
 
