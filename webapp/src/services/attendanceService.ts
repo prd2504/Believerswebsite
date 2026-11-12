@@ -87,6 +87,8 @@ function sessionFromFirestore(id: string, data: DocumentData): SessionDocument {
     latePunchIn: data.latePunchIn ?? false,
     logStatus: data.logStatus ?? null,
     firstTakenAt: data.firstTakenAt ? toIso(data.firstTakenAt) : null,
+    takenBy: data.takenBy ?? null,
+    takenByRole: data.takenByRole ?? null,
     createdAt: toIso(data.createdAt),
     updatedAt: toIso(data.updatedAt),
     createdBy: data.createdBy ?? null,
@@ -263,9 +265,13 @@ export async function saveAttendanceMarks(
   );
   // firstTakenAt is what punctuality is judged on; endedAt moves on every edit.
   const sessionSnap = await getDoc(sessionRef(batchId, sessionId)).catch(() => null);
-  const firstTaken = sessionSnap?.exists() && sessionSnap.data().firstTakenAt
-    ? {}
-    : { firstTakenAt: new Date().toISOString() };
+  let firstTaken: Record<string, unknown> = {};
+  if (!(sessionSnap?.exists() && sessionSnap.data().firstTakenAt)) {
+    // Stamped once, on the first save: when it was taken, and by whom (with
+    // their role, so a register an admin saves is credited to the batch's coach).
+    const role = (await getDoc(doc(db, 'users', userId)).catch(() => null))?.data()?.role ?? null;
+    firstTaken = { firstTakenAt: new Date().toISOString(), takenBy: userId, takenByRole: role };
+  }
 
   // Record id strategy:
   //   - student-linked records: id = studentId (one per student per session)

@@ -230,6 +230,8 @@ export function buildNightlyHtml(
   streaks: Awaited<ReturnType<typeof absenceStreaks>>,
   fees: Map<string, FeeDay>,
   coaches: CoachTally[],
+  /** Extra "needs attention" lines (already HTML-safe), e.g. failed steps. */
+  extraActions: string[] = [],
 ): { subject: string; html: string } {
   const month = ctx.date.slice(0, 7);
   const dayOfMonth = Number(ctx.date.slice(8, 10));
@@ -247,7 +249,7 @@ export function buildNightlyHtml(
   const expected = ctx.sessions.filter((s) => s.status !== 'NOT_HELD').reduce((t, s) => t + s.expected, 0);
   const feesToday = Array.from(fees.values()).reduce((t, f) => t + f.todayPaise, 0);
 
-  const actions: string[] = [];
+  const actions: string[] = [...extraActions];
   if (ctx.idleBatches.length) actions.push(`<strong>${ctx.idleBatches.length}</strong> batch${ctx.idleBatches.length === 1 ? '' : 'es'} scheduled today had nobody on the register — see the reason under each centre`);
   if (missing.length) actions.push(`<strong>${missing.length}</strong> register${missing.length === 1 ? '' : 's'} never taken`);
   if (unpaidPresent.length) actions.push(`<strong>${unpaidPresent.length}</strong> trained without a fee for ${formatMonthLabel(month)}`);
@@ -375,30 +377,81 @@ export function buildNightlyHtml(
 
 // ── Run ─────────────────────────────────────────────────────────────────────
 
-export async function runNightlyDigest(date: string, opts: { send: boolean }) {
-  const feeSync = await syncAllFeeStanding();
-  const nowMs = Date.now();
-  const ctx = await loadDay(date, nowMs, { withRecords: true });
+/** Run one step; on failure record why and carry on with a fallback, so one bad step can't kill the email. */
+async function step<T>(name: string, problems: string[], fallback: T, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    logger.error(`[nightlyDigest] step failed: ${name}`, { err });
+    problems.push(`<strong>System:</strong> the "${esc(name)}" step failed tonight (${esc((err as Error)?.message ?? 'unknown error')}) — that part of this report may be incomplete`);
+    return fallback;
+  }
+}
 
+async function writeDaily(date: string, nowMs: number): Promise<{ ctx: DayContext; daily: AttendanceDailyDocument }> {
+  const ctx = await loadDay(date, nowMs, { withRecords: true });
   const daily: AttendanceDailyDocument = {
     date,
     generatedAt: new Date(nowMs).toISOString(),
     sessions: ctx.sessions.map(toDaily),
   };
   await db.collection('attendanceDaily').doc(date).set(daily);
+  return { ctx, daily };
+}
 
-  const [streaks, fees, coaches] = await Promise.all([
-    absenceStreaks(ctx),
-    feesByCentre(ctx),
-    coachMonthToDate(ctx, daily.sessions),
-  ]);
-  const { subject, html } = buildNightlyHtml(ctx, rollByCentre(ctx), streaks, fees, coaches);
+/** Payments whose rows never reached the Google Sheet (recorded by onFeePaymentCreated). */
+async function unsyncedPayments(ctx: DayContext): Promise<string[]> {
+  const snap = await db.collection('payments').where('sheetSync.status', '==', 'FAILED').get();
+  return snap.docs.map((d) => {
+    const p = d.data();
+    return `${ctx.students.get(p.studentId)?.name ?? 'Unknown'} (${p.externalInvoiceNo ?? d.id})`;
+  });
+}
+
+export async function runNightlyDigest(date: string, opts: { send: boolean }) {
+  const problems: string[] = [];
+  const nowMs = Date.now();
+
+  const feeSync = await step('fee status sync', problems, null, () => syncAllFeeStanding());
+
+  // Yesterday is rebuilt first: a register saved after last night's run was
+  // frozen as "missing", and coach punctuality reads that stored copy.
+  const yesterday = new Date(Date.parse(`${date}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+  await step("refresh of yesterday's registers", problems, null, async () => { await writeDaily(yesterday, nowMs); return null; });
+
+  let ctx: DayContext;
+  let daily: AttendanceDailyDocument;
+  try {
+    ({ ctx, daily } = await writeDaily(date, nowMs));
+  } catch (err) {
+    // Without the day's data there is no report — say so rather than go silent.
+    logger.error('[nightlyDigest] could not read the day', { err });
+    if (opts.send) {
+      await sendMail({
+        to: OWNER_RECIPIENTS.join(', '),
+        subject: `BBA nightly — ${date}: REPORT FAILED`,
+        html: `<p>Tonight's operations report could not be built: <strong>${esc((err as Error)?.message ?? 'unknown error')}</strong>.</p>
+               <p>Attendance and fees are unaffected; only this email failed. It will try again tomorrow night.</p>`,
+      }).catch(() => undefined);
+    }
+    throw err;
+  }
+
+  const streaks = await step('absence check', problems, new Map() as Awaited<ReturnType<typeof absenceStreaks>>, () => absenceStreaks(ctx));
+  const fees = await step('fees summary', problems, new Map<string, FeeDay>(), () => feesByCentre(ctx));
+  const coaches = await step('coach punctuality', problems, [] as CoachTally[], () => coachMonthToDate(ctx, daily.sessions));
+  const unsynced = await step('spreadsheet check', problems, [] as string[], () => unsyncedPayments(ctx));
+  if (unsynced.length) {
+    problems.unshift(`<strong>${unsynced.length}</strong> payment${unsynced.length === 1 ? '' : 's'} did not reach the Google Sheet — add ${unsynced.length === 1 ? 'it' : 'them'} by hand: ${unsynced.slice(0, 15).map(esc).join(', ')}${unsynced.length > 15 ? ' …' : ''}`);
+  }
+
+  const { subject, html } = buildNightlyHtml(ctx, rollByCentre(ctx), streaks, fees, coaches, problems);
 
   if (opts.send) {
     await sendMail({ to: OWNER_RECIPIENTS.join(', '), subject, html });
   }
-  logger.info('[nightlyDigest] done', { date, sessions: ctx.sessions.length, feeSync, sent: opts.send });
-  return { subject, sessions: ctx.sessions.length, feeSync, html: opts.send ? undefined : html };
+  logger.info('[nightlyDigest] done', { date, sessions: ctx.sessions.length, feeSync, problems: problems.length, sent: opts.send });
+  return { subject, sessions: ctx.sessions.length, feeSync, problems: problems.length, html: opts.send ? undefined : html };
 }
 
 export const nightlyOpsDigest = onSchedule(

@@ -1,9 +1,8 @@
 /**
  * Payroll generated from the attendance coaches mark in the app.
  *
- * A coach is credited with a session when they saved its register: the session
- * is not cancelled ("not held"), has been taken (firstTakenAt / endedAt), and
- * their user id is in the session's coachIds (every saver is added there).
+ * A session is credited to exactly one coach — see creditedCoachUid() — when it
+ * is not cancelled ("not held") and its register has been saved.
  *
  * Each ACTIVE staff member linked to an app account (staff.authUid) gets one
  * DRAFT run per month at payrollRuns/{staffId}_{month}. Regenerating updates
@@ -20,7 +19,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
 import { db } from '../admin.js';
 import { requireAdminLike } from '../http/requireAdmin.js';
-import { addMonths, autoPayrollRunId, computeAttendancePayroll, istNow } from '@bba/shared';
+import { addMonths, autoPayrollRunId, computeAttendancePayroll, creditedCoachUid, istNow } from '@bba/shared';
 
 const REGION = 'asia-south1';
 
@@ -53,12 +52,12 @@ export async function generatePayrollFromAttendance(month: string): Promise<Payr
       const d = s.data();
       if (d.cancelled) return;
       if (!d.firstTakenAt && !d.endedAt) return;
-      const coachIds: string[] = Array.isArray(d.coachIds) ? d.coachIds : [];
-      new Set(coachIds).forEach((uid) => {
-        if (!credited.has(uid)) credited.set(uid, new Map());
-        const perBatch = credited.get(uid)!;
-        perBatch.set(batchName, (perBatch.get(batchName) ?? 0) + 1);
-      });
+      const batchCoachIds: string[] = Array.isArray(b.data().coachIds) ? b.data().coachIds : [];
+      const uid = creditedCoachUid(d, batchCoachIds);
+      if (!uid) return;
+      if (!credited.has(uid)) credited.set(uid, new Map());
+      const perBatch = credited.get(uid)!;
+      perBatch.set(batchName, (perBatch.get(batchName) ?? 0) + 1);
     });
   }));
 

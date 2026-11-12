@@ -25,3 +25,19 @@ describe('payroll from attendance', () => {
     expect(autoPayrollRunId('stf1', '2026-11')).toBe('stf1_2026-11');
   });
 });
+
+describe('who a session is credited to', () => {
+  it('the coach who first saved the register, once', async () => {
+    const { creditedCoachUid } = await import('@bba/shared');
+    expect(creditedCoachUid({ takenBy: 'b', takenByRole: 'COACH', coachIds: ['a', 'b'] }, ['a'])).toBe('b');
+  });
+  it("a register saved by the manager goes to the batch's only coach", async () => {
+    const { creditedCoachUid } = await import('@bba/shared');
+    expect(creditedCoachUid({ takenBy: 'mgr', takenByRole: 'CENTRE_MANAGER' }, ['a'])).toBe('a');
+    expect(creditedCoachUid({ takenBy: 'mgr', takenByRole: 'CENTRE_MANAGER' }, ['a', 'b'])).toBeNull();
+  });
+  it('older sessions fall back to whoever opened them', async () => {
+    const { creditedCoachUid } = await import('@bba/shared');
+    expect(creditedCoachUid({ coachIds: ['a', 'b'] }, ['b'])).toBe('a');
+  });
+});

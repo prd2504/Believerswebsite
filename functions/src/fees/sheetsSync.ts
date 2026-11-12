@@ -319,7 +319,7 @@ async function appendAdminLog(
  * best-effort; a failure in one never blocks the others. Returns whether a new
  * Player_Directory student was created (so the caller can send a welcome email).
  */
-export async function syncPublicFeePayment(p: PublicFeeSyncPayload): Promise<{ isNewStudent: boolean }> {
+export async function syncPublicFeePayment(p: PublicFeeSyncPayload): Promise<{ isNewStudent: boolean; errors: string[] }> {
   const sheets = getSheets();
   const ts = formatISTDateTime(p.nowIso);
   // Display form for logs/emails; monthCell() is the text-forced form that
@@ -359,7 +359,7 @@ export async function syncPublicFeePayment(p: PublicFeeSyncPayload): Promise<{ i
     catch { /* nothing more we can do */ }
   }
 
-  return { isNewStudent: isNew };
+  return { isNewStudent: isNew, errors };
 }
 
 /**

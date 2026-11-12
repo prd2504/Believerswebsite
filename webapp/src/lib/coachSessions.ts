@@ -7,7 +7,7 @@
  * held, and the coach is among those who saved it.
  */
 
-import { batchEndTime, centreClosureOn, istWallClockMs, REGISTER_ON_TIME_MINUTES } from '@bba/shared';
+import { batchEndTime, centreClosureOn, creditedCoachUid, istWallClockMs, REGISTER_ON_TIME_MINUTES } from '@bba/shared';
 
 export interface CoachBatchLite {
   id: string;
@@ -17,6 +17,7 @@ export interface CoachBatchLite {
   startTime: string;
   endTime: string;
   timeSlots?: ReadonlyArray<{ endTime?: string | null }> | null;
+  coachIds?: readonly string[];
 }
 
 export interface CoachSessionLite {
@@ -27,6 +28,8 @@ export interface CoachSessionLite {
   firstTakenAt?: string | null;
   endedAt?: string | null;
   coachIds: readonly string[];
+  takenBy?: string | null;
+  takenByRole?: string | null;
 }
 
 export type TodayStatus = 'SAVED' | 'NOT_HELD' | 'DUE' | 'UPCOMING' | 'CLOSED';
@@ -76,7 +79,7 @@ export function summariseCoachMonth(input: {
       const endMs = istWallClockMs(date, end);
 
       if (s?.cancelled) out.notHeld++;
-      if (taken(s) && s!.coachIds.includes(uid)) {
+      if (taken(s) && creditedCoachUid(s!, b.coachIds ?? []) === uid) {
         n++;
         const at = Date.parse((s!.firstTakenAt ?? s!.endedAt)!);
         if ((at - endMs) / 60_000 <= REGISTER_ON_TIME_MINUTES) out.onTime++;

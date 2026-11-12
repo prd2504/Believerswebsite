@@ -103,6 +103,9 @@ export interface SessionDocument extends BaseDocument {
    * cannot answer "was it taken on time"; this never moves once set.
    */
   firstTakenAt?: IsoTimestamp | null;
+  /** Who first saved the register, and their role then — payroll credits this person. */
+  takenBy?: string | null;
+  takenByRole?: string | null;
 }
 
 /**

@@ -202,6 +202,7 @@ export const onFeePaymentCreated = onDocumentWritten(
 
     // ── Google Sheets sync (best-effort; never throws) ──
     let isNewStudent = false;
+    let syncErrors: string[] = [];
     try {
       const res = await syncPublicFeePayment({
         externalInvoiceNo: (after.externalInvoiceNo as string) ?? '',
@@ -227,12 +228,25 @@ export const onFeePaymentCreated = onDocumentWritten(
         lastStudentNo: (centreData.lastStudentNo as number) ?? null,
       });
       isNewStudent = res.isNewStudent;
+      syncErrors = res.errors;
       logger.info('[onFeePaymentCreated] Sheets sync complete', {
-        externalInvoiceNo: after.externalInvoiceNo, isNewStudent,
+        externalInvoiceNo: after.externalInvoiceNo, isNewStudent, errors: res.errors.length,
       });
     } catch (e: any) {
+      syncErrors = [`sync threw: ${e?.message ?? 'unknown error'}`];
       logger.warn('[onFeePaymentCreated] Sheets sync error', { error: e?.message });
     }
+    // Record the outcome ON the payment. The sheet's own admin_logs tab can't
+    // report a failure to write to the sheet; this is what the nightly email
+    // reads to say "these payments never reached the spreadsheet".
+    const missedLedger = syncErrors.some((e) => /^(Invoice_Log|Payments|sync threw)/.test(e));
+    await paymentRef.update({
+      sheetSync: {
+        status: missedLedger ? 'FAILED' : syncErrors.length ? 'PARTIAL' : 'OK',
+        errors: syncErrors.slice(0, 5).map((e) => e.slice(0, 200)),
+        at: new Date().toISOString(),
+      },
+    }).catch((e) => logger.warn('[onFeePaymentCreated] could not record sheetSync', { error: e?.message }));
 
     // ── Recipient email (student, then guardian's user) ──
     let recipientEmail = (student.email as string | null) ?? null;

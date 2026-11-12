@@ -99,3 +99,25 @@ export function computeAttendancePayroll(input: {
   const grossPayPaise = basicPaise + perSessionPayPaise + allowancesPaise;
   return { basicPaise, perSessionPayPaise, allowancesPaise, grossPayPaise, totalDeductionsPaise, netPayPaise: grossPayPaise - totalDeductionsPaise };
 }
+
+/**
+ * Who a session's pay goes to — exactly one person.
+ *
+ * The coach who FIRST saved the register (takenBy). If an admin or manager
+ * saved it on a coach's behalf, the batch's assigned coach, when there is
+ * exactly one. Sessions saved before takenBy existed fall back to whoever
+ * opened them. Crediting everyone in coachIds paid two coaches for one
+ * session whenever one opened and another saved or corrected it.
+ */
+export function creditedCoachUid(
+  session: { takenBy?: string | null; takenByRole?: string | null; coachIds?: readonly string[] | null },
+  batchCoachIds: readonly string[],
+): string | null {
+  if (session.takenBy) {
+    if (session.takenByRole && session.takenByRole !== 'COACH') {
+      return batchCoachIds.length === 1 ? batchCoachIds[0] : null;
+    }
+    return session.takenBy;
+  }
+  return session.coachIds?.[0] ?? null;
+}
