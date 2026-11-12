@@ -67,7 +67,7 @@ export function RenewalsTab({
     const nowRank = monthRank(currentMonth);
 
     payments
-      .filter((p) => p.status !== 'REFUNDED' && p.status !== 'WAIVED')
+      .filter((p) => p.status === 'PAID')
       .forEach((p) => {
         const cov = paymentCoverage(p);
         // Already-lapsed coverage isn't a renewal question, it's a collection

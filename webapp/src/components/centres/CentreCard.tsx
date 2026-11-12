@@ -29,7 +29,7 @@ export function CentreCard({ centre, onEdit, onDelete }: CentreCardProps) {
         >
           {centre.active ? 'Active' : 'Inactive'}
         </span>
-        <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="flex gap-1 transition-opacity lg:opacity-0 lg:group-hover:opacity-100">
           <button
             onClick={() => onEdit(centre)}
             className="btn-ghost p-1.5"

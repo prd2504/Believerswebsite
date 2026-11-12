@@ -63,7 +63,7 @@ export function StudentCard({ student, centreName, batchNames, onEdit, onDelete,
             {student.level}
           </span>
         </div>
-        <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="flex gap-1 transition-opacity lg:opacity-0 lg:group-hover:opacity-100">
           <button onClick={() => onEdit(student)} className="btn-ghost p-1.5" aria-label="Edit student">
             <Pencil size={14} />
           </button>

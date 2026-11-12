@@ -84,7 +84,7 @@ export default function BatchesPage() {
       const paidStudentIds = new Set<string>();
       paySnap.docs.forEach((d) => {
         const p = d.data();
-        if (p.status === 'REFUNDED') return;
+        if (p.status !== 'PAID') return;
         if (!p.studentId) return;
         if (!paymentCoversMonth(
           { month: p.month, coverageMonths: p.coverageMonths, coverageEndMonth: p.coverageEndMonth },

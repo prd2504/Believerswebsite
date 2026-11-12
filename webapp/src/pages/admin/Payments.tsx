@@ -358,6 +358,9 @@ function bookingSlotCount(bookings: SlotBookingDocument[], slot: string): number
 }
 
 function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; profile: { id: string } | null }) {
+  // Deleting a booking is super-admin only in the database rules; a manager
+  // tapping it would only ever see an error.
+  const canDelete = useAuth().profile?.role === 'SUPER_ADMIN';
   const [bookings, setBookings] = useState<SlotBookingDocument[]>([]);
   // Phone/email live in a private subcollection now, so they're fetched
   // separately — an admin-only read that the public page never performs.
@@ -944,7 +947,7 @@ function SlotBookingsTab({ centres, profile }: { centres: CentreDocument[]; prof
                       {/* A carried-over quarterly booking is one record for all
                           three months — deleting it here would erase the months
                           before too. Manage it from the month it was booked in. */}
-                      {b.month === month && (
+                      {canDelete && b.month === month && (
                         <button
                           onClick={() => handleDelete(b)}
                           className="rounded-lg p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 transition"
@@ -1424,10 +1427,15 @@ export default function PaymentsPage() {
 
   const handleMarkPaid = async (payment: PaymentDocument) => {
     if (!profile) return;
-    const method = prompt('Payment method? (CASH, BANK_TRANSFER, CHEQUE)', 'CASH');
-    if (!method) return;
+    const typed = prompt('Payment method? Type one of: CASH, UPI, BANK_TRANSFER, CHEQUE', 'CASH');
+    if (!typed) return;
+    const method = typed.trim().toUpperCase().replace(/[\s-]+/g, '_');
+    if (!['CASH', 'UPI', 'BANK_TRANSFER', 'CHEQUE'].includes(method)) {
+      toast.error(`"${typed}" is not a payment method. Use CASH, UPI, BANK_TRANSFER or CHEQUE.`);
+      return;
+    }
     try {
-      await markPaymentPaid(payment.id, method as any, null, profile.id);
+      await markPaymentPaid(payment.id, method as PaymentDocument['method'], null, profile.id);
       toast.success('Marked as paid');
       await load();
     } catch (err) {
@@ -1435,6 +1443,9 @@ export default function PaymentsPage() {
       toast.error('Failed to mark as paid');
     }
   };
+
+  // Deleting a payment is super-admin only in the database rules.
+  const isSuperAdmin = profile?.role === 'SUPER_ADMIN';
 
   const handleConfirmMonthly = async (payment: PaymentDocument) => {
     if (!profile) return;
@@ -1903,7 +1914,7 @@ export default function PaymentsPage() {
                     batchName={batchMap.get(p.batchId)}
                     tag={<CycleTag payment={p} suspect={looksQuarterly(p)} onConfirmMonthly={handleConfirmMonthly} />}
                     onEdit={carry ? undefined : handleEdit}
-                    onDelete={carry ? undefined : handleDelete}
+                    onDelete={carry || !isSuperAdmin ? undefined : handleDelete}
                     onMarkPaid={carry ? undefined : handleMarkPaid}
                     onWaive={carry ? undefined : handleWaive}
                   />

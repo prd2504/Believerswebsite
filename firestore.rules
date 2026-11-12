@@ -82,13 +82,35 @@ service cloud.firestore {
       // Own profile or admin can read
       allow read: if isSignedIn() && (uid() == userId || isAdminLike());
 
-      // Self-create on first login
-      allow create: if isSignedIn() && uid() == userId;
+      // Self-create on first login — only as an ordinary STUDENT, or as a COACH
+      // awaiting approval. Without these checks a new sign-up could write
+      // role: 'SUPER_ADMIN' into its own profile and own the whole system.
+      allow create: if isSuperAdmin()
+        || (isAdminLike() && request.resource.data.role == 'COACH')
+        || (isSignedIn() && uid() == userId
+            && request.resource.data.get('centreIds', []).size() == 0
+            && request.resource.data.get('linkedStudentIds', []).size() == 0
+            && request.resource.data.get('assignedBatchIds', []).size() == 0
+            && request.resource.data.get('allCentreAccess', false) == false
+            && request.resource.data.get('disabled', false) == false
+            && (
+              (request.resource.data.role == 'STUDENT'
+                && request.resource.data.get('accountStatus', 'ACTIVE') == 'ACTIVE')
+              || (request.resource.data.role == 'COACH'
+                && request.resource.data.accountStatus == 'PENDING_APPROVAL')
+            ));
 
-      // Self can update own mutable fields; super-admin can update any field including role
-      allow update: if isSignedIn() && (
-        uid() == userId && !('role' in request.resource.data.diff(resource.data).affectedKeys())
-      ) || isSuperAdmin();
+      // Self can edit profile details, never anything that grants access.
+      // Managers can approve / assign / suspend coaches. Super-admin: anything.
+      allow update: if isSuperAdmin()
+        || (isSignedIn() && uid() == userId
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(
+              ['role', 'centreIds', 'allCentreAccess', 'accountStatus',
+               'linkedStudentIds', 'assignedBatchIds', 'disabled']))
+        || (isAdminLike() && resource.data.role == 'COACH'
+            && request.resource.data.role == 'COACH'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+              ['accountStatus', 'centreIds', 'assignedBatchIds', 'updatedAt', 'updatedBy']));
 
       // Only super-admin can delete
       allow delete: if isSuperAdmin();
@@ -107,8 +129,11 @@ service cloud.firestore {
     match /batches/{batchId} {
       allow read: if isSignedIn();
       allow create: if isAdminLike();
-      // Admins + coaches (updating studentIds/currentEnrolment) can write
-      allow update: if isAdminLike() || isCoach();
+      // Admins can write anything. Coaches only the roster counters — never
+      // fees, timings or who coaches the batch.
+      allow update: if isAdminLike() || (isCoach()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+          ['studentIds', 'currentEnrolment', 'updatedAt', 'updatedBy']));
       allow delete: if isAdminLike();
     }
 

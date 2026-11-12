@@ -57,7 +57,7 @@ export function PaymentCard({
           </span>
           <span className="text-xs text-gray-400">{METHOD_LABEL[payment.method]}</span>
         </div>
-        <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="flex gap-1 transition-opacity lg:opacity-0 lg:group-hover:opacity-100">
           {isPending && onMarkPaid && (
             <button onClick={() => onMarkPaid(payment)} className="btn-ghost p-1.5 text-green-600 hover:bg-green-50" aria-label="Mark paid">
               <CheckCircle size={14} />

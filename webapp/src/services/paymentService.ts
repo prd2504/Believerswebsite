@@ -18,7 +18,7 @@ import {
   type Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { COLLECTIONS, PAYMENT, rupeesToPaise } from '@bba/shared';
+import { COLLECTIONS, PAYMENT, rupeesToPaise, isFeeExemptCentre } from '@bba/shared';
 import type { PaymentDocument, PaymentStatus, PaymentMethod } from '@bba/shared';
 import type { PaymentFormValues } from '@/lib/schemas/paymentSchema';
 
@@ -137,7 +137,20 @@ export async function updatePayment(
   userId: string,
 ): Promise<void> {
   const ref = doc(db, COLLECTIONS.payments, paymentId);
-  await updateDoc(ref, toFirestoreData(values, userId));
+  const existing = (await getDoc(ref)).data();
+  // An edit must not erase what the payment already carries: its receipt
+  // number, online-payment references, or the date it was actually paid.
+  const {
+    razorpayOrderId: _o, razorpayPaymentId: _p, razorpaySignature: _s,
+    receiptNumber: _r, receiptPdfPath: _f, paidAt: _paidAt,
+    ...editable
+  } = toFirestoreData(values, userId);
+  await updateDoc(ref, {
+    ...editable,
+    paidAt: values.status === 'PAID'
+      ? ((existing?.paidAt as string | null) ?? new Date().toISOString())
+      : null,
+  });
 }
 
 export async function deletePayment(paymentId: string): Promise<void> {
@@ -185,8 +198,16 @@ export async function generateMonthlyFees(
     import('./enrollmentService'),
   ]);
 
-  const students = await getAllStudents();
+  const [students, centres] = await Promise.all([
+    getAllStudents(),
+    import('./centreService').then((m) => m.getAllCentres()),
+  ]);
   const studentStatus = new Map(students.map((s) => [s.id, s.status] as const));
+  // Months already covered by a paid fee — a quarterly payment, a carried-over
+  // credit — must not be billed again.
+  const coveredMonths = new Map(students.map((s) => [s.id, s.feeMonths ?? []] as const));
+  // Centres whose fees are collected outside the app are never billed here.
+  const exemptCentreIds = new Set(centres.filter((c) => isFeeExemptCentre(c.centreCode)).map((c) => c.id));
 
   const allEnrollments = centreId
     ? await enrollmentMod.getEnrollmentsByCentre(centreId)
@@ -209,6 +230,8 @@ export async function generateMonthlyFees(
 
     const key = `${e.studentId}|${e.batchId}`;
     if (existingSet.has(key)) { skipped++; continue; }
+    if (exemptCentreIds.has(e.centreId)) { skipped++; continue; }
+    if (coveredMonths.get(e.studentId)?.includes(month)) { skipped++; continue; }
 
     const basePaise = e.monthlyFeePaise ?? 0;
     if (basePaise === 0) { skipped++; continue; }

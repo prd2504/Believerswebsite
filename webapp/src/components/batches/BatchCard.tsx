@@ -80,7 +80,7 @@ export function BatchCard({
             {batch.level}
           </span>
         </div>
-        <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="flex gap-1 transition-opacity lg:opacity-0 lg:group-hover:opacity-100">
           <button onClick={() => onEdit(batch)} className="btn-ghost p-1.5" aria-label="Edit batch">
             <Pencil size={14} />
           </button>

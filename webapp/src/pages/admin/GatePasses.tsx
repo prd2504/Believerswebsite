@@ -125,7 +125,7 @@ export default function GatePassesPage() {
       const paid = new Set<string>();
       paySnap.docs.forEach((d) => {
         const p = d.data();
-        if (p.status === 'REFUNDED' || !p.studentId) return;
+        if (p.status !== 'PAID' || !p.studentId) return;
         if (!paymentCoversMonth(
           { month: p.month, coverageMonths: p.coverageMonths, coverageEndMonth: p.coverageEndMonth },
           thisMonth,

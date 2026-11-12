@@ -557,7 +557,7 @@ export default function RosterPage() {
                                 <button
                                   type="button"
                                   onClick={() => setRemoveDayTarget(b)}
-                                  className="absolute -right-1 -top-1 hidden rounded-full bg-red-500 p-0.5 text-white shadow-sm group-hover/chip:block"
+                                  className="absolute -right-1 -top-1 block rounded-full bg-red-500 p-0.5 text-white shadow-sm lg:hidden lg:group-hover/chip:block"
                                   title={`Remove from ${DAY_OF_WEEK_LABELS[dayOfWeek]}`}
                                 >
                                   <X size={8} />
@@ -669,7 +669,7 @@ export default function RosterPage() {
                                             studentName: s?.name ?? e.studentId,
                                           })
                                         }
-                                        className="absolute -right-1 -top-1 hidden rounded-full bg-red-500 p-0.5 text-white shadow-sm group-hover/chip:block"
+                                        className="absolute -right-1 -top-1 block rounded-full bg-red-500 p-0.5 text-white shadow-sm lg:hidden lg:group-hover/chip:block"
                                         title="Remove from batch"
                                       >
                                         <X size={8} />
