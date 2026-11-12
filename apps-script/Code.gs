@@ -87,6 +87,12 @@ function getFirebaseApiKey() {
 
 // Website (bbashuttle.com/fees) is the ONLY intake. Flip to true only if the
 // legacy Google Forms are deliberately re-opened and re-linked.
+// Fees are due by this day of the month — matches the app (FEE_GRACE_DAY).
+var FEE_DUE_DAY = 5;
+// Centres whose fees are paid to the venue, not through our form. Fee_Status
+// marks them EXEMPT instead of "NO", and they are never sent reminders.
+var FEE_EXEMPT_CENTRES = { "Bandra Gymkhana": "Paid to gymkhana" };
+
 var LEGACY_FORMS_ENABLED = false;
 
 var SHEETS = {
@@ -1252,6 +1258,13 @@ function runMonthlyFeeCheck() {
     var studentID   = String(p[0]).trim();
     var centre      = canonicalCentre(p[4]);
     var batch       = p[5];
+
+    // Fees here are paid to the venue, never through our form — "NO" would be wrong.
+    if (FEE_EXEMPT_CENTRES[centre]) {
+      results.push([centre, studentID, p[1], batch, "—", "EXEMPT", FEE_EXEMPT_CENTRES[centre], month, "—"]);
+      return;
+    }
+
     var expectedFee = expectedFeeFor(studentID, centre, batch);
     var invoiceNo   = paidMap[studentID] || "";
 
@@ -1276,14 +1289,14 @@ function runMonthlyFeeCheck() {
     statusSheet.getRange(2, 8, results.length, 2).setNumberFormat("@");
     range.setValues(results);
     range.setBackgrounds(results.map(function (row) {
-      var c = row[5] === "YES" ? "#e8f5e9" : "#fff8f5";
+      var c = row[5] === "YES" ? "#e8f5e9" : row[5] === "EXEMPT" ? "#eef2f7" : "#fff8f5";
       var line = [];
       for (var i = 0; i < width; i++) line.push(c);
       return line;
     }));
   }
 
-  var paidCount = results.filter(function (r) { return r[5] === "YES"; }).length;
+  var paidCount = results.filter(function (r) { return r[5] === "YES" || r[5] === "EXEMPT"; }).length;
   adminLog("Monthly fee check", "All centres", month,
     results.length + " active students · " + paidCount + " paid · " + (results.length - paidCount) + " pending");
 }
@@ -1292,10 +1305,10 @@ function runMonthlyFeeCheck() {
 // ═══════════════════════════════════════════════════════════════════════
 //  FEE REMINDERS
 //
-//  Fees are due on the 7th, with a ₹250 late fee after that. Reminders go
-//  out on three fixed days only — the 8th, 15th and 25th.
+//  Fees are due on the 5th (FEE_DUE_DAY), with a ₹250 late fee after that. Reminders go
+//  out on three fixed days only — the day after it's due, the 15th and 25th.
 //
-//  This deliberately does NOT send "every day from the 8th", which is what
+//  This deliberately does NOT send "every day after the due date", which is what
 //  the previous version did: on a daily trigger an unpaid parent received an
 //  email every single day until month end, roughly 23 of them. Three firm
 //  reminders is a collections process; twenty-three is harassment and gets
@@ -1306,7 +1319,7 @@ function runMonthlyFeeCheck() {
 //  so someone paid through November shows Paid=YES in October.
 // ═══════════════════════════════════════════════════════════════════════
 
-var REMINDER_DAYS = [8, 15, 25];
+var REMINDER_DAYS = [FEE_DUE_DAY + 1, 15, 25];
 
 function sendFeeReminders() {
   var today = new Date();
@@ -1356,7 +1369,7 @@ function sendFeeReminders() {
   var sent = 0, skipped = 0, failed = 0;
 
   rows.forEach(function(row) {
-    if (row[paidCol] === "YES") return;
+    if (row[paidCol] === "YES" || row[paidCol] === "EXEMPT") return;
 
     var studentID = row[idCol];
     if (alreadySentToday[studentID]) { skipped++; return; }
@@ -1364,7 +1377,7 @@ function sendFeeReminders() {
     var contact = contactMap[studentID];
     if (!contact || !contact.email) { skipped++; return; }
 
-    var isLate  = dom > 7;
+    var isLate  = dom > FEE_DUE_DAY;
     var feeText = row[feeCol] && row[feeCol] !== "—" ? " of " + row[feeCol] : "";
 
     try {
@@ -1374,7 +1387,7 @@ function sendFeeReminders() {
         "Hi " + row[nameCol] + ",\n\n" +
         "Your coaching fee" + feeText + " for " + month + " is still pending.\n\n" +
         (isLate
-          ? "Fees were due on the 7th. A late fee of ₹250 applies to payments after the due date.\n\n"
+          ? "Fees were due on the " + FEE_DUE_DAY + "th. A late fee of ₹250 applies to payments after the due date.\n\n"
           : "") +
         "Pay here: " + FEE_URL + "\n\n" +
         "Already paid? Please make sure you filled the form at " + FEE_URL +
@@ -1862,7 +1875,7 @@ function buildWelcomeEmail(d) {
   + '<tr><td style="padding:0 32px 24px;">'
   + '<div style="background:#fff8f5;border-radius:6px;border:1px solid #fce0d4;padding:16px 20px;">'
   + '<div style="font-size:11px;font-weight:bold;color:#E84C1E;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Things to Remember</div>'
-  + '<p style="font-size:13px;color:#444;margin:0 0 7px;">→ Monthly fees due by the <strong>7th of every month</strong></p>'
+  + '<p style="font-size:13px;color:#444;margin:0 0 7px;">→ Monthly fees due by the <strong>5th of every month</strong></p>'
   + '<p style="font-size:13px;color:#444;margin:0 0 7px;">→ Non-marking court shoes are compulsory</p>'
   + '<p style="font-size:13px;color:#444;margin:0 0 7px;">→ Arrive 10 minutes before your session</p>'
   + '<p style="font-size:13px;color:#444;margin:0;">→ Visit <a href="' + WEBSITE_URL + '" style="color:#E84C1E;text-decoration:underline;font-weight:bold;">' + WEBSITE + '</a> for updates and schedules</p>'

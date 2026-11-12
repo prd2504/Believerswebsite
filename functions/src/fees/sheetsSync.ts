@@ -377,3 +377,33 @@ export async function logAdminEvent(
     logger.warn('[sheetsSync] logAdminEvent failed', { action, error: e?.message });
   }
 }
+
+/**
+ * Move Invoice_Log's Covers_Until (column O) for existing invoices — used when
+ * a payment's coverage is extended after the fact (feeCredit). Without this
+ * the sheet's Fee_Status keeps calling those students unpaid.
+ * Returns the invoice numbers it could not find.
+ */
+export async function updateInvoiceCoversUntil(
+  updates: { invoiceNo: string; coverageEndMonth: string }[],
+): Promise<{ updated: number; notFound: string[] }> {
+  if (!updates.length) return { updated: 0, notFound: [] };
+  const sheets = getSheets();
+  const col = await svcGet(sheets, { spreadsheetId: SPREADSHEET_ID, range: `${INVOICE_LOG_TAB}!A:A` });
+  const rows = ((col as any).data?.values ?? []) as string[][];
+  const rowOf = new Map<string, number>();
+  rows.forEach((r, i) => { if (r[0]) rowOf.set(String(r[0]).trim(), i + 1); });
+  const notFound: string[] = [];
+  const data = updates.flatMap((u) => {
+    const row = rowOf.get(u.invoiceNo);
+    if (!row) { notFound.push(u.invoiceNo); return []; }
+    return [{ range: `${INVOICE_LOG_TAB}!O${row}`, values: [[coversCell(u.coverageEndMonth)]] }];
+  });
+  if (data.length) {
+    await withRetry(() => sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { valueInputOption: 'USER_ENTERED', data },
+    }));
+  }
+  return { updated: data.length, notFound };
+}

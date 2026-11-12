@@ -104,3 +104,62 @@ describe('Gate_Passes', () => {
     expect(headers[Number(constValue(passSync, 'ID_COL'))]).toBe('Pass_ID');
   });
 });
+
+/**
+ * Fee tabs: sheetsSync.ts appends Invoice_Log and Payments_<centre> rows by
+ * position; Code.gs reads them by INV_COL / PAY_COL index. These pin both sides.
+ */
+describe('fee tabs: Cloud Function rows line up with Code.gs columns', () => {
+  const feeSync = parse('functions/src/fees/sheetsSync.ts');
+
+  /** The `values: [[ … ]]` row literal inside a named function. */
+  function rowIn(fnName: string): ts.ArrayLiteralExpression {
+    let row: ts.ArrayLiteralExpression | undefined;
+    const visit = (n: ts.Node, inside: boolean) => {
+      const here = inside || (ts.isFunctionDeclaration(n) && n.name?.text === fnName);
+      if (here && !row && ts.isPropertyAssignment(n) && n.name.getText(feeSync) === 'values'
+          && ts.isArrayLiteralExpression(n.initializer)
+          && ts.isArrayLiteralExpression(n.initializer.elements[0])) {
+        row = n.initializer.elements[0] as ts.ArrayLiteralExpression;
+      }
+      ts.forEachChild(n, (c) => visit(c, here));
+    };
+    visit(feeSync, false);
+    if (!row) throw new Error(`no values row in ${fnName}`);
+    return row;
+  }
+
+  /** `var NAME = { KEY: n, … }` from Code.gs. */
+  function colMap(name: string): Record<string, number> {
+    const m = readFileSync(root + 'apps-script/Code.gs', 'utf8').match(new RegExp(`var ${name}\\s*=\\s*\\{([^}]*)\\}`));
+    if (!m) throw new Error(`${name} not found`);
+    return Object.fromEntries(m[1].split(',').map((kv) => kv.split(':').map((x) => x.trim())).filter((kv) => kv.length === 2)
+      .map(([k, v]) => [k, Number(v)]));
+  }
+
+  it('Invoice_Log row has every INV_COL column, with Month, Cycle and Covers_Until in place', () => {
+    const row = rowIn('appendInvoiceLog').elements.map((e) => e.getText(feeSync));
+    const cols = colMap('INV_COL');
+    expect(row.length).toBe(Math.max(...Object.values(cols)) + 1);
+    expect(row[cols.INVOICE]).toContain('externalInvoiceNo');
+    expect(row[cols.MONTH]).toBe('monthStr');
+    expect(row[cols.CYCLE]).toContain('billingCycle');
+    expect(row[cols.COVERS_UNTIL]).toContain('coverageEndMonth');
+  });
+
+  it('Payments_<centre> row has every PAY_COL column, with Month, Cycle and Covers_Until in place', () => {
+    const row = rowIn('appendPaymentsTab').elements.map((e) => e.getText(feeSync));
+    const cols = colMap('PAY_COL');
+    expect(row.length).toBe(Math.max(...Object.values(cols)) + 1);
+    expect(row[cols.INVOICE]).toContain('externalInvoiceNo');
+    expect(row[cols.MONTH]).toBe('monthStr');
+    expect(row[cols.CYCLE]).toContain('billingCycle');
+    expect(row[cols.COVERS_UNTIL]).toContain('coverageEndMonth');
+  });
+
+  it('the Covers_Until updater writes the Invoice_Log column Code.gs reads', () => {
+    const src = readFileSync(root + 'functions/src/fees/sheetsSync.ts', 'utf8');
+    const letter = src.match(/INVOICE_LOG_TAB\}!([A-Z])\$\{row\}/)?.[1];
+    expect(letter && colNumber(letter) - 1).toBe(colMap('INV_COL').COVERS_UNTIL);
+  });
+});

@@ -21,6 +21,7 @@ import { logger } from 'firebase-functions';
 import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../admin.js';
 import { requireAdminLike } from '../http/requireAdmin.js';
+import { updateInvoiceCoversUntil } from '../fees/sheetsSync.js';
 import {
   addMonths,
   paymentCoverage,
@@ -46,6 +47,8 @@ export interface FeeCreditResult {
    * twice: refund, or carry that payment on a month.
    */
   paidTwice: { student: string; detail: string }[];
+  /** Google Sheet Invoice_Log rows moved to the new Covers_Until (apply only). */
+  sheet?: { updated: number; notFound: string[]; error?: string };
 }
 
 export async function runFeeCredit(opts: {
@@ -66,6 +69,7 @@ export async function runFeeCredit(opts: {
 
   const out: FeeCreditResult = { key, applied: apply, payments: [], bookings: [], bookingsNeedingCheck: [], alreadyCredited: 0, paidTwice: [] };
   const creditedStudents = new Set<string>();
+  const sheetUpdates: { invoiceNo: string; coverageEndMonth: string }[] = [];
   const writer = apply ? db.bulkWriter() : null;
   const now = new Date().toISOString();
 
@@ -83,6 +87,7 @@ export async function runFeeCredit(opts: {
     const newEnd = addMonths(cov.end, extraMonths);
     creditedStudents.add(p.studentId);
     out.payments.push({ id: d.id, student: nameOf.get(p.studentId) ?? p.studentId, from: cov.end, to: newEnd });
+    if (p.externalInvoiceNo) sheetUpdates.push({ invoiceNo: String(p.externalInvoiceNo), coverageEndMonth: newEnd });
     writer?.update(d.ref, {
       coverageMonths: cov.months + extraMonths,
       coverageEndMonth: newEnd,
@@ -147,7 +152,12 @@ export async function runFeeCredit(opts: {
     });
   }
 
-  if (writer) await writer.close();
+  if (writer) {
+    await writer.close();
+    // Keep the spreadsheet's Fee_Status in step with the new coverage.
+    out.sheet = await updateInvoiceCoversUntil(sheetUpdates)
+      .catch((e) => ({ updated: 0, notFound: [], error: (e as Error)?.message ?? 'sheet update failed' }));
+  }
   logger.info('[feeCredit]', { key, apply, payments: out.payments.length, bookings: out.bookings.length, check: out.bookingsNeedingCheck.length });
   return out;
 }
