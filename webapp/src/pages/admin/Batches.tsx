@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Layers } from 'lucide-react';
 import { toast } from 'sonner';
+import { getEnrollmentsByBatch } from '@/services/enrollmentService';
 import { useAuth } from '@/hooks/useAuth';
 import { getAllBatches, createBatch, updateBatch, deleteBatch } from '@/services/batchService';
 import { getAllCentres } from '@/services/centreService';
@@ -147,6 +148,13 @@ export default function BatchesPage() {
   };
 
   const handleDelete = async (batch: BatchDocument) => {
+    // Deleting a batch with students in it would leave their enrolments
+    // pointing at nothing — invisible on every register.
+    const active = (await getEnrollmentsByBatch(batch.id).catch(() => [])).filter((e) => e.status === 'ACTIVE');
+    if (active.length > 0) {
+      toast.error(`${active.length} student${active.length === 1 ? ' is' : 's are'} still enrolled in "${batch.name}". Move or end their enrolments in Roster first — or set the batch to Inactive.`, { duration: 8000 });
+      return;
+    }
     if (!confirm(`Delete batch "${batch.name}"? This cannot be undone.`)) return;
     try {
       await deleteBatch(batch.id);

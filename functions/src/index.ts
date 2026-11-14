@@ -33,8 +33,7 @@ export { listCentres } from './fees/listCentres.js';
 export { searchStudents } from './fees/searchStudents.js';
 export { registerStudent } from './fees/registerStudent.js';
 
-// --- Temporary: student data-integrity audit (remove after backfill decision) -------------
-export { auditStudents } from './fees/auditStudents.js';
+// --- Student data-integrity tools (admin login or API key required) --------------------
 export { findDuplicateStudents } from './fees/findDuplicateStudents.js';
 export { mergeStudents } from './fees/mergeStudents.js';
 export { reconcileStudentIds } from './fees/reconcileStudentIds.js';

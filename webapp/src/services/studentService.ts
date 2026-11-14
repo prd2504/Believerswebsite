@@ -193,6 +193,16 @@ export async function changeStudentStatus(
     updatedAt: serverTimestamp(),
     updatedBy: userId,
   });
+
+  // A student who has left or graduated no longer holds a seat: end their
+  // enrolments so batch counts, capacity and fee generation stop including
+  // them. (On hold / dormant keep their enrolments — they may come back.)
+  if (newStatus === 'LEFT' || newStatus === 'GRADUATED') {
+    const { getEnrollmentsByStudent, endEnrollment } = await import('./enrollmentService');
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const active = (await getEnrollmentsByStudent(studentId)).filter((e) => e.status === 'ACTIVE');
+    for (const e of active) await endEnrollment(e.id, today, userId);
+  }
 }
 
 /**

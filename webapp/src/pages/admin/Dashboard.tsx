@@ -5,35 +5,49 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapPin, Layers, Users, TrendingUp, Plus } from 'lucide-react';
+import { MapPin, Layers, Users, TrendingUp, Plus, ClipboardCheck, ShieldCheck, CreditCard } from 'lucide-react';
 import { toast } from 'sonner';
 import { getAllCentres } from '@/services/centreService';
 import { getAllBatches } from '@/services/batchService';
+import { getAllStudents } from '@/services/studentService';
+import { getActiveEnrollments } from '@/services/enrollmentService';
+import {
+  centreClosureOn, isExpectedOnRegister, isFeeExemptCentre, istNow, registerFeeState, formatMonthLabel,
+} from '@bba/shared';
 import { paths } from '@/router/paths';
 import { CardSkeleton } from '@/components/common/LoadingSkeleton';
 import { cn } from '@/lib/cn';
-import type { CentreDocument, BatchDocument } from '@bba/shared';
+import type { CentreDocument, BatchDocument, EnrollmentDocument, StudentDocument } from '@bba/shared';
 
 interface CentreOccupancy {
   centre: CentreDocument;
   totalCapacity: number;
+  /** Students expected this month: paid, in the grace window, or new. */
   totalEnrolled: number;
+  /** Enrolled but not expected (no fee for the month). */
+  unpaid: number;
   batchCount: number;
   occupancyPct: number;
+  note: string | null;
 }
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const [centres, setCentres] = useState<CentreDocument[]>([]);
   const [batches, setBatches] = useState<BatchDocument[]>([]);
+  const [students, setStudents] = useState<StudentDocument[]>([]);
+  const [enrollments, setEnrollments] = useState<EnrollmentDocument[]>([]);
   const [loading, setLoading] = useState(true);
+  const today = istNow().date;
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const [c, b] = await Promise.all([getAllCentres(), getAllBatches()]);
+      const [c, b, s, e] = await Promise.all([getAllCentres(), getAllBatches(), getAllStudents(), getActiveEnrollments()]);
       setCentres(c);
       setBatches(b);
+      setStudents(s);
+      setEnrollments(e);
     } catch (err) {
       console.error(err);
       toast.error('Failed to load dashboard data');
@@ -44,25 +58,49 @@ export default function AdminDashboard() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Derived data
-  const activeCentres = centres.filter((c) => c.active).length;
-  const activeBatches = batches.filter((b) => b.status === 'ACTIVE').length;
-  const totalEnrolled = batches.reduce((sum, b) => sum + b.currentEnrolment, 0);
-  const totalCapacity = batches.reduce((sum, b) => sum + b.maxCapacity, 0);
-  const overallOccupancy = totalCapacity > 0 ? Math.round((totalEnrolled / totalCapacity) * 100) : 0;
+  // Same rules as the registers and the nightly email: a student counts this
+  // month when paid (or in the grace window, or new), with fee-exempt
+  // centres counted as paid. Enrolment counters alone include leavers.
+  const studentById = new Map(students.map((s) => [s.id, s]));
+  const activeBatchList = batches.filter((b) => b.status === 'ACTIVE');
+  const activeBatchIds = new Set(activeBatchList.map((b) => b.id));
 
-  const centreOccupancies: CentreOccupancy[] = centres.map((centre) => {
-    const centreBatches = batches.filter((b) => b.centreId === centre.id);
-    const cap = centreBatches.reduce((s, b) => s + b.maxCapacity, 0);
-    const enr = centreBatches.reduce((s, b) => s + b.currentEnrolment, 0);
+  const centreOccupancies: CentreOccupancy[] = centres.filter((c) => c.active).map((centre) => {
+    const centreBatches = activeBatchList.filter((b) => b.centreId === centre.id);
+    const exempt = isFeeExemptCentre(centre.centreCode);
+    const expected = new Set<string>();
+    const unpaid = new Set<string>();
+    enrollments.forEach((e) => {
+      if (e.centreId !== centre.id || !activeBatchIds.has(e.batchId)) return;
+      const s = studentById.get(e.studentId);
+      if (!s || s.status !== 'ACTIVE') return;
+      const state = !s.feeMonths ? 'PAID' : registerFeeState({
+        feeMonths: s.feeMonths, enrolledOn: e.startDate, pausedMonths: e.pausedMonths, sessionDate: today, feeExempt: exempt,
+      });
+      if (isExpectedOnRegister(state)) expected.add(s.id);
+      else if (state === 'UNPAID') unpaid.add(s.id);
+    });
+    unpaid.forEach((id) => { if (expected.has(id)) unpaid.delete(id); });
+    const cap = centreBatches.reduce((sum, b) => sum + b.maxCapacity, 0);
+    const closure = centreClosureOn(centre.centreCode, today);
     return {
       centre,
       totalCapacity: cap,
-      totalEnrolled: enr,
+      totalEnrolled: expected.size,
+      unpaid: unpaid.size,
       batchCount: centreBatches.length,
-      occupancyPct: cap > 0 ? Math.round((enr / cap) * 100) : 0,
+      occupancyPct: cap > 0 ? Math.round((expected.size / cap) * 100) : 0,
+      note: closure ? `Closed — ${closure.reason.toLowerCase()} until ${closure.to.slice(8)}/${closure.to.slice(5, 7)}`
+        : exempt ? 'Fees paid to the venue — everyone enrolled counts' : null,
     };
   });
+
+  const activeCentres = centres.filter((c) => c.active).length;
+  const activeBatches = activeBatchList.length;
+  const totalEnrolled = centreOccupancies.reduce((sum, c) => sum + c.totalEnrolled, 0);
+  const totalUnpaid = centreOccupancies.reduce((sum, c) => sum + c.unpaid, 0);
+  const totalCapacity = activeBatchList.reduce((sum, b) => sum + b.maxCapacity, 0);
+  const overallOccupancy = totalCapacity > 0 ? Math.round((totalEnrolled / totalCapacity) * 100) : 0;
 
   if (loading) {
     return (
@@ -84,8 +122,36 @@ export default function AdminDashboard() {
       <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <SummaryCard icon={<MapPin size={20} />} label="Active Centres" value={activeCentres} color="text-blue-600 bg-blue-50" />
         <SummaryCard icon={<Layers size={20} />} label="Active Batches" value={activeBatches} color="text-purple-600 bg-purple-50" />
-        <SummaryCard icon={<Users size={20} />} label="Total Enrolled" value={totalEnrolled} color="text-green-600 bg-green-50" />
+        <SummaryCard icon={<Users size={20} />} label={`Playing in ${formatMonthLabel(today.slice(0, 7))}`} value={totalEnrolled} color="text-green-600 bg-green-50" />
         <SummaryCard icon={<TrendingUp size={20} />} label="Overall Occupancy" value={`${overallOccupancy}%`} color="text-brand-primary bg-brand-primary-light" />
+      </div>
+
+      {totalUnpaid > 0 && (
+        <p className="-mt-5 mb-6 text-xs text-gray-500">
+          {totalUnpaid} more enrolled student{totalUnpaid === 1 ? ' has' : 's have'} no fee for {formatMonthLabel(today.slice(0, 7))} and {totalUnpaid === 1 ? 'is' : 'are'} not counted.
+        </p>
+      )}
+
+      {/* Daily work */}
+      <div className="mb-8">
+        <h2 className="mb-3 text-sm font-semibold text-gray-500 uppercase tracking-wide">Today</h2>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <button onClick={() => navigate(paths.admin.attendance)} className="card flex items-center gap-3 text-left">
+            <ClipboardCheck size={18} className="shrink-0 text-brand-primary" />
+            <span><span className="block text-sm font-semibold text-brand-secondary">Registers</span>
+              <span className="text-xs text-gray-500">Which sessions are marked, late or missing</span></span>
+          </button>
+          <button onClick={() => navigate(paths.admin.payments)} className="card flex items-center gap-3 text-left">
+            <CreditCard size={18} className="shrink-0 text-brand-primary" />
+            <span><span className="block text-sm font-semibold text-brand-secondary">Payments</span>
+              <span className="text-xs text-gray-500">Verify, renewals, pending fees</span></span>
+          </button>
+          <button onClick={() => navigate(paths.admin.dataHealth)} className="card flex items-center gap-3 text-left">
+            <ShieldCheck size={18} className="shrink-0 text-brand-primary" />
+            <span><span className="block text-sm font-semibold text-brand-secondary">Data Health</span>
+              <span className="text-xs text-gray-500">Records to fix, copy-ready lists</span></span>
+          </button>
+        </div>
       </div>
 
       {/* Quick actions */}
@@ -106,7 +172,7 @@ export default function AdminDashboard() {
 
       {/* Centre-wise occupancy */}
       <div>
-        <h2 className="mb-3 text-sm font-semibold text-gray-500 uppercase tracking-wide">Centre-wise Occupancy</h2>
+        <h2 className="mb-3 text-sm font-semibold text-gray-500 uppercase tracking-wide">Centres this month</h2>
         {centreOccupancies.length === 0 ? (
           <div className="card text-center text-sm text-gray-500 py-8">
             No centres yet. <button onClick={() => navigate(paths.admin.centres)} className="text-brand-primary hover:underline">Add your first centre</button>
@@ -126,8 +192,10 @@ export default function AdminDashboard() {
                     </span>
                   </div>
                   <p className="text-xs text-gray-400">
-                    {co.batchCount} batch{co.batchCount !== 1 ? 'es' : ''} &middot; {co.totalEnrolled}/{co.totalCapacity} students
+                    {co.batchCount} batch{co.batchCount !== 1 ? 'es' : ''} &middot; {co.totalEnrolled}/{co.totalCapacity} playing
+                    {co.unpaid > 0 && <> &middot; {co.unpaid} unpaid</>}
                   </p>
+                  {co.note && <p className="text-xs text-sky-700">{co.note}</p>}
                 </div>
                 <div className="w-32 shrink-0">
                   <div className="flex items-center justify-between text-xs">

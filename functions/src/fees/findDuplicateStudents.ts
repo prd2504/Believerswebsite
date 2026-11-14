@@ -1,6 +1,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
 import { db } from '../admin.js';
+import { requireAdminLike } from '../http/requireAdmin.js';
 import { canonicalPhone, normalizeName } from './phone.js';
 
 /** Levenshtein edit distance — used to tell a spelling-variant duplicate
@@ -49,6 +50,8 @@ function namesAreNear(a: string, b: string): boolean {
 export const findDuplicateStudents = onRequest(
   { region: 'asia-south1', cors: true, timeoutSeconds: 120 },
   async (req, res): Promise<void> => {
+    // Returns students' names and phone numbers — admins only.
+    if (!(await requireAdminLike(req, res))) return;
     try {
       const centreCodeFilter = (req.query.centreCode as string | undefined)?.trim().toUpperCase();
 

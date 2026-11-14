@@ -104,6 +104,9 @@ export async function enrollStudent(input: EnrollInput, userId: string): Promise
   }
 
   const batch = writeBatch(db);
+  // Re-enrolling into the same batch reuses the old document; keep when it
+  // was first created and the months it was paused, instead of erasing them.
+  const prior = existing.exists() ? existing.data() : null;
 
   batch.set(enrollmentRef, {
     studentId: input.studentId,
@@ -116,11 +119,11 @@ export async function enrollStudent(input: EnrollInput, userId: string): Promise
     endDate: null,
     status: 'ACTIVE' satisfies EnrollmentStatus,
     timeSlotStartTime: input.timeSlotStartTime ?? null,
-    pausedMonths: [],
+    pausedMonths: Array.isArray(prior?.pausedMonths) ? prior!.pausedMonths : [],
     notes: input.notes?.trim() || null,
-    createdAt: serverTimestamp(),
+    createdAt: prior?.createdAt ?? serverTimestamp(),
     updatedAt: serverTimestamp(),
-    createdBy: userId,
+    createdBy: prior?.createdBy ?? userId,
     updatedBy: userId,
   });
 

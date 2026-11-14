@@ -2,6 +2,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
 import { sheets as sheetsApi, auth as sheetsAuth } from '@googleapis/sheets';
 import { db } from '../admin.js';
+import { requireAdminLike } from '../http/requireAdmin.js';
 import { canonicalPhone, normalizeName } from './phone.js';
 
 /**
@@ -40,6 +41,8 @@ function parseIdNumber(externalId: string | null | undefined): number | null {
 export const reconcileStudentIds = onRequest(
   { region: 'asia-south1', cors: true, timeoutSeconds: 120 },
   async (req, res): Promise<void> => {
+    // Returns students' names and phone numbers — admins only.
+    if (!(await requireAdminLike(req, res))) return;
     try {
       const centreCodeFilter = (req.query.centreCode as string | undefined)?.trim().toUpperCase();
 
