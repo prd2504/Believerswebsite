@@ -41,6 +41,8 @@ function fromFirestore(id: string, d: DocumentData): PaymentDocument {
     coverageMonths: d.coverageMonths ?? null,
     coverageEndMonth: d.coverageEndMonth ?? null,
     cycleConfirmedMonthly: d.cycleConfirmedMonthly ?? false,
+    needsVerification: d.needsVerification ?? false,
+    verificationReason: d.verificationReason ?? null,
     baseAmountPaise: d.baseAmountPaise ?? 0,
     gstAmountPaise: d.gstAmountPaise ?? 0,
     totalAmountPaise: d.totalAmountPaise ?? 0,
@@ -125,6 +127,9 @@ function toFirestoreData(values: PaymentFormValues, userId: string) {
 export async function createPayment(values: PaymentFormValues, userId: string): Promise<string> {
   const ref = await addDoc(collection(db, COLLECTIONS.payments), {
     ...toFirestoreData(values, userId),
+    // Marked so that, once PAID, it gets an invoice number, a sheet row and a
+    // receipt email — the same as a payment made on the public page.
+    paymentSource: 'ADMIN_MANUAL',
     createdAt: serverTimestamp(),
     createdBy: userId,
   });
@@ -147,6 +152,7 @@ export async function updatePayment(
   } = toFirestoreData(values, userId);
   await updateDoc(ref, {
     ...editable,
+    ...(existing?.paymentSource ? {} : { paymentSource: 'ADMIN_MANUAL' }),
     paidAt: values.status === 'PAID'
       ? ((existing?.paidAt as string | null) ?? new Date().toISOString())
       : null,
@@ -292,8 +298,11 @@ export async function markPaymentPaid(
   updatedBy: string,
 ): Promise<void> {
   const ref = doc(db, COLLECTIONS.payments, paymentId);
+  const existing = (await getDoc(ref)).data();
   await updateDoc(ref, {
     status: 'PAID',
+    needsVerification: false,
+    ...(existing?.paymentSource ? {} : { paymentSource: 'ADMIN_MANUAL' }),
     method,
     paidAt: new Date().toISOString(),
     notes,

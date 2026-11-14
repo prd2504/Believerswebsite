@@ -6,7 +6,8 @@ import { buildWelcomeHtml } from './welcomeEmailTemplate.js';
 import { syncPublicFeePayment, logAdminEvent } from './sheetsSync.js';
 import { sendMail } from './mailer.js';
 import { ensurePassToken } from '../passes/gatePassApi.js';
-import { GATE_PASS_CENTRE_CODE, GATE_PASS_LAUNCH_MONTH } from '@bba/shared';
+import { GATE_PASS_CENTRE_CODE, GATE_PASS_LAUNCH_MONTH, isFeeExemptCentre } from '@bba/shared';
+import { generateExternalInvoiceNo } from './invoiceCounter.js';
 
 function monthLabel(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
@@ -126,8 +127,9 @@ export const onFeePaymentCreated = onDocumentWritten(
     if (!afterSnap?.exists) return;
     const after = afterSnap.data()!;
 
-    // Only the public /fees page (SHEETS_FORM is handled by the Apps Script).
-    if (after.paymentSource !== 'PUBLIC_FEES_PAGE') return;
+    // The public /fees page, and payments recorded by an admin in the app.
+    // (SHEETS_FORM rows are written by the Apps Script itself.)
+    if (after.paymentSource !== 'PUBLIC_FEES_PAGE' && after.paymentSource !== 'ADMIN_MANUAL') return;
     if (after.status !== 'PAID') return;
 
     // Fire once — only when status transitions into PAID.
@@ -153,6 +155,8 @@ export const onFeePaymentCreated = onDocumentWritten(
     }
     const centreName = (centreData.name as string) ?? centreId ?? '—';
     const centreCode = (centreData.centreCode as string) ?? '';
+    // Fees at a fee-exempt centre are paid to the venue — no invoice from us.
+    if (isFeeExemptCentre(centreCode)) return;
 
     // Batch name — and auto-enrol if this student has no batch link yet
     // (self-registered via /fees, never enrolled). See autoEnrollIfMissing().
@@ -198,6 +202,18 @@ export const onFeePaymentCreated = onDocumentWritten(
         paymentId: event.params.paymentId,
       });
       return;
+    }
+
+    // Admin-recorded payments have no invoice number yet; give them one from
+    // the same per-centre counter the public page uses.
+    if (!after.externalInvoiceNo && centreId && centreCode) {
+      try {
+        const invoiceNo = await generateExternalInvoiceNo(centreId, centreCode);
+        await paymentRef.update({ externalInvoiceNo: invoiceNo });
+        after.externalInvoiceNo = invoiceNo;
+      } catch (e: any) {
+        logger.warn('[onFeePaymentCreated] could not assign invoice number', { error: e?.message });
+      }
     }
 
     // ── Google Sheets sync (best-effort; never throws) ──

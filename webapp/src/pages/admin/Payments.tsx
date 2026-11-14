@@ -158,6 +158,16 @@ function CycleTag({ payment, suspect, onConfirmMonthly }: {
   onConfirmMonthly?: (p: PaymentDocument) => void;
 }) {
   const cov = paymentCoverage(payment);
+  if (payment.needsVerification && payment.status !== 'PAID') {
+    return (
+      <span
+        className="mt-1 block w-fit rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700"
+        title={payment.verificationReason ?? undefined}
+      >
+        Check amount — matches no plan · verify, then Mark Paid
+      </span>
+    );
+  }
   if (cov.months > 1) {
     return (
       <span className="mt-1 block w-fit whitespace-nowrap rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
@@ -1427,7 +1437,10 @@ export default function PaymentsPage() {
 
   const handleMarkPaid = async (payment: PaymentDocument) => {
     if (!profile) return;
-    const typed = prompt('Payment method? Type one of: CASH, UPI, BANK_TRANSFER, CHEQUE', 'CASH');
+    const typed = prompt(
+      'Payment method? Type one of: CASH, UPI, BANK_TRANSFER, CHEQUE',
+      payment.method && payment.method !== 'NONE' ? payment.method : 'CASH',
+    );
     if (!typed) return;
     const method = typed.trim().toUpperCase().replace(/[\s-]+/g, '_');
     if (!['CASH', 'UPI', 'BANK_TRANSFER', 'CHEQUE'].includes(method)) {

@@ -11,6 +11,10 @@ import {
   coverageOverlaps,
   paymentCoverage,
   formatCoverage,
+  isFeeExemptCentre,
+  knownFeeAmountsPaise,
+  SLOT_PLANS,
+  RUIA_CENTRE_CODE,
   type BillingCycle,
 } from '@bba/shared';
 
@@ -87,6 +91,15 @@ export const submitFeePayment = onRequest(
       const centreDoc = centreSnap.docs[0];
       const centreId = centreDoc.id;
       const centreData = centreDoc.data();
+
+      // Fees at this centre are paid to the venue, never to us.
+      if (!isSheets && isFeeExemptCentre(input.centreCode)) {
+        res.status(400).json({
+          ok: false,
+          error: 'Fees for this centre are paid directly to the venue, not online here. Please contact the centre manager.',
+        });
+        return;
+      }
       // GST is not charged — BBA Sports has no GST compliance yet. The amount
       // paid is the full fee with no tax split (e.g. ₹2000 = ₹2000).
       const gstRate = 0;
@@ -280,6 +293,32 @@ export const submitFeePayment = onRequest(
         gstPaise = 0;
       }
 
+      // --- Amount check (public page only) ---
+      // A payment whose amount matches no plan price is recorded but held as
+      // PENDING for an admin to verify: no receipt, no gate pass, not counted
+      // as paid until someone taps Mark Paid. A centre with no prices set up
+      // can't be checked, so it is accepted as before.
+      let needsVerification = false;
+      if (!isSheets) {
+        const batchPlans = await db.collection('batches')
+          .where('centreId', '==', centreId).where('status', '==', 'ACTIVE').get();
+        const monthly: number[] = [];
+        batchPlans.docs.forEach((b) => ((b.data().frequencyPlans as { monthlyFeePaise?: number }[]) ?? [])
+          .forEach((fp) => { if (fp.monthlyFeePaise) monthly.push(fp.monthlyFeePaise); }));
+        if (!enrollSnap.empty) {
+          const fee = enrollSnap.docs[0].data().monthlyFeePaise as number | undefined;
+          if (fee) monthly.push(fee);
+        }
+        if (input.centreCode === RUIA_CENTRE_CODE) SLOT_PLANS.forEach((p) => monthly.push(p.amountPaise));
+        const known = knownFeeAmountsPaise(monthly);
+        needsVerification = known.size > 0 && !known.has(totalPaise);
+        if (needsVerification) {
+          logger.warn('[submitFeePayment] amount matches no plan — held for verification', {
+            studentId: student.id, centreCode: input.centreCode, amountPaise: totalPaise,
+          });
+        }
+      }
+
       // --- Generate external invoice number ---
       const externalInvoiceNo = await generateExternalInvoiceNo(centreId, input.centreCode);
 
@@ -303,10 +342,14 @@ export const submitFeePayment = onRequest(
         gstAmountPaise: gstPaise,
         totalAmountPaise: totalPaise,
         gstRatePercentSnapshot: gstRate,
-        status: 'PAID',
+        status: needsVerification ? 'PENDING' : 'PAID',
         method: input.method,
         dueDate: null,
-        paidAt: now,
+        paidAt: needsVerification ? null : now,
+        ...(needsVerification ? {
+          needsVerification: true,
+          verificationReason: `Amount ₹${input.amountRupees} does not match any plan price — check the payment, then Mark Paid.`,
+        } : {}),
         razorpayOrderId: null,
         razorpayPaymentId: null,
         razorpaySignature: null,
@@ -352,6 +395,7 @@ export const submitFeePayment = onRequest(
         externalInvoiceNo,
         externalStudentId,
         studentName: student.name,
+        pendingVerification: needsVerification,
       });
     } catch (err) {
       logger.error('[submitFeePayment] error', { err });

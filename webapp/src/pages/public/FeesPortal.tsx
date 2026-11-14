@@ -1603,9 +1603,13 @@ export default function FeesPortal() {
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-500/20">
               <CheckCircle2 size={40} className="text-green-400" />
             </div>
-            <h2 className="text-xl font-bold text-white">Payment Recorded!</h2>
+            <h2 className="text-xl font-bold text-white">
+              {result.pendingVerification ? 'Payment Received — Being Verified' : 'Payment Recorded!'}
+            </h2>
             <p className="text-sm text-gray-400">
-              Your fee payment for {formatMonth(month)} has been submitted successfully.
+              {result.pendingVerification
+                ? `The amount doesn't match a standard fee for ${formatMonth(month)}, so our team will verify it first. You'll get your invoice by email once it's confirmed.`
+                : `Your fee payment for ${formatMonth(month)} has been submitted successfully.`}
             </p>
             <div className="rounded-xl border border-gray-700 bg-gray-800/50 p-4 text-left text-sm">
               <div className="space-y-2">
@@ -1625,7 +1629,11 @@ export default function FeesPortal() {
                   <span className="font-semibold text-white">{formatINR(effectiveAmount * 100, { withDecimals: false })}</span></div>
               </div>
             </div>
-            <p className="text-xs text-gray-500">An invoice will be sent to your registered email shortly.</p>
+            <p className="text-xs text-gray-500">
+              {result.pendingVerification
+                ? 'Keep your payment screenshot handy in case the centre manager asks for it.'
+                : 'An invoice will be sent to your registered email shortly.'}
+            </p>
             <button onClick={handleReset}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-700 bg-gray-800 py-3 font-semibold text-white transition hover:bg-gray-700">
               Pay for Another Month

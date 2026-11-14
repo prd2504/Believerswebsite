@@ -407,3 +407,67 @@ export async function updateInvoiceCoversUntil(
   }
   return { updated: data.length, notFound };
 }
+
+/**
+ * Bring an invoice's existing sheet rows in line with a later change to its
+ * payment: amount, status (refund / waive / delete), or coverage. Finds the
+ * rows by invoice number — Invoice_Log column A, the centre tab column B.
+ *
+ * Non-PAID states are written as a "[STATUS]" marker in Invoice_Log's Notes
+ * column, which Code.gs's Fee_Status skips, so a refunded invoice stops
+ * counting as paid.
+ */
+export async function mirrorPaymentChange(c: {
+  invoiceNo: string;
+  centreCode: string;
+  amountRupees: number;
+  /** PAID, PENDING, REFUNDED, WAIVED, or DELETED. */
+  status: string;
+  coverageEndMonth: string | null;
+}): Promise<{ invoiceLog: boolean; centreTab: boolean }> {
+  const sheets = getSheets();
+  const today = formatISTDateTime(new Date().toISOString());
+  const note = c.status === 'PAID' ? `Updated in app ${today}` : `[${c.status}] in app ${today}`;
+  const statusLabel: Record<string, string> = {
+    PAID: 'Verified', PENDING: 'Pending Verification', REFUNDED: 'Refunded', WAIVED: 'Waived', DELETED: 'Deleted',
+  };
+
+  const findRow = async (range: string) => {
+    const res = await svcGet(sheets, { spreadsheetId: SPREADSHEET_ID, range });
+    const values = ((res as any).data?.values ?? []) as string[][];
+    const i = values.findIndex((r) => String(r[0] ?? '').trim() === c.invoiceNo);
+    return i >= 0 ? i + 1 : null;
+  };
+
+  const data: { range: string; values: unknown[][] }[] = [];
+  const invRow = await findRow(`${INVOICE_LOG_TAB}!A:A`);
+  if (invRow) {
+    data.push({ range: `${INVOICE_LOG_TAB}!H${invRow}`, values: [[c.amountRupees]] });
+    data.push({ range: `${INVOICE_LOG_TAB}!M${invRow}`, values: [[note]] });
+    if (c.coverageEndMonth) data.push({ range: `${INVOICE_LOG_TAB}!O${invRow}`, values: [[coversCell(c.coverageEndMonth)]] });
+  }
+  const tab = CENTRE_TAB[c.centreCode];
+  const tabRow = tab ? await findRow(`${tab}!B:B`) : null;
+  if (tab && tabRow) {
+    data.push({ range: `${tab}!F${tabRow}`, values: [[c.amountRupees]] });
+    if (c.coverageEndMonth) data.push({ range: `${tab}!L${tabRow}`, values: [[coversCell(c.coverageEndMonth)]] });
+  }
+  if (data.length) {
+    await withRetry(() => sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: SPREADSHEET_ID,
+      requestBody: { valueInputOption: 'USER_ENTERED', data },
+    }));
+  }
+  // Status separately: the column is a dropdown, and a sheet still on an older
+  // Code.gs may refuse "Refunded" — that must not undo the updates above.
+  let statusWritten = false;
+  if (tab && tabRow) {
+    statusWritten = await svcUpdate(sheets, {
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${tab}!I${tabRow}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [[statusLabel[c.status] ?? c.status]] },
+    }).then(() => true).catch(() => false);
+  }
+  return { invoiceLog: !!invRow, centreTab: !!tabRow && statusWritten };
+}

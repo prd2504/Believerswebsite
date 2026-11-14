@@ -169,11 +169,16 @@ var HEADER_FG = "#E84C1E";   // header row text
  * Adding a third option (e.g. "Rejected") is safe — just append it here
  * and give it a colour below, then re-run the menu item.
  */
-var STATUS_OPTIONS = ["Pending Verification", "Verified"];
+// Refunded / Waived / Deleted are written by the app when a payment changes
+// after the fact (functions/src/fees/onPaymentSheetMirror.ts).
+var STATUS_OPTIONS = ["Pending Verification", "Verified", "Refunded", "Waived", "Deleted"];
 
 var STATUS_COLORS = {
   "Pending Verification": { bg: "#FFF4E5", fg: "#B26A00" },  // amber
-  "Verified"            : { bg: "#E6F4EA", fg: "#137333" }   // green
+  "Verified"            : { bg: "#E6F4EA", fg: "#137333" },  // green
+  "Refunded"            : { bg: "#F1F3F4", fg: "#5F6368" },  // grey
+  "Waived"              : { bg: "#E8F0FE", fg: "#1967D2" },  // blue
+  "Deleted"             : { bg: "#FCE8E6", fg: "#C5221F" }   // red
 };
 
 
@@ -1226,6 +1231,8 @@ function runMonthlyFeeCheck() {
   var lastMonthly = {};   // studentId → { rank, amount } — expected-fee fallback
   invoices.forEach(function (row) {
     if (!row[INV_COL.INVOICE]) return;
+    // Refunded / waived / deleted in the app (marker written by onPaymentSheetMirror).
+    if (/\[(REFUNDED|WAIVED|DELETED|PENDING)\]/.test(String(row[INV_COL.NOTES] || ""))) return;
     var sid = resolveStudentId(row);
     if (invoiceCoversMonth(row, target)) {
       paidMap[sid]  = row[INV_COL.INVOICE];

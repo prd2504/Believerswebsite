@@ -44,6 +44,8 @@ export { backfillEnrollments } from './fees/backfillEnrollments.js';
 
 // --- Fee invoice email (on payment marked PAID with paymentSource) -----------------------
 export { onFeePaymentCreated } from './fees/onFeePaymentCreated.js';
+// Keeps the sheet's rows in step with later edits, refunds, waivers and deletes.
+export { onPaymentSheetMirror } from './fees/onPaymentSheetMirror.js';
 
 // --- Fee vs attendance reconciliation (monthly report + email) -----------------------------
 export {

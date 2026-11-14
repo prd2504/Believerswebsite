@@ -222,6 +222,9 @@ export interface PaymentDocument extends BaseDocument {
    * "looks quarterly" flag.
    */
   cycleConfirmedMonthly?: boolean | null;
+  /** Public payment whose amount matched no plan price — held PENDING for an admin to verify. */
+  needsVerification?: boolean | null;
+  verificationReason?: string | null;
 
   /** Base amount in paise — excludes GST. */
   baseAmountPaise: number;
@@ -289,4 +292,20 @@ export interface PaymentMonthlySummary {
   closedAt: string | null;
   /** uid of admin who closed the month. Null while open. */
   closedBy: string | null;
+}
+
+/**
+ * Every fee a payer could legitimately be charged, given the plans in force:
+ * each monthly price and its quarterly price. A public payment whose amount is
+ * not in this set is held for verification instead of being marked paid —
+ * otherwise anyone could pay ₹1 and be treated as paid (gate pass included).
+ */
+export function knownFeeAmountsPaise(monthlyPricesPaise: readonly number[]): Set<number> {
+  const out = new Set<number>();
+  for (const m of monthlyPricesPaise) {
+    if (!(m > 0)) continue;
+    out.add(m);
+    out.add(quarterlyAmountPaise(m));
+  }
+  return out;
 }

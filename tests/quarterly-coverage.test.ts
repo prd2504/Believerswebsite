@@ -74,3 +74,14 @@ describe('year boundary', () => {
     expect(coveredMonths('2026-11', 3)).toEqual(['2026-11', '2026-12', '2027-01']);
   });
 });
+
+describe('known fee amounts', () => {
+  it('include each monthly price and its quarterly price, and nothing else', async () => {
+    const { knownFeeAmountsPaise } = await import('@bba/shared');
+    const known = knownFeeAmountsPaise([200_000, 0]);
+    expect(known.has(200_000)).toBe(true);
+    expect(known.has(560_000)).toBe(true);
+    expect(known.has(100)).toBe(false);
+    expect(known.size).toBe(2);
+  });
+});

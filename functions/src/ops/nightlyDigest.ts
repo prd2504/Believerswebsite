@@ -400,6 +400,15 @@ async function writeDaily(date: string, nowMs: number): Promise<{ ctx: DayContex
 }
 
 /** Payments whose rows never reached the Google Sheet (recorded by onFeePaymentCreated). */
+/** Public payments held because the amount matched no plan — waiting on an admin. */
+async function paymentsAwaitingVerification(ctx: DayContext): Promise<string[]> {
+  const snap = await db.collection('payments').where('needsVerification', '==', true).get();
+  return snap.docs.filter((d) => d.data().status === 'PENDING').map((d) => {
+    const p = d.data();
+    return `${ctx.students.get(p.studentId)?.name ?? 'Unknown'} ₹${Math.round((p.totalAmountPaise as number) / 100)}`;
+  });
+}
+
 async function unsyncedPayments(ctx: DayContext): Promise<string[]> {
   const snap = await db.collection('payments').where('sheetSync.status', '==', 'FAILED').get();
   return snap.docs.map((d) => {
@@ -441,6 +450,10 @@ export async function runNightlyDigest(date: string, opts: { send: boolean }) {
   const fees = await step('fees summary', problems, new Map<string, FeeDay>(), () => feesByCentre(ctx));
   const coaches = await step('coach punctuality', problems, [] as CoachTally[], () => coachMonthToDate(ctx, daily.sessions));
   const unsynced = await step('spreadsheet check', problems, [] as string[], () => unsyncedPayments(ctx));
+  const toVerify = await step('payments awaiting verification', problems, [] as string[], () => paymentsAwaitingVerification(ctx));
+  if (toVerify.length) {
+    problems.unshift(`<strong>${toVerify.length}</strong> online payment${toVerify.length === 1 ? '' : 's'} with an unusual amount await${toVerify.length === 1 ? 's' : ''} verification in Admin → Payments: ${toVerify.slice(0, 15).map(esc).join(', ')}`);
+  }
   if (unsynced.length) {
     problems.unshift(`<strong>${unsynced.length}</strong> payment${unsynced.length === 1 ? '' : 's'} did not reach the Google Sheet — add ${unsynced.length === 1 ? 'it' : 'them'} by hand: ${unsynced.slice(0, 15).map(esc).join(', ')}${unsynced.length > 15 ? ' …' : ''}`);
   }

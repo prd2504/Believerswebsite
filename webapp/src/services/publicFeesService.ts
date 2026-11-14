@@ -37,6 +37,8 @@ export interface FeeSubmissionResult {
   externalInvoiceNo: string;
   externalStudentId: string;
   studentName: string;
+  /** The amount matched no plan price, so the payment awaits admin verification. */
+  pendingVerification?: boolean;
 }
 
 export interface CentreOption {
