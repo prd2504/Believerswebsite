@@ -58,8 +58,12 @@ export const CAN_ACCESS_MODULE = {
   attendance: [UserRole.SUPER_ADMIN, UserRole.CENTRE_MANAGER, UserRole.COACH],
   payments: [UserRole.SUPER_ADMIN, UserRole.CENTRE_MANAGER],
   progress: [UserRole.SUPER_ADMIN, UserRole.CENTRE_MANAGER, UserRole.COACH],
-  tournaments: [UserRole.SUPER_ADMIN, UserRole.CENTRE_MANAGER],
+  sessionLogs: [UserRole.SUPER_ADMIN, UserRole.CENTRE_MANAGER, UserRole.COACH],
+  parentFeedback: [UserRole.SUPER_ADMIN, UserRole.CENTRE_MANAGER],
+  financials: [UserRole.SUPER_ADMIN, UserRole.CENTRE_MANAGER],
+  issues: [UserRole.SUPER_ADMIN, UserRole.CENTRE_MANAGER, UserRole.COACH],
   notifications: [UserRole.SUPER_ADMIN, UserRole.CENTRE_MANAGER],
+  payroll: [UserRole.SUPER_ADMIN],
 } as const satisfies Record<string, readonly UserRole[]>;
 
 export type ModuleKey = keyof typeof CAN_ACCESS_MODULE;

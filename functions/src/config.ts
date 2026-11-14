@@ -38,6 +38,11 @@ export const config = {
     modelId: readEnv('CLAUDE_MODEL_ID', 'claude-sonnet-4-6') ?? 'claude-sonnet-4-6',
   },
 
+  /** Google Sheets Apps Script — API key for fee submissions. */
+  sheets: {
+    apiKey: readEnv('SHEETS_API_KEY'),
+  },
+
   /** WhatsApp Business API — for templated messages. */
   whatsapp: {
     apiToken: readEnv('WHATSAPP_API_TOKEN'),

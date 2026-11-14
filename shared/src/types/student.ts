@@ -7,20 +7,32 @@
  * children cleanly.
  */
 
-import type { BaseDocument, IsoDate } from './common.js';
+import type { BaseDocument, IsoDate, IsoTimestamp, YearMonth } from './common.js';
 import type { BatchLevel } from './batch.js';
 
 export const StudentStatus = {
   /** Actively attending — the default state. */
   ACTIVE: 'ACTIVE',
-  /** Temporarily paused (injury, travel, etc.). Fees usually waived. */
+  /** Temporarily paused (injury, travel, etc.) with a known reason. Fees usually waived. */
   ON_HOLD: 'ON_HOLD',
+  /** Not paying right now, may return later. Data retained for re-activation. */
+  DORMANT: 'DORMANT',
   /** Successfully completed their programme / graduated out. */
   GRADUATED: 'GRADUATED',
   /** Left the academy (voluntary or involuntary). */
   LEFT: 'LEFT',
 } as const;
 export type StudentStatus = (typeof StudentStatus)[keyof typeof StudentStatus];
+
+/** One entry in a student's lifecycle audit trail. */
+export interface StudentStatusHistoryEntry {
+  from: StudentStatus;
+  to: StudentStatus;
+  changedAt: IsoTimestamp;
+  changedBy: string;
+  /** Free-text reason. Useful for explaining why a student went dormant or rejoined. */
+  reason: string | null;
+}
 
 export const BloodGroup = {
   A_POS: 'A+',
@@ -76,6 +88,9 @@ export interface StudentDocument extends BaseDocument {
   /** Centre the student is primarily attached to. Batches may span — see `batchIds`. */
   primaryCentreId: string;
 
+  /** Sheets-compatible external ID, e.g. "DAD-001". Null until first fee submission assigns one. */
+  externalStudentId: string | null;
+
   /** All batches this student is currently enrolled in. */
   batchIds: string[];
 
@@ -85,6 +100,12 @@ export interface StudentDocument extends BaseDocument {
   status: StudentStatus;
 
   /**
+   * Append-only log of status transitions. Lets admins see why & when a student
+   * went dormant / on-hold and when they reactivated. Empty array on first create.
+   */
+  statusHistory: StudentStatusHistoryEntry[];
+
+  /**
    * Date the student joined the academy. YYYY-MM-DD. Used for seniority and
    * graduation-status displays.
    */
@@ -92,4 +113,13 @@ export interface StudentDocument extends BaseDocument {
 
   /** Any medical notes relevant for coaching (asthma, allergies, etc.). Free text. */
   medicalNotes: string | null;
+
+  /**
+   * Months (YYYY-MM) covered by this student's paid payments. Written only by
+   * Cloud Functions from /payments, so coaches — who cannot read payments —
+   * can still see who is expected on a register. Absent until first synced.
+   */
+  feeMonths?: YearMonth[];
+  /** Last month covered, or null if never paid. Mirrors feeMonths. */
+  feeCoveredThrough?: YearMonth | null;
 }

@@ -14,6 +14,13 @@ export function RootRedirect() {
   if (loading) return <FullPageLoader label="Checking your session…" />;
 
   if (isAuthenticated && profile) {
+    // Coaches pending approval or suspended go to holding page
+    if (
+      profile.role === 'COACH' &&
+      (profile.accountStatus === 'PENDING_APPROVAL' || profile.accountStatus === 'SUSPENDED')
+    ) {
+      return <Navigate to="/pending-approval" replace />;
+    }
     return <Navigate to={roleHomePath(profile.role)} replace />;
   }
 

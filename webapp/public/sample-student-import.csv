@@ -1,0 +1,5 @@
+name,email,phone,dateOfBirth,gender,primaryCentreId,batchId,guardianName,guardianPhone,guardianEmail,address,notes
+Ravi Kumar,ravi.kumar@gmail.com,9876543210,2015-03-15,MALE,CENTRE_ID_HERE,BATCH_ID_HERE,Suresh Kumar,9876543211,suresh@gmail.com,"Flat 201, ABC Apartments, Andheri West",Beginner level
+Priya Sharma,,9123456789,2014-07-22,FEMALE,CENTRE_ID_HERE,BATCH_ID_HERE,Meena Sharma,9123456780,meena.sharma@gmail.com,"B-12 Sunrise Society, Bandra",Has previous training
+Arjun Patel,arjun.p@gmail.com,8765432109,2016-01-10,MALE,CENTRE_ID_HERE,BATCH_ID_HERE,Rajesh Patel,8765432100,,MG Road Pune,
+Ananya Singh,,7654321098,2013-11-05,FEMALE,CENTRE_ID_HERE,BATCH_ID_HERE,Vikram Singh,7654321099,vikram.s@yahoo.com,"Plot 5, Green Park",Intermediate player
